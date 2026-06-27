@@ -1,0 +1,20 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "MRP 模拟器"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "vmrp MRP 模拟器"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "vmrp"
+    },
+    {
+      "name": "permission_internet_reason",
+      "value": "运行支持网络通信的 MRP 程序需要访问网络"
+    }
+  ]
+}

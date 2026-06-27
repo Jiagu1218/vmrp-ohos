@@ -1,0 +1,49 @@
+# ===== 构建产物 =====
+# hvigor 构建输出
+/.hvigor/
+/entry/build/
+/.idea/
+/build-libvmrp*/
+**/build/
+/cmake-build-*/
+
+# 预编译的 libvmrp.so（由 scripts/build_libvmpp_ohos.bat 生成，不入库）
+/entry/src/main/cpp/prebuilt/
+
+# ohpm 依赖（由 ohpm install 恢复）
+/oh_modules/
+/entry/oh_modules/
+**/oh_modules/
+
+# hvigor 缓存
+/hvigor/.hvigor/
+
+# ===== CMake 缓存 =====
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.so
+!/**/*.so  # 例外：保留需要入库的 .so（若有）
+
+# ===== IDE / 编辑器 =====
+.vscode/
+*.iml
+local.properties
+
+# ===== 系统/临时 =====
+.DS_Store
+Thumbs.db
+*.log
+*.tmp
+
+# ===== 诊断/截图（开发用，不入库）=====
+/screenshots/
+build_chk*.txt
+build_log*.txt
+build_fix.txt
+build_diag*.txt
+
+# ===== 注意：以下不入库但需要其他电脑具备 =====
+# - HarmonyOS SDK（DevEco Studio 自带，见 README 环境要求）
+# - Git for Windows（提供 POSIX sh，Unicorn 构建需要）
+# - node/ohpm 工具链（DevEco Studio 自带）

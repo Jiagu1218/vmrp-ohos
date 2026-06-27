@@ -1,0 +1,3 @@
+[submodule "vmrp"]
+	path = vmrp
+	url = https://github.com/msojocs/vmrp.git
