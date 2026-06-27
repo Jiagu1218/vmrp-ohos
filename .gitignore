@@ -2,9 +2,11 @@
 # hvigor 构建输出
 /.hvigor/
 /entry/build/
+/entry/.cxx/
 /.idea/
 /build-libvmrp*/
 **/build/
+**/.cxx/
 /cmake-build-*/
 
 # 预编译的 libvmrp.so（由 scripts/build_libvmpp_ohos.bat 生成，不入库）
