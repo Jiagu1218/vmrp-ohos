@@ -67,7 +67,10 @@ struct Index {
         this.showEdit = true;
         this.editText = '';
       });
-      this.status = '就绪，请选择 MRP 文件';
+      this.status = '就绪，正在启动默认MRP...';
+      
+      // 5. 自动启动默认MRP，解决启动卡开屏问题
+      await this.startDefault();
     } catch (e) {
       // ArkTS 对 Error 做 JSON.stringify 会得到 {}，用 message/businessError 更可读。
       const err = e as Error;
@@ -77,7 +80,7 @@ struct Index {
     }
   }
 
-  // 直接启动内置 dsm_gm.mrp（无需文件选择器），用于验证核心运行路径。
+  // 直接启动内置 gblmt.mrp（无需文件选择器），用于验证核心运行路径。
   async startDefault(): Promise<void> {
     try {
       const ctx = getContext(this) as common.UIAbilityContext;

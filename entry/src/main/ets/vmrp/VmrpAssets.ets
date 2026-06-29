@@ -14,6 +14,7 @@ const TAG = 'VmrpAssets';
 // rawfile 中的 mythroad 资源清单（相对 rawfile/mythroad/ 的路径）。
 const MYTHROAD_FILES: string[] = [
   'dsm_gm.mrp',
+  'gblmt.mrp',
   'system/gb12.uc2',
   'system/gb16.uc2',
 ];
