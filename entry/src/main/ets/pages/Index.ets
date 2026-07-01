@@ -27,6 +27,8 @@ struct Index {
   @State showEdit: boolean = false;
   @State editText: string = '';
   private engine: VmrpEngineTs = new VmrpEngineTs();
+  // 当前按住未释放的键，用于长按支持
+  private pressedKeys: Set<number> = new Set();
 
   aboutToAppear(): void {
     this.bootstrap();
@@ -118,10 +120,19 @@ struct Index {
     }
   }
 
-  // 触发一次按键（按下立即抬起）。
-  tapKey(key: number): void {
-    this.engine.sendKey(VMRP_KEY_PRESS, key);
-    this.engine.sendKey(VMRP_KEY_RELEASE, key);
+  // 按键触摸处理器：按下时发送 press，抬起时发送 release，支持长按。
+  onKeyTouch(key: number, event: TouchEvent): void {
+    if (event.type === TouchType.Down) {
+      if (!this.pressedKeys.has(key)) {
+        this.pressedKeys.add(key);
+        this.engine.sendKey(VMRP_KEY_PRESS, key);
+      }
+    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+      if (this.pressedKeys.has(key)) {
+        this.pressedKeys.delete(key);
+        this.engine.sendKey(VMRP_KEY_RELEASE, key);
+      }
+    }
   }
 
   build() {
@@ -158,28 +169,28 @@ struct Index {
         .height(320)
         .backgroundColor(Color.Black)
 
-      // 方向键 + 功能键
+      // 方向键 + 功能键（onTouch 支持长按）
       Grid() {
-        GridItem() { Button('↑').fontSize(20).onClick(() => this.tapKey(MR_KEY_UP)) }
-        GridItem() { Button('←').fontSize(20).onClick(() => this.tapKey(MR_KEY_LEFT)) }
-        GridItem() { Button('确认').fontSize(14).onClick(() => this.tapKey(MR_KEY_SELECT)) }
-        GridItem() { Button('→').fontSize(20).onClick(() => this.tapKey(MR_KEY_RIGHT)) }
-        GridItem() { Button('↓').fontSize(20).onClick(() => this.tapKey(MR_KEY_DOWN)) }
-        GridItem() { Button('左软').fontSize(14).onClick(() => this.tapKey(MR_KEY_SOFTLEFT)) }
-        GridItem() { Button('右软').fontSize(14).onClick(() => this.tapKey(MR_KEY_SOFTRIGHT)) }
+        GridItem() { Button('↑').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_UP, e)) }
+        GridItem() { Button('←').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_LEFT, e)) }
+        GridItem() { Button('确认').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SELECT, e)) }
+        GridItem() { Button('→').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_RIGHT, e)) }
+        GridItem() { Button('↓').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_DOWN, e)) }
+        GridItem() { Button('左软').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e)) }
+        GridItem() { Button('右软').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e)) }
       }
       .columnsTemplate('1fr 1fr 1fr')
       .width('100%')
       .height(180)
       .padding(4)
 
-      // 数字键
+      // 数字键（onTouch 支持长按）
       Grid() {
         ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, MR_KEY_STAR, 0, MR_KEY_POUND], (k: number) => {
           GridItem() {
             Button(`${k === MR_KEY_STAR ? '*' : k === MR_KEY_POUND ? '#' : k}`)
               .fontSize(16)
-              .onClick(() => this.tapKey(k))
+              .onTouch((e: TouchEvent) => this.onKeyTouch(k, e))
           }
         })
       }
