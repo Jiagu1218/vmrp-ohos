@@ -9,8 +9,8 @@
 **/.cxx/
 /cmake-build-*/
 
-# 预编译的 libvmrp.so（由 scripts/build_libvmpp_ohos.bat 生成，不入库）
-/entry/src/main/cpp/prebuilt/
+# 预编译的 libvmrp.so（scripts/build_libvmpp_ohos.bat 生成）
+# 已入库，通过 *.so 白名单例外（见下方）跟踪
 
 # ohpm 依赖（由 ohpm install 恢复）
 /oh_modules/
@@ -25,7 +25,12 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 *.so
-!/**/*.so  # 例外：保留需要入库的 .so（若有）
+# 例外：以下路径的 libvmrp.so 需要入库
+!/entry/libs/**/libvmrp.so
+!/entry/src/main/cpp/prebuilt/**/libvmrp.so
+
+# qemu/configure 临时目录
+/scripts/config-temp/
 
 # ===== IDE / 编辑器 =====
 .vscode/

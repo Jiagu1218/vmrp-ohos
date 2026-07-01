@@ -85,6 +85,11 @@ if not exist "%VMRP_SRC%\third_party\unicorn\CMakeLists.txt" (
     popd
 )
 
+REM --- Restore Unicorn CMakeLists.txt pristine (undo previous ABI's patching) ---
+pushd "%VMRP_SRC%\third_party\unicorn"
+git checkout -- CMakeLists.txt >nul 2>&1
+popd
+
 REM --- Configure ---
 echo.
 echo === Configure ===

@@ -205,7 +205,9 @@ OHAudio 回调线程 ──→ PullAudio (不加锁) ──→ vmrp_api_audio_re
 | 补丁 | 文件 | 原因 |
 |------|------|------|
 | **Unicorn /dev/null 探测** | unicorn/CMakeLists.txt | Windows 宿主下 `/dev/null` 不存在，Unicorn 主机架构探测失败。改为空字符串输入 |
-| **Unicorn --cc wrapper** | unicorn/CMakeLists.txt | OHOS clang 是交叉编译器，裸调用不带 `--target` 导致 `qemu/configure` 误判宿主为 mingw32。用 sh wrapper 注入 `--target`/`--sysroot` |
+| **Unicorn --cc wrapper** | unicorn/CMakeLists.txt | OHOS clang 是交叉编译器，裸调用不带 `--target` 导致 `qemu/configure` 误判宿主为 mingw32。用 sh wrapper 注入 `--target`/`--sysroot`；同时用 `string(REGEX REPLACE)` 匹配任意已有 wrapper 路径，支持跨 ABI（arm64-v8a ↔ x86_64）交替构建 |
+| **Unicorn TCG 架构检测** | unicorn/CMakeLists.txt | Unicorn 的 CMakeLists.txt 用 `execute_process(COMMAND ${CMAKE_C_COMPILER} -dM -E -)` 检测宿主架构（选择 TCG 后端）。Windows 下 OHOS clang 默认 x86_64，所以 `__x86_64__` 被定义 → `UNICORN_TARGET_ARCH=i386` → 错误地编译 `tcg/i386` 后端。用 `.bat` wrapper（`ohos-cc.bat`，注入 `--target`/`--sysroot`）替代裸 clang，使目标架构正确定义 |
+| **跨 ABI 补丁鲁棒性** | `build_libvmpp_ohos.bat` + `scripts/CMakeLists.txt` | 每次构建前 `git checkout --` 恢复 Unicorn CMakeLists.txt 到原始状态，防止上次 ABI 的 patch 残留导致下次替换不匹配 |
 | **MAP_32BIT** | native_dsm_funcs.c | `MAP_32BIT` 是 x86-glibc 专有，OHOS musl 缺失，x86_64 模拟器构建失败。替换为 0（有 calloc 兜底） |
 | **case 800 ARM 地址修复** | mythroad.c + arm_ext_executor.c | 部分 MRP（如 3D暴力摩托）的 cfunction loader 把 ext 放在 ARM 内存并用 ARM 地址调 case 800。arm_ext_load 把 ARM 地址当 host 指针读取导致全 0 崩溃。检测到 ARM 地址时用 `arm_ext_host_ptr` 转成 host 指针 |
 

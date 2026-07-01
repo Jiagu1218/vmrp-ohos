@@ -133,32 +133,61 @@ if(CMAKE_HOST_WIN32)
     # clang's -Werror=unused-command-line-argument turns that into a hard error
     # that breaks configure's TLS/feature tests. --target + --sysroot suffice
     # for the configure-time compiler checks; real linkage uses CMake's flags.
-    set(_OHOS_CC_WRAPPER "${_OHOS_HELP_DIR}/ohos-cc")
-    set(_OHOS_CXX_WRAPPER "${_OHOS_HELP_DIR}/ohos-cxx")
-    file(WRITE "${_OHOS_CC_WRAPPER}"
+    # --- sh wrapper for qemu/configure (executed via sh) ---
+    set(_OHOS_CC_SHW "${_OHOS_HELP_DIR}/ohos-cc")
+    set(_OHOS_CXX_SHW "${_OHOS_HELP_DIR}/ohos-cxx")
+    file(WRITE "${_OHOS_CC_SHW}"
 "#!/bin/sh\n"
 "exec \"${OHOS_SDK_NATIVE}/llvm/bin/clang.exe\" --target=${_OHOS_TARGET} --sysroot=${_OHOS_SYSROOT} -Wno-error=unused-command-line-argument \"$@\"\n")
-    file(WRITE "${_OHOS_CXX_WRAPPER}"
+    file(WRITE "${_OHOS_CXX_SHW}"
 "#!/bin/sh\n"
 "exec \"${OHOS_SDK_NATIVE}/llvm/bin/clang++.exe\" --target=${_OHOS_TARGET} --sysroot=${_OHOS_SYSROOT} -Wno-error=unused-command-line-argument \"$@\"\n")
 
+    # --- .bat wrapper for direct invocation (cmake execute_process etc.) ---
+    set(_OHOS_CC_BAT "${_OHOS_HELP_DIR}/ohos-cc.bat")
+    set(_OHOS_CXX_BAT "${_OHOS_HELP_DIR}/ohos-cxx.bat")
+    file(TO_NATIVE_PATH "${OHOS_SDK_NATIVE}/llvm/bin/clang.exe" _OHOS_CLANG_NATIVE)
+    file(TO_NATIVE_PATH "${OHOS_SDK_NATIVE}/llvm/bin/clang++.exe" _OHOS_CLANGXX_NATIVE)
+    file(TO_NATIVE_PATH "${_OHOS_SYSROOT}" _OHOS_SYSROOT_NATIVE)
+    file(WRITE "${_OHOS_CC_BAT}"
+"@echo off\r\n"
+"\"${_OHOS_CLANG_NATIVE}\" --target=${_OHOS_TARGET} --sysroot=\"${_OHOS_SYSROOT_NATIVE}\" -Wno-error=unused-command-line-argument %*\r\n")
+    file(WRITE "${_OHOS_CXX_BAT}"
+"@echo off\r\n"
+"\"${_OHOS_CLANGXX_NATIVE}\" --target=${_OHOS_TARGET} --sysroot=\"${_OHOS_SYSROOT_NATIVE}\" -Wno-error=unused-command-line-argument %*\r\n")
+
     # Patch Unicorn's CMakeLists so qemu/configure is invoked with --cc pointing
-    # at our wrapper instead of the bare clang. The wrapper forwards every arg
+    # at our sh wrapper instead of the bare clang. The wrapper forwards every arg
     # to the real clang with --target/--sysroot added.
     if(EXISTS "${_UC_CML}")
         file(READ "${_UC_CML}" _uc_cml_text2)
         string(FIND "${_uc_cml_text2}" "--cc=" _cc_pos)
-        message(STATUS "[OHOS] Unicorn --cc needle at pos ${_cc_pos}; wrapper=${_OHOS_CC_WRAPPER}")
+        message(STATUS "[OHOS] Unicorn --cc needle at pos ${_cc_pos}; sh-wrapper=${_OHOS_CC_SHW}")
         # The source literally contains:  --cc=${CMAKE_C_COMPILER}
         # Match that exact substring (\${ => literal ${ in the CMake string).
         string(REPLACE "--cc=\${CMAKE_C_COMPILER}"
-                       "--cc=${_OHOS_CC_WRAPPER}"
+                       "--cc=${_OHOS_CC_SHW}"
                        _uc_cml_text2 "${_uc_cml_text2}")
+        # Also handle previously-patched --cc paths (from a prior ABI).
+        # --cc=<anything>/ohos-cc matches any existing wrapper path (x86_64, arm64, etc.)
+        # but NOT ${CMAKE_C_COMPILER} (no /ohos-cc), so it's idempotent.
+        string(REGEX REPLACE "--cc=[^ \t\r\n]+/ohos-cc"
+                             "--cc=${_OHOS_CC_SHW}"
+                             _uc_cml_text2 "${_uc_cml_text2}")
+        # Also patch the execute_process macro detection to use the .bat wrapper,
+        # otherwise the bare clang defaults to x86_64 on Windows host and
+        # UNICORN_TARGET_ARCH is set to i386 instead of aarch64.
+        string(ASCII 10 _NL)
+        string(REPLACE
+"        execute_process(COMMAND \${CMAKE_C_COMPILER} -dM -E -${_NL}            INPUT_FILE \"\""
+"        execute_process(COMMAND ${_OHOS_CC_BAT} -dM -E -${_NL}            INPUT_FILE \"\""
+          _uc_cml_text2 "${_uc_cml_text2}")
         file(WRITE "${_UC_CML}" "${_uc_cml_text2}")
-        message(STATUS "[OHOS] Patched Unicorn --cc to use target wrapper")
+        message(STATUS "[OHOS] Patched Unicorn --cc & macro detection to use target wrapper")
     endif()
 
-    message(STATUS "[OHOS] CC wrapper for configure: ${_OHOS_CC_WRAPPER}")
+    message(STATUS "[OHOS] sh wrapper for configure: ${_OHOS_CC_SHW}")
+    message(STATUS "[OHOS] bat wrapper for execute_process: ${_OHOS_CC_BAT}")
 endif()
 
 # --- Patch vmrp native_dsm_funcs.c: MAP_32BIT is x86-glibc only, musl lacks it ---
