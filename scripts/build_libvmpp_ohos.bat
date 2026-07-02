@@ -85,10 +85,10 @@ if not exist "%VMRP_SRC%\third_party\unicorn\CMakeLists.txt" (
     popd
 )
 
-REM --- Restore Unicorn CMakeLists.txt pristine (undo previous ABI's patching) ---
-pushd "%VMRP_SRC%\third_party\unicorn"
-git checkout -- CMakeLists.txt >nul 2>&1
-popd
+REM --- Restore patched source files pristine before re-patching ---
+REM scripts/CMakeLists.txt patches several files in place during configure;
+REM restore all of them to their committed state so no previous residue leaks in.
+call :restore_patched
 
 REM --- Configure ---
 echo.
@@ -138,8 +138,34 @@ if "!SO_FOUND!"=="0" (
     exit /b 1
 )
 
+REM --- Restore patched sources so the working tree stays clean after a build ---
+REM Only on the success path; on failure we leave the patched files in place.
+call :restore_patched
+
 echo.
 echo [OK] libvmrp.so (%ABI%) built and copied to:
 echo     %PREBUILT_DIR%\libvmrp.so
 echo     %LIBS_DIR%\libvmrp.so
 endlocal
+goto :eof
+
+REM ===========================================================================
+REM  :restore_patched
+REM  Restore the source files that scripts/CMakeLists.txt patches in place
+REM  back to their committed (pristine) state. Tolerant: each checkout is
+REM  allowed to be a no-op (file clean or git-untracked) via 2>nul.
+REM  NOTE: discards uncommitted/unstaged edits to these files only, which by
+REM  convention are temporary build-time patches; permanent edits should be
+REM  committed. Files NOT patched by the script (e.g. mythroad_mini.c) are
+REM  untouched.
+REM ===========================================================================
+:restore_patched
+pushd "%VMRP_SRC%" >nul 2>&1
+if errorlevel 1 exit /b 0
+git checkout -- third_party\unicorn\CMakeLists.txt >nul 2>&1
+git checkout -- src\native_dsm_funcs.c            >nul 2>&1
+git checkout -- src\mythroad\mythroad.c           >nul 2>&1
+git checkout -- src\arm_ext_executor.c            >nul 2>&1
+git checkout -- src\network.c                     >nul 2>&1
+popd
+exit /b 0
