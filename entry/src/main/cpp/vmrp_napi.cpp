@@ -178,10 +178,12 @@ void TryRender() {
     if (!VmrpEngine::Instance().ScreenDirty()) return;
     std::lock_guard<std::mutex> lk(g_render_mtx);
     if (!g_renderer.Ready()) return;
-    const uint16_t *buf = VmrpEngine::Instance().ScreenBuffer();
+    // 用 RGBA 路径：vmrp 内部 screen_lock 保证读屏线程安全（async worker 模型下
+    // worker 在并发写 screen_buf，RGB565 裸指针路径存在数据竞争）。
+    const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
-    g_renderer.Render(buf, sw, sh);
+    g_renderer.Render(rgba, sw, sh);
 }
 
 // 在非渲染线程（timer/key）请求渲染：置标志，由帧回调线程消费。
@@ -194,22 +196,32 @@ void TryRenderForce() {
     if (!g_engine_running.load()) return;
     std::lock_guard<std::mutex> lk(g_render_mtx);
     if (!g_renderer.Ready()) return;
-    const uint16_t *buf = VmrpEngine::Instance().ScreenBuffer();
+    const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
-    g_renderer.Render(buf, sw, sh);
+    g_renderer.Render(rgba, sw, sh);
 }
 
-// 定时器驱动循环：反复 StepTimer + 请求渲染 + 检查编辑状态。
+// 渲染驱动循环。
+//
+// vmrp_api.c 在 VMRP_API_ASYNC_RUNNER=1（上游 c03feee 起硬编码）下采用 async
+// worker 模型：vmrp_api_start 成功后自动起 worker 线程，由 worker 自驱 timer()
+// 与 event()。此时外部若仍周期性调 vmrp_api_timer()，会反复清零 api_timer_active
+// 并打断 worker 的定时等待，导致 mr_timer 永不执行 -> 游戏卡屏。
+//
+// 因此本循环不再调用 StepTimer()（不再驱动 timer），只做两件事：
+//   1. 周期请求渲染（让 XComponent 帧回调线程查 ScreenDirty 并上屏）；
+//   2. 检测引擎退出，退出则停止循环。
+// timer/event 的实际驱动完全交给 vmrp 内部 worker 线程。
 // 渲染本身不在本线程做（EGL surface 须在 XComponent 渲染线程），只置标志。
 static void TimerLoop() {
-    LOGI("timer loop started");
+    LOGI("timer loop started (async: render-only)");
     while (g_timer_running.load()) {
         if (!g_engine_running.load()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
-        int interval = VmrpEngine::Instance().StepTimer(); // 驱动一次 timer()
+        // async worker 自驱 timer/event，这里不再调 StepTimer()。
         RequestRender(); // 请求帧回调线程渲染
         NotifyEditIfNeeded();
 
@@ -218,9 +230,8 @@ static void TimerLoop() {
             g_engine_running.store(false);
             break;
         }
-        if (interval <= 0) interval = 20; // 无定时器需求时低频轮询屏幕
-        if (interval > 200) interval = 200;
-        std::this_thread::sleep_for(std::chrono::milliseconds(interval));
+        // 固定节拍轮询渲染 + 退出检测；不依赖 get_timer_interval（async 下恒为 0）。
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
     LOGI("timer loop exited");
 }

@@ -32,6 +32,7 @@ struct VmrpApi {
     int (*get_timer_interval)(void);
 
     const uint16_t *(*get_screen_buffer)(void);
+    const uint8_t *(*get_screen_rgba_buffer)(void);
     int (*get_screen_dirty)(void);
     int (*get_screen_width)(void);
     int (*get_screen_height)(void);
@@ -74,6 +75,8 @@ public:
 
     // 屏幕访问（RGB565）。dirty 会在读取后自动清除。
     const uint16_t *ScreenBuffer();
+    // 屏幕访问（RGBA8888，vmrp 内部 screen_lock 保护，async 下线程安全）。
+    const uint8_t *ScreenRgbaBuffer();
     int ScreenWidth();
     int ScreenHeight();
     bool ScreenDirty();

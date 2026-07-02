@@ -228,4 +228,51 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t screen_w, int32_t screen_h
     return 0;
 }
 
+// RGBA8888 路径：src 已是 RGBA8888（vmrp 内部 screen_lock 保护下转换），
+// 直接上传纹理，省去本线程的 RGB565→RGBA 转换，且读屏线程安全。
+int VmrpRenderer::Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h) {
+    if (!Ready() || !rgba || screen_w <= 0 || screen_h <= 0) {
+        LOGE("Render(rgba) precondition fail: ready=%d rgba=%p w=%d h=%d",
+             Ready() ? 1 : 0, rgba, screen_w, screen_h);
+        return -1;
+    }
+    EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+    if (!mc) {
+        OH_LOG_ERROR(LOG_APP, "eglMakeCurrent failed: 0x%{public}x", eglGetError());
+        return -1;
+    }
+
+    if (tex_w_ != screen_w || tex_h_ != screen_h) {
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, screen_w, screen_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        tex_w_ = screen_w;
+        tex_h_ = screen_h;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, screen_w, screen_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+
+    int32_t vp_w = surface_w_ > 0 ? surface_w_ : screen_w;
+    int32_t vp_h = surface_h_ > 0 ? surface_h_ : screen_h;
+    glViewport(0, 0, vp_w, vp_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(program_);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glUniform1i(glGetUniformLocation(program_, "u_tex"), 0);
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    GLenum glerr = glGetError();
+    if (glerr != GL_NO_ERROR) {
+        OH_LOG_ERROR(LOG_APP, "GL error after draw: 0x%{public}x", glerr);
+    }
+    glBindVertexArray(0);
+    EGLBoolean swapped = eglSwapBuffers(egl_display_, egl_surface_);
+    if (!swapped) {
+        OH_LOG_ERROR(LOG_APP, "eglSwapBuffers failed: 0x%{public}x", eglGetError());
+    }
+    return 0;
+}
+
 VmrpRenderer::~VmrpRenderer() { OnSurfaceDestroyed(); }

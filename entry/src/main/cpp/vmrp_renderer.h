@@ -26,6 +26,9 @@ public:
     // 渲染一帧。src 是 RGB565 缓冲（screen_w * screen_h 个 uint16）。
     // 若 src 为空或未就绪则返回 -1。
     int Render(const uint16_t *src, int32_t screen_w, int32_t screen_h);
+    // 渲染一帧（RGBA8888 路径，src 已是 RGBA8888，直接上传纹理，无需转换）。
+    // 用于 async worker 模型：vmrp 内部 screen_lock 保证读屏线程安全。
+    int Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h);
 
     // surface 尺寸变化时重新查询（由 OnSurfaceChanged 调用）。
     void UpdateSurfaceSize();

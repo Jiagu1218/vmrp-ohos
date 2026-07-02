@@ -124,6 +124,7 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_get_timer_interval", get_timer_interval, int (*)(void));
 
     RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_buffer", get_screen_buffer, const uint16_t *(*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_rgba_buffer", get_screen_rgba_buffer, const uint8_t *(*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_dirty", get_screen_dirty, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_width", get_screen_width, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_height", get_screen_height, int (*)(void));
@@ -185,6 +186,10 @@ int VmrpEngine::StepTimer() {
 
 const uint16_t *VmrpEngine::ScreenBuffer() {
     return api_.get_screen_buffer ? api_.get_screen_buffer() : nullptr;
+}
+// 走 vmrp 内部 screen_lock 保护的 RGBA 转换路径，async worker 模型下线程安全。
+const uint8_t *VmrpEngine::ScreenRgbaBuffer() {
+    return api_.get_screen_rgba_buffer ? api_.get_screen_rgba_buffer() : nullptr;
 }
 int VmrpEngine::ScreenWidth() { return api_.get_screen_width ? api_.get_screen_width() : 0; }
 int VmrpEngine::ScreenHeight() { return api_.get_screen_height ? api_.get_screen_height() : 0; }
