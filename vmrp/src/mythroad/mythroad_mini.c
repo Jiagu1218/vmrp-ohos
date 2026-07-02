@@ -1586,7 +1586,16 @@ static int _mr_TestComC(int input0, char* input1, int32 len, int32 code) {
     static ArmExtModule* native_ext;
     switch (input0) {
         case 800: {
-            arm_ext_unload(native_ext);
+            ArmExtModule *old_ext = native_ext;
+            /* OHOS_ARM_ADDR_FIX: gblmt 等 loader 把 ext 放在 ARM 内存并用 ARM 地址调
+             * case 800。用 old_ext 把 ARM 地址转成 host 指针，使 arm_ext_load 读到正确数据。 */
+            {
+                extern void* arm_ext_host_ptr(ArmExtModule *m, uint32_t addr);
+                uint32_t _a = (uint32)(uintptr_t)input1;
+                void* _hp = arm_ext_host_ptr(old_ext, _a);
+                if (_hp) input1 = (char*)_hp;
+                arm_ext_unload(old_ext);
+            }
             native_ext = NULL;
             int32 ext_r0 = 0;
             int load_ret = arm_ext_load(&native_ext, (const uint8*)input1, (uint32)len, code, &ext_r0);
