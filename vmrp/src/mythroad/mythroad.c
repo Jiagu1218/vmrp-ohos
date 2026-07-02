@@ -243,10 +243,33 @@ int32 _DrawTextEx(char* pcText, int16 x, int16 y, mr_screenRectSt rect, mr_colou
 int _mr_TestCom(mrp_State* L, int input0, int input1);
 int _mr_TestCom1(mrp_State* L, int input0, char* input1, int32 len);
 void* mr_readFile_from_ram(const char* filename, int* filelen, int lookfor, char* ram_file, int ram_file_len_value);
+void* mr_readFile_from_pack(const char* packname, const char* filename, int* filelen, int lookfor);
 int32 mr_stop_ex(int16 freemem);
 static int32 _mr_div(int32 a, int32 b);
 static int32 _mr_mod(int32 a, int32 b);
 
+
+void* mr_readFile_from_pack(const char* packname, const char* filename, int* filelen, int lookfor) {
+    char saved_pack_filename[MR_MAX_FILENAME_SIZE];
+    void* ret;
+
+    if (!packname || !packname[0]) return NULL;
+
+    /*
+     * Native EXT modules pass their package context through table[100].  Host
+     * _mr_readFile uses the VM-global pack_filename, so bridge callers that run
+     * inside nested installers must temporarily bind that global to the ARM
+     * supplied package and restore it before returning to the outer app.
+     */
+    MEMCPY(saved_pack_filename, pack_filename, sizeof(saved_pack_filename));
+    MEMSET(pack_filename, 0, sizeof(pack_filename));
+    STRNCPY(pack_filename, packname, sizeof(pack_filename) - 1);
+
+    ret = _mr_readFile(filename, filelen, lookfor);
+
+    MEMCPY(pack_filename, saved_pack_filename, sizeof(pack_filename));
+    return ret;
+}
 
 void* mr_readFile_from_ram(const char* filename, int* filelen, int lookfor, char* ram_file, int ram_file_len_value) {
     char saved_pack_filename[MR_MAX_FILENAME_SIZE];
@@ -3567,14 +3590,6 @@ int _mr_TestCom1(mrp_State* L, int input0, char* input1, int32 len) {
             native_pauseApp_function = 0;
             native_resumeApp_function = 0;
             int32 ext_r0 = 0;
-            /* OHOS_ARM_ADDR_FIX: gblmt 等 loader 把 ext 放在 ARM 内存并用 ARM 地址调
-             * case 800。用 old_ext 把 ARM 地址转成 host 指针，使 arm_ext_load 读到正确数据。 */
-            {
-                extern void* arm_ext_host_ptr(ArmExtModule *m, uint32_t addr);
-                uint32_t _a = (uint32_t)(uintptr_t)input1;
-                void* _hp = arm_ext_host_ptr(old_ext, _a);
-                if (_hp) input1 = (char*)_hp;
-            }
             ret = arm_ext_load(&native_ext, (const uint8*)input1, (uint32)len, code, &ext_r0);
             arm_ext_unload(old_ext);
             mrp_pushnumber(L, ret == MR_SUCCESS ? ext_r0 : ret);
@@ -3614,14 +3629,6 @@ int _mr_TestCom1(mrp_State* L, int input0, char* input1, int32 len) {
             native_pauseApp_function = 0;
             native_resumeApp_function = 0;
             int32 ext_r0 = 0;
-            /* OHOS_ARM_ADDR_FIX: gblmt 等 loader 把 ext 放在 ARM 内存并用 ARM 地址调
-             * case 800。用 old_ext 把 ARM 地址转成 host 指针，使 arm_ext_load 读到正确数据。 */
-            {
-                extern void* arm_ext_host_ptr(ArmExtModule *m, uint32_t addr);
-                uint32_t _a = (uint32_t)(uintptr_t)input1;
-                void* _hp = arm_ext_host_ptr(old_ext, _a);
-                if (_hp) input1 = (char*)_hp;
-            }
             ret = arm_ext_load(&native_ext, (const uint8*)input1, (uint32)len, code, &ext_r0);
             arm_ext_unload(old_ext);
             mrp_pushnumber(L, ret == MR_SUCCESS ? ext_r0 : ret);
@@ -3913,25 +3920,6 @@ static int32 _mr_intra_start(char* appExName, const char* entry) {
     // MRDBGPRINTF("after gc %d", mr_getTime());
 
     MRDBGPRINTF("After app init, memory left:%d", LG_mem_left);
-
-    /* 调用 _mr_entry（如 _dsm）启动 MRP 主流程。
-     * start.mr 通常只定义 Lua 函数而不在顶层调用，C 层需要显式调用入口点。
-     * 如果不存在 _mr_entry，跳过；如果调用失败，继续后续流程。 */
-    mrp_getglobal(vm_state, "_mr_entry");
-    if (mrp_isstring(vm_state, -1)) {
-        const char *entry_name = mrp_tostring(vm_state, -1);
-        if (entry_name && *entry_name) {
-            mrp_getglobal(vm_state, entry_name);
-            if (mrp_isfunction(vm_state, -1)) {
-                fprintf(stderr, "[_mr_intra_start] calling entry '%s'\n", entry_name); fflush(stderr);
-                _mr_pcall(0, 0);
-                mrp_pop(vm_state, 1); /* pop entry function */
-            } else {
-                mrp_pop(vm_state, 1); /* pop non-function value */
-            }
-        }
-    }
-    mrp_pop(vm_state, 1); /* pop _mr_entry string */
 
     /* ext 的 init 可能在 Unicorn 内推迟了 game.ext 的加载，导致定时器
      * 没有在 code=0 期间启动。如果 Lua 侧定义了 "dealtimer" 但定时器

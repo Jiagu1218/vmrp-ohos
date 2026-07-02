@@ -44,10 +44,11 @@ typedef struct {
     uint32_t sendCounter;
     int32_t realState;  // 真正的连接状态
     int32_t state;      // cmwap模式下是一个伪状态，cmnet模式下与realState的值始终相同
+    int32_t cmwapMode;  // Socket 创建时的网络模式；不能被后续 mr_initNetwork(CMNET) 污染
     int32_t cmwapProxyAck;  // cmwap模式：真实连接建立后需要返回伪造的代理200响应
 } mSocket;
 
-static int isCMWAP = FALSE;
+static int isCMWAP = FALSE;  // 当前 mr_initNetwork 模式，只用于之后新建的 socket
 static struct rb_root sockets = RB_ROOT;
 
 #define VMRP_DNS_MAP_MAX 32
@@ -281,7 +282,7 @@ static void* my_connectAsync(void* arg) {
     connectData_t* data = (connectData_t*)arg;
     int32_t r = my_connectSync(data->s->s, data->ip, data->port);
     data->s->realState = r;
-    if (!isCMWAP) {  // cmnet模式下保持相同的连接状态
+    if (!data->s->cmwapMode) {  // cmnet模式下保持相同的连接状态
         data->s->state = r;
     } else if (r == MR_SUCCESS) {
         data->s->cmwapProxyAck = 1;  // 触发伪造的代理200响应
@@ -301,7 +302,7 @@ int32 my_connect(int32 s, int32 ip, uint16 port, int32 type) {
 #ifdef NETWORK_SUPPORT
     uIntMap* obj = uIntMap_search(&sockets, (uint32_t)s);
     mSocket* data = (mSocket*)obj->data;
-    if (ip == 0x0A0000AC && isCMWAP) {
+    if (ip == 0x0A0000AC && data->cmwapMode) {
         // 10.0.0.172 是 CMWAP 代理地址，桌面端不存在该代理
         // 伪装连接成功，实际连接在 my_send 第一次发送时根据 CONNECT 头建立
         data->state = MR_SUCCESS;
@@ -346,6 +347,25 @@ int32 my_getSocketState(int32 s) {
 }
 
 static int32_t socketCounter = 0;
+int32 my_hasOpenSockets(void) {
+#ifdef NETWORK_SUPPORT
+    return rb_first(&sockets) != NULL;
+#else
+    return FALSE;
+#endif
+}
+
+int32 my_openSocketCount(void) {
+#ifdef NETWORK_SUPPORT
+    int32 count = 0;
+    for (struct rb_node* node = rb_first(&sockets); node; node = rb_next(node))
+        count++;
+    return count;
+#else
+    return 0;
+#endif
+}
+
 /*
  >=0 返回的Socket句柄 
    MR_FAILED 失败 
@@ -366,6 +386,7 @@ int32 my_socket(int32 type, int32 protocol) {
     data->realState = MR_WAITING;
     data->state = MR_WAITING;
     data->sendCounter = 0;
+    data->cmwapMode = isCMWAP;
     data->cmwapProxyAck = 0;
 
     uIntMap* obj = malloc(sizeof(uIntMap));
@@ -468,9 +489,10 @@ static void* my_initNetworkAsync(void* arg) {
 int32 my_initNetwork(uc_engine* uc, MR_INIT_NETWORK_CB cb, const char* mode, void* userData) {
 #ifdef NETWORK_SUPPORT
     printf("my_initNetwork(0x%p, '%s')\n", cb, mode);
-    if (strncasecmp("cmwap", mode, 5) == 0) {
-        isCMWAP = TRUE;
-    }
+    /* Mythroad apps can reinitialize the network with CMNET after a CMWAP
+     * download.  The active mode must therefore be replaced, not only ever
+     * promoted to CMWAP, otherwise later async connects stay visibly WAITING. */
+    isCMWAP = (strncasecmp("cmwap", mode, 5) == 0) ? TRUE : FALSE;
     if (cb != NULL) {
         initNetworkAsyncData_t* data = malloc(sizeof(initNetworkAsyncData_t));
         data->cb = cb;
@@ -635,7 +657,7 @@ int32 my_send(int32 s, const char* buf, int len) {
     mSocket* data = (mSocket*)obj->data;
 
     data->sendCounter++;
-    if (isCMWAP) {  // cmwap模式需要通过代理，这里模拟代理的功能
+    if (data->cmwapMode) {  // cmwap模式需要通过代理，这里模拟代理的功能
         printf("[my_send] cmwap on.\n");
         printf("[my_send] realState:%d.\n", data->realState);
         if (data->realState == MR_WAITING) {
@@ -675,6 +697,7 @@ int32 my_send(int32 s, const char* buf, int len) {
     }
     ret = send(data->s, buf, len, 0);
     printf("my_send(s:%d, len:%d): sent=%d, errno=%d\n", s, len, ret, errno);
+    printf("[my_send] data: %s\n", buf);
     if (ret == -1) {
         return MR_FAILED;
     }
@@ -772,12 +795,16 @@ int32 my_recv(int32 s, char* buf, int len) {
     }
     ret = recv(data->s, buf, len, 0);
     printf("my_recv(s:%d): recv=%d, errno=%d\n", s, ret, errno);
-    /* recv 返回 0 表示对端关闭了连接（TCP FIN），向 ARM 代码
-     * 返回 MR_FAILED 让其走错误/关闭路径，而不是返回 0 让其
-     * 误以为"暂时没数据"而无限轮询。 */
-    // if (ret == 0) {
-    //     return MR_FAILED;
-    // }
+    if (ret == 0) {
+        /*
+         * select()+readable followed by recv()==0 is TCP FIN, not "no data".
+         * Mythroad sockets use 0 for temporary EAGAIN-style polling; keeping a
+         * closed socket in that state makes browser/update state machines spin
+         * forever instead of completing their response parse.
+         */
+        my_closeSocket(s);
+        return MR_FAILED;
+    }
     if (ret > 0) {
         char preview[65];
         int plen = ret < 64 ? ret : 64;

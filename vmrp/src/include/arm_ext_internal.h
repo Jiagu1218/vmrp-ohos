@@ -7,6 +7,11 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <limits.h>
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 
 #define EXT_BASE_ADDR 0x00010000u
 #define EXT_MEM_SIZE  (16u * 1024u * 1024u)
@@ -25,8 +30,12 @@
  * into the normal low heap; child loaders may keep the original address. */
 #define EXT_PLATFORM_MEM_ADDR 0x40000000u
 #define EXT_PLATFORM_MEM_SIZE (2u * 1024u * 1024u)
+#define EXT_PLATFORM_IO_MEM_ADDR 0x80000000u
+#define EXT_PLATFORM_IO_MEM_SIZE (18u * 1024u * 1024u)
 #define EXT_PLATFORM_ALT_MEM_ADDR 0xA0000000u
 #define EXT_PLATFORM_ALT_MEM_SIZE (2u * 1024u * 1024u)
+#define EXT_EXECUTOR_META_ADDR 0x70000000u
+#define EXT_EXECUTOR_META_SIZE (64u * 1024u)
 /* 低地址表大小。部分游戏（如 gwkdl）通过读取 EXT table 区域以外的低地址
  * 进行内存检测；0x2000 不够大会导致读取 unmapped 地址崩溃。扩展到
  * 0x10000 (64KB) 以覆盖这些访问。 */
@@ -41,6 +50,9 @@
 #define MRP_VFD_MAX 4
 #define MRP_VFD_BASE 0x7FFF0000u
 #define ARM_EXT_NESTED_MODULE_MAX 64
+#define ARM_EXT_PACK_TABLE_SIZE 128u
+#define ARM_EXT_SHORT_PACK_ALIAS_MAX 32u
+#define ARM_EXT_DIAG_FD_MAX 32u
 
 typedef struct mr_c_function_P_t {
     uint32 start_of_ER_RW;
@@ -63,15 +75,29 @@ typedef struct MrpVirtualFd {
     uint32_t pos;
 } MrpVirtualFd;
 
+typedef struct ArmExtShortPackAlias {
+    char alias[ARM_EXT_SHORT_PACK_ALIAS_MAX];
+    char host_path[PATH_MAX];
+} ArmExtShortPackAlias;
+
 typedef struct ArmExtNestedModule {
     uint32_t file_addr;
     uint32_t file_len;
     uint32_t p_addr;
     uint32_t helper_addr;
+    /* Host-openable MRP that supplied this child image, used when wrappers
+     * clear table[100] before the child asks for sibling resources. */
+    char package_host_path[PATH_MAX];
+    /* RAM-backed MRP package that supplied this child image.  Some loaders
+     * install downloaded packages through table[104]/[105] instead of a host
+     * path, then clear table[100] before child resource reads. */
+    uint32_t package_ram_addr;
+    uint32_t package_ram_len;
+    uint32_t pack_name_addr;
     /* 观测到的该模块 GOT 桥块中 memcpy(table[3]=EXT_TABLE_ADDR+0xC) 桥所在的
-     * R9 相对偏移（ARM 重定位写入该桥时记录，0=未观测）。私有 loader 子模块的
-     * GOT 桥块基址随模块链接结果而变，写死会错位；用同族已自重定位实例观测到的
-     * 真实偏移来平移 bridge 修复描述符，避免把桥写到模块代码实际不读取的位置。 */
+     * R9 相对偏移（ARM 重定位写入该桥时记录，0=未观测）。该值仅描述本模块
+     * 自己的重定位结果；private-loader RW 镜像还必须由当前 child 的 bridge-copy
+     * 指令结构证明，不能再借同地址区间的其它模块偏移。 */
     uint32_t got_memcpy_off;
 } ArmExtNestedModule;
 
@@ -81,15 +107,29 @@ typedef struct ArmExtRowSpans {
     uint32_t rows;
 } ArmExtRowSpans;
 
+typedef struct ArmExtDiagFd {
+    int32_t handle;
+    char name[128];
+} ArmExtDiagFd;
+
 struct ArmExtModule {
     uc_engine *uc;
     uint8_t *mem;
     uint8_t *low_table;
     uint8_t *platform_mem;
+    uint8_t *platform_io_mem;
     uint8_t *platform_alt_mem;
+    uint8_t *executor_meta_mem;
+    uint32_t executor_meta_top;
     uint32_t heap_top;
     uint32_t code_len;
     const uint8_t *host_code;
+    char pack_alias[128];
+    char pack_host_path[PATH_MAX];
+    ArmExtShortPackAlias *short_pack_aliases;
+    uint32_t short_pack_alias_count;
+    uint32_t short_pack_alias_capacity;
+    uint32_t pack_table_addr;
     uint32_t helper_addr;
     uint32_t p_addr;
     uint32_t screen_addr;
@@ -129,6 +169,11 @@ struct ArmExtModule {
     uint32_t last_file_addr;
     uint32_t last_file_len;
     uint8_t *last_file_copy;
+    /* Package context that produced last_file_copy; copied into a nested
+     * module record once the wrapper stages that file as executable code. */
+    char last_file_pack_host_path[PATH_MAX];
+    uint32_t last_file_pack_ram_addr;
+    uint32_t last_file_pack_ram_len;
     uint32_t last_alloc_addr;
     uint32_t last_alloc_len;
     uint32_t nested_p_addr;
@@ -145,6 +190,9 @@ struct ArmExtModule {
     uint32_t primary_file_len;
     int primary_host_init_pending;
     uint32_t wrapper_timer_dispatch_addr;
+    /* R9-relative scheduler header used by compact wrapper timer walkers.
+     * Zero means the wrapper uses another/unknown timer layout. */
+    uint32_t wrapper_compact_timer_scheduler_off;
     /* 19KB cfunction.ext 的 chain walker thunk 地址（0xE83B50 格式：
      * push{r3,lr}; bl chain_walker; movs r0,#0; pop{r3,pc}）。
      * find_wrapper_timer_dispatch 匹配到该 thunk 时不将其作为宿主 timer
@@ -154,6 +202,13 @@ struct ArmExtModule {
     int nested_module_count;
     uint32_t outer_r9;
     uint32_t nested_return_addr;
+    /* UC_HOOK_INTR covers every ARM SVC/HVC-style trap.  Handled ABI traps
+     * leave these zero; unhandled traps set them so run_arm_with_sp() can turn
+     * Unicorn's clean hook stop back into a real CPU exception. */
+    uint32_t pending_intr_no;
+    uint32_t pending_intr_pc;
+    uint32_t pending_intr_r0;
+    uint32_t pending_intr_r1;
     uint32_t screen_write_count;
     uint32_t thumb_fix_count;
     uint32_t pc_ring[EXT_TRACE_PC_RING];
@@ -204,6 +259,7 @@ struct ArmExtModule {
     int mrp_cache_count;
     int mrp_cache_capacity;
     MrpVirtualFd mrp_vfds[MRP_VFD_MAX];
+    ArmExtDiagFd diag_fds[ARM_EXT_DIAG_FD_MAX];
 
     const AppCompatProfile *profile;
     void *app_state;
@@ -217,10 +273,18 @@ static inline void *arm_ptr(ArmExtModule *m, uint32_t addr) {
         addr >= EXT_PLATFORM_MEM_ADDR &&
         addr - EXT_PLATFORM_MEM_ADDR < EXT_PLATFORM_MEM_SIZE)
         return m->platform_mem + (addr - EXT_PLATFORM_MEM_ADDR);
+    if (m->platform_io_mem &&
+        addr >= EXT_PLATFORM_IO_MEM_ADDR &&
+        addr - EXT_PLATFORM_IO_MEM_ADDR < EXT_PLATFORM_IO_MEM_SIZE)
+        return m->platform_io_mem + (addr - EXT_PLATFORM_IO_MEM_ADDR);
     if (m->platform_alt_mem &&
         addr >= EXT_PLATFORM_ALT_MEM_ADDR &&
         addr - EXT_PLATFORM_ALT_MEM_ADDR < EXT_PLATFORM_ALT_MEM_SIZE)
         return m->platform_alt_mem + (addr - EXT_PLATFORM_ALT_MEM_ADDR);
+    if (m->executor_meta_mem &&
+        addr >= EXT_EXECUTOR_META_ADDR &&
+        addr - EXT_EXECUTOR_META_ADDR < EXT_EXECUTOR_META_SIZE)
+        return m->executor_meta_mem + (addr - EXT_EXECUTOR_META_ADDR);
     return NULL;
 }
 

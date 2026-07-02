@@ -9,14 +9,11 @@
 #include <string.h>
 #include <zlib.h>
 #ifdef _WIN32
-#include <direct.h>
 #ifndef PATH_MAX
 #define PATH_MAX 260
 #endif
-#define VMRP_CHDIR _chdir
 #else
 #include <unistd.h>
-#define VMRP_CHDIR chdir
 #endif
 
 #ifndef PATH_MAX
@@ -29,6 +26,15 @@
 #include "./include/network.h"
 #include "./include/runtime.h"
 #include "./include/arm_ext_executor.h"
+
+#define VMRP_LOG_ENABLED() (getenv("VMRP_LOG") != NULL)
+#define VMRP_LOG(...)                          \
+    do {                                      \
+        if (VMRP_LOG_ENABLED()) {             \
+            fprintf(stderr, __VA_ARGS__);     \
+            fflush(stderr);                   \
+        }                                     \
+    } while (0)
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -124,7 +130,7 @@ static int extract_ext_from_mrp(uint8 *raw, uint32 raw_len, const char *name,
 }
 
 static int smoke_arm_ext(const char *path) {
-    FILE *fp = fopen(path, "rb");
+    FILE *fp = vmrp_host_fopen(path, "rb");
     if (!fp) {
         perror(path);
         return MR_FAILED;
@@ -212,7 +218,7 @@ static int apply_config_paths(const VmrpArgs *args) {
         snprintf(vmrp_config.work_dir, sizeof(vmrp_config.work_dir), ".");
     }
 
-    if (VMRP_CHDIR(vmrp_config.work_dir) != 0) {
+    if (vmrp_host_chdir(vmrp_config.work_dir) != MR_SUCCESS) {
         fprintf(stderr, "vmrp: unable to switch working directory to '%s': %s\n",
                 vmrp_config.work_dir, strerror(errno));
         return MR_FAILED;
@@ -235,9 +241,9 @@ int startVmrp(const VmrpArgs *args) {
         }
     }
 
-    fprintf(stderr, "[startVmrp] vmrp_runtime_init...\n"); fflush(stderr);
+    VMRP_LOG("[startVmrp] vmrp_runtime_init...\n");
     if (vmrp_runtime_init(&runtime) != MR_SUCCESS) return MR_FAILED;
-    fprintf(stderr, "[startVmrp] vmrp_runtime_init OK\n"); fflush(stderr);
+    VMRP_LOG("[startVmrp] vmrp_runtime_init OK\n");
 
     const char *arm_ext_smoke = getenv("VMRP_ARM_EXT_SMOKE");
     if (arm_ext_smoke && *arm_ext_smoke) {
@@ -260,10 +266,10 @@ int startVmrp(const VmrpArgs *args) {
         return MR_FAILED;
     }
 
-    fprintf(stderr, "[startVmrp] vmrp_runtime_start_dsm('%s','%s','%s')...\n",
-            filename, extName, entry ? entry : ""); fflush(stderr);
+    VMRP_LOG("[startVmrp] vmrp_runtime_start_dsm('%s','%s','%s')...\n",
+             filename, extName, entry ? entry : "");
     uint32_t ret = vmrp_runtime_start_dsm(&runtime, filename, extName, entry);
-    fprintf(stderr, "[startVmrp] vmrp_runtime_start_dsm returned 0x%X\n", ret); fflush(stderr);
+    VMRP_LOG("[startVmrp] vmrp_runtime_start_dsm returned 0x%X\n", ret);
     if (ret != MR_SUCCESS) {
         vmrp_runtime_destroy(&runtime);
         return MR_FAILED;
