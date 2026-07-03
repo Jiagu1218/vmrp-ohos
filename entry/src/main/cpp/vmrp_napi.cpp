@@ -2,19 +2,27 @@
  * vmrp_napi.cpp - NAPI 桥接主入口。
  *
  * 把 VmrpEngine/VmrpRenderer/VmrpAudio 整合为 ArkTS 可调用的 NAPI 模块，
- * 并注册为 XComponent 的 native 插件（OH_NativeXComponent 方式，接收 surface
- * 生命周期 + 触摸事件）。
+ * 采用官方范式5（NDK 节点创建 + OH_ArkUI_SurfaceHolder）管理 XComponent Surface 生命周期。
  *
- * partial render 修复（路径B）：旧实现 OnSurfaceCreated 一次性取尺寸（可能拿到
- * 布局中间态 384x384），OnSurfaceChanged 是空壳。本实现：
- *   - OnSurfaceCreated 用占位尺寸建 EGL surface（不依赖最终尺寸）；
- *   - OnSurfaceChanged 拿到 window 后用 OH_NativeXComponent_GetXComponentSize 取最终
- *     物理像素尺寸，调 renderer.RebuildSurface 重设 SET_BUFFER_GEOMETRY + 重建 eglSurface，
- *     彻底纠正 Created 时拿到的中间态尺寸。
+ * 为什么用 NDK 节点创建范式：
+ *   声明式 XComponent + getAttachedFrameNodeById 拿到的 handle 不是 NDK XComponent 节点，
+ *   SurfaceHolder_Create 返回 rc=401（PARAM_INVALID）。只有 native 侧 createNode(ARKUI_NODE_XCOMPONENT)
+ *   产出的节点才是真正的 NDK XComponent 节点，SurfaceHolder 才接受。
  *
- * 线程：所有 vmrp 引擎调用（Init/Start/Event/Timer/Render）都在 XComponent 的工作线程
- * 或定时器线程上执行，保证 Unicorn 引擎单线程串行。EGL 渲染在 XComponent 渲染线程
- * （帧回调线程），避免 EGL surface 跨线程 swap。
+ * 绑定流程：
+ *   - ArkTS: ContentSlot(nodeContent) 占位渲染区；aboutToAppear 调 createSurfaceNode(nodeContent)。
+ *   - native createSurfaceNode: NodeContent→handle → RegisterCallback(ON_ATTACH_TO_WINDOW)。
+ *   - ON_ATTACH_TO_WINDOW 回调里: createNode(ARKUI_NODE_XCOMPONENT) + 设尺寸 + SurfaceHolder_Create
+ *     + SurfaceCallback + OnFrameCallback + NODE_TOUCH_EVENT + NodeContent_AddNode。
+ *
+ * Surface 生命周期（callback-object 模式）：
+ *   - OnSurfCreated(holder)：GetNativeWindow → renderer.OnSurfaceCreated(window)；
+ *   - OnSurfChanged(holder, w, h)：用回调给的物理像素尺寸 RebuildSurface；
+ *   - OnSurfDestroyed(holder)：renderer.OnSurfaceDestroyed。
+ *
+ * 触摸：native NODE_TOUCH_EVENT 回调里 PointerEvent_GetX/Y + GetAction → SendEvent（不经 ArkTS）。
+ *
+ * 线程：EGL 渲染在 XComponent 帧回调线程，避免 EGL surface 跨线程 swap。
  */
 #include "napi/native_api.h"
 #include "vmrp_engine.h"
@@ -22,8 +30,13 @@
 #include "vmrp_audio.h"
 
 #include <ace/xcomponent/native_interface_xcomponent.h>
+#include <arkui/native_interface.h>
+#include <arkui/native_node.h>
+#include <arkui/native_node_napi.h>
+#include <arkui/ui_input_event.h>
 #include <hilog/log.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstring>
 #include <mutex>
@@ -61,17 +74,24 @@ void TryRenderForce(); // 不管 dirty 都渲染一帧（确保持续上屏）
 void NotifyEditIfNeeded();
 void RequestRender();
 
-// XComponent 句柄：用于在 OnSurfaceCreated 时注册帧回调。
+// NDK 节点 API（@since 12）+ SurfaceHolder（@since 19）。
 // 渲染必须在 XComponent 的渲染线程（帧回调线程）执行，否则 EGL surface 跨
 // 线程 swap 会报 EGL_BAD_SURFACE（window surface 与创建它的 XComponent 绑定）。
-OH_NativeXComponent *g_xcomp = nullptr;
+static ArkUI_NativeNodeAPI_1 *g_node_api = nullptr;   // 懒加载，createSurfaceNode 时初始化
+static ArkUI_NodeContentHandle g_content = nullptr;   // ArkTS ContentSlot 对应的 NodeContent
+static ArkUI_NodeHandle g_xc_node = nullptr;          // native createNode(ARKUI_NODE_XCOMPONENT) 产物
+static OH_ArkUI_SurfaceHolder *g_holder = nullptr;
+static OH_ArkUI_SurfaceCallback *g_surf_cb = nullptr;
 // 渲染请求标志：timer 线程驱动引擎后置位，帧回调线程消费并渲染。
 std::atomic<bool> g_need_render{false};
 
-// 帧回调：在 XComponent 渲染线程（与 OnSurfaceCreated 同线程）执行。
+// 前向声明（定义在 createSurfaceNode 之后，此处供 OnSurf* 早引用）。
+static void OnNodeTouchEvent(ArkUI_NodeEvent *event);
+
+// 帧回调：在 XComponent 渲染线程（API 20 OH_ArkUI_XComponent_RegisterOnFrameCallback 注册）执行。
 // 这是渲染 EGL surface 的正确线程。timer 线程只置 g_need_render，不直接渲染。
-static void OnFrameCallback(OH_NativeXComponent *component, uint64_t timestamp, uint64_t targetTimestamp) {
-    (void)component; (void)timestamp; (void)targetTimestamp;
+static void OnFrameCallback(ArkUI_NodeHandle node, uint64_t timestamp, uint64_t targetTimestamp) {
+    (void)node; (void)timestamp; (void)targetTimestamp;
     // 引擎运行时每帧都渲染并 swap：XComponent 的 EGL window surface 是双缓冲，
     // 需要持续 eglSwapBuffers 才能维持画面显示。dsm_gm 等静态画面画完一帧后不再
     // dirty，但 window surface 必须持续 swap 否则内容会被回收导致黑屏。
@@ -82,98 +102,36 @@ static void OnFrameCallback(OH_NativeXComponent *component, uint64_t timestamp, 
     }
 }
 
-// ---- XComponent 回调 ----
-static void OnSurfaceCreated(OH_NativeXComponent *component, void *window) {
-    g_xcomp = component;
-    // Created 时用引擎逻辑尺寸(240x320)建 EGL surface（占位，最终尺寸由 Changed 兜底）。
+// ---- SurfaceHolder 回调（callback-object 模式）----
+// Created：从 holder 取 native window 建 EGL surface（占位，最终尺寸由 Changed 兜底）。
+static void OnSurfCreated(OH_ArkUI_SurfaceHolder *holder) {
+    OHNativeWindow *window = OH_ArkUI_XComponent_GetNativeWindow(holder);
     int32_t w = VmrpEngine::Instance().ScreenWidth();
     int32_t h = VmrpEngine::Instance().ScreenHeight();
     if (w <= 0) w = 240;
     if (h <= 0) h = 320;
     std::lock_guard<std::mutex> lk(g_render_mtx);
     g_renderer.OnSurfaceCreated(window);
-    // 注册帧回调：在 XComponent 渲染线程做渲染，避免 EGL surface 跨线程。
-    OH_NativeXComponent_RegisterOnFrameCallback(component, OnFrameCallback);
-    OH_NativeXComponent_ExpectedRateRange range = {1, 60, 60};
-    OH_NativeXComponent_SetExpectedFrameRateRange(component, &range);
-    LOGI("OnSurfaceCreated screen=%dx%d, frame callback registered", w, h);
+    LOGI("OnSurfCreated screen=%{public}dx%{public}d, window=%{public}p", w, h, (void *)window);
 }
 
-static void OnSurfaceChanged(OH_NativeXComponent *component, void *window) {
-    // 路径B 核心修复：用 XComponent 物理像素尺寸兜底重建 surface。
-    // Created 时 surface 尺寸可能是布局中间态（如 384x384），Changed 时取最终尺寸
-    // 重设 SET_BUFFER_GEOMETRY + 重建 eglSurface，纠正渲染区域。
-    uint64_t surf_w = 0, surf_h = 0;
-    int32_t gret = OH_NativeXComponent_GetXComponentSize(component, window, &surf_w, &surf_h);
+// Changed：回调直接给物理像素尺寸，省掉 GetXComponentSize，直接 RebuildSurface 纠正
+// Created 时可能拿到的布局中间态尺寸。
+static void OnSurfChanged(OH_ArkUI_SurfaceHolder *holder, uint64_t width, uint64_t height) {
+    (void)holder;
+    if (width == 0 || height == 0) return;
     std::lock_guard<std::mutex> lk(g_render_mtx);
-    if (gret == 0 && surf_w > 0 && surf_h > 0) {
-        g_renderer.RebuildSurface((int32_t)surf_w, (int32_t)surf_h);
-        LOGI("OnSurfaceChanged rebuilt to %llux%llu",
-             (unsigned long long)surf_w, (unsigned long long)surf_h);
-    }
+    g_renderer.RebuildSurface((int32_t)width, (int32_t)height);
+    LOGI("OnSurfChanged rebuilt to %{public}llux%{public}llu",
+         (unsigned long long)width, (unsigned long long)height);
 }
 
-static void OnSurfaceDestroyed(OH_NativeXComponent *component, void *window) {
-    (void)window;
-    if (component) {
-        OH_NativeXComponent_UnregisterOnFrameCallback(component);
-    }
+static void OnSurfDestroyed(OH_ArkUI_SurfaceHolder *holder) {
+    (void)holder;
     std::lock_guard<std::mutex> lk(g_render_mtx);
     g_renderer.OnSurfaceDestroyed();
-    g_xcomp = nullptr;
+    LOGI("OnSurfDestroyed");
 }
-
-// 把 XComponent 触摸事件转成 vmrp 的鼠标事件。
-static void DispatchTouchEvent(OH_NativeXComponent *component, void *window) {
-    (void)window;
-    OH_NativeXComponent_TouchEvent touch;
-    int32_t r = OH_NativeXComponent_GetTouchEvent(component, window, &touch);
-    if (r != 0) return;
-
-    int32_t sw = VmrpEngine::Instance().ScreenWidth();
-    int32_t sh = VmrpEngine::Instance().ScreenHeight();
-    if (sw <= 0) sw = 240;
-    if (sh <= 0) sh = 320;
-
-    uint64_t xcomp_w = 0, xcomp_h = 0;
-    OH_NativeXComponent_GetXComponentSize(component, window, &xcomp_w, &xcomp_h);
-
-    float x = touch.x;
-    float y = touch.y;
-    if (touch.numPoints > 0) {
-        x = touch.touchPoints[0].x;
-        y = touch.touchPoints[0].y;
-    }
-
-    // 归一化到 [0,1] 再映射到 MRP 屏幕坐标。
-    int32_t mx, my;
-    if (xcomp_w > 0 && xcomp_h > 0) {
-        mx = static_cast<int32_t>(x / xcomp_w * sw);
-        my = static_cast<int32_t>(y / xcomp_h * sh);
-    } else {
-        mx = static_cast<int32_t>(x);
-        my = static_cast<int32_t>(y);
-    }
-    if (mx < 0) mx = 0; if (mx >= sw) mx = sw - 1;
-    if (my < 0) my = 0; if (my >= sh) my = sh - 1;
-
-    int code = -1;
-    if (touch.type == OH_NativeXComponent_TouchEventType::OH_NATIVEXCOMPONENT_DOWN) {
-        code = VMRP_MOUSE_DOWN;
-    } else if (touch.type == OH_NativeXComponent_TouchEventType::OH_NATIVEXCOMPONENT_UP) {
-        code = VMRP_MOUSE_UP;
-    } else if (touch.type == OH_NativeXComponent_TouchEventType::OH_NATIVEXCOMPONENT_MOVE) {
-        code = VMRP_MOUSE_MOVE;
-    }
-    if (code >= 0) {
-        VmrpEngine::Instance().SendEvent(code, mx, my);
-        RequestRender();
-    }
-}
-
-static OH_NativeXComponent_Callback g_xcomp_cb = {
-    OnSurfaceCreated, OnSurfaceChanged, OnSurfaceDestroyed, DispatchTouchEvent
-};
 
 // 若屏幕脏则渲染一帧。由 XComponent 帧回调（渲染线程）调用。
 void TryRender() {
@@ -393,6 +351,115 @@ static napi_value SetEditCallback(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// native 触摸事件回调：PointerEvent_GetX/Y + GetAction → SendEvent（不经 ArkTS）。
+static void OnNodeTouchEvent(ArkUI_NodeEvent *event) {
+    const ArkUI_UIInputEvent *input = OH_ArkUI_NodeEvent_GetInputEvent(event);
+    if (input == nullptr) return;
+    if (OH_ArkUI_UIInputEvent_GetType(input) != ARKUI_UIINPUTEVENT_TYPE_TOUCH) return;
+
+    float x = OH_ArkUI_PointerEvent_GetX(input);
+    float y = OH_ArkUI_PointerEvent_GetY(input);
+    int32_t sw = VmrpEngine::Instance().ScreenWidth();
+    int32_t sh = VmrpEngine::Instance().ScreenHeight();
+    if (sw <= 0) sw = 240;
+    if (sh <= 0) sh = 320;
+    // XComponent 节点 240x320 vp，PointerEvent 坐标相对其左上角，与 MRP 屏幕 1:1。
+    int32_t mx = std::max(0, std::min(sw - 1, static_cast<int32_t>(x)));
+    int32_t my = std::max(0, std::min(sh - 1, static_cast<int32_t>(y)));
+
+    int code = -1;
+    switch (OH_ArkUI_UIInputEvent_GetAction(input)) {
+        case UI_TOUCH_EVENT_ACTION_DOWN: code = VMRP_MOUSE_DOWN; break;
+        case UI_TOUCH_EVENT_ACTION_UP:   code = VMRP_MOUSE_UP;   break;
+        case UI_TOUCH_EVENT_ACTION_MOVE: code = VMRP_MOUSE_MOVE; break;
+        default: break;
+    }
+    if (code >= 0) {
+        VmrpEngine::Instance().SendEvent(code, mx, my);
+        RequestRender();
+    }
+}
+
+// createSurfaceNode(nodeContent): ArkTS 在 aboutToAppear 时调用（UI 线程）。
+// 同步创建 XComponent 节点 + SurfaceHolder + 挂到 NodeContent（按官方 ContentSlot 范式）。
+// 范式5核心：native createNode(ARKUI_NODE_XCOMPONENT) 产出真正的 NDK XComponent 节点，
+// SurfaceHolder_Create 才接受它（声明式 XComponent handle 不被接受，rc=401）。
+static napi_value CreateSurfaceNode(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (argc < 1) {
+        LOGE("createSurfaceNode: missing nodeContent arg");
+        return nullptr;
+    }
+
+    int32_t r = OH_ArkUI_GetNodeContentFromNapiValue(env, args[0], &g_content);
+    if (r != ARKUI_ERROR_CODE_NO_ERROR || g_content == nullptr) {
+        LOGE("GetNodeContentFromNapiValue failed: rc=%{public}d", r);
+        return nullptr;
+    }
+    LOGI("createSurfaceNode: content=%{public}p", (void *)g_content);
+
+    // 懒加载 nodeAPI。
+    if (g_node_api == nullptr) {
+        OH_ArkUI_GetModuleInterface(ARKUI_NATIVE_NODE, ArkUI_NativeNodeAPI_1, g_node_api);
+    }
+    if (g_node_api == nullptr) {
+        LOGE("GetModuleInterface(ARKUI_NATIVE_NODE) returned null");
+        return nullptr;
+    }
+
+    // 1) 创建 XComponent 节点 + 设尺寸 240x320（vp，与 MRP 屏幕一致）。
+    g_xc_node = g_node_api->createNode(ARKUI_NODE_XCOMPONENT);
+    if (g_xc_node == nullptr) {
+        LOGE("createNode(ARKUI_NODE_XCOMPONENT) returned null");
+        return nullptr;
+    }
+    ArkUI_NumberValue wv; wv.f32 = 240.0f;
+    ArkUI_NumberValue hv; hv.f32 = 320.0f;
+    ArkUI_AttributeItem wItem; wItem.value = &wv; wItem.size = 1; wItem.string = nullptr; wItem.object = nullptr;
+    ArkUI_AttributeItem hItem; hItem.value = &hv; hItem.size = 1; hItem.string = nullptr; hItem.object = nullptr;
+    g_node_api->setAttribute(g_xc_node, NODE_WIDTH, &wItem);
+    g_node_api->setAttribute(g_xc_node, NODE_HEIGHT, &hItem);
+    LOGI("XComponent node created: %{public}p", (void *)g_xc_node);
+
+    // 2) 建 SurfaceHolder（g_xc_node 是 NDK XComponent 节点，Create 应成功）。
+    g_holder = OH_ArkUI_SurfaceHolder_Create(g_xc_node);
+    if (g_holder == nullptr) {
+        LOGE("SurfaceHolder_Create returned null (NDK node=%{public}p)", (void *)g_xc_node);
+        // 诊断：确认节点类型（NDK 节点不会崩，可安全调用）。
+        int32_t nodeType = OH_ArkUI_NodeUtils_GetNodeType(g_xc_node);
+        LOGE("nodeType=%{public}d (XCOMPONENT=12)", nodeType);
+    } else {
+        // 3) 注册 SurfaceCallback。
+        g_surf_cb = OH_ArkUI_SurfaceCallback_Create();
+        OH_ArkUI_SurfaceCallback_SetSurfaceCreatedEvent(g_surf_cb, OnSurfCreated);
+        OH_ArkUI_SurfaceCallback_SetSurfaceChangedEvent(g_surf_cb, OnSurfChanged);
+        OH_ArkUI_SurfaceCallback_SetSurfaceDestroyedEvent(g_surf_cb, OnSurfDestroyed);
+        int32_t ar = OH_ArkUI_SurfaceHolder_AddSurfaceCallback(g_holder, g_surf_cb);
+        if (ar != ARKUI_ERROR_CODE_NO_ERROR) LOGE("AddSurfaceCallback failed: %{public}d", ar);
+
+        // 4) 注册帧回调（API 20）：在 XComponent 渲染线程驱动 EGL swap。
+        int32_t fr = OH_ArkUI_XComponent_RegisterOnFrameCallback(g_xc_node, OnFrameCallback);
+        if (fr != ARKUI_ERROR_CODE_NO_ERROR) {
+            LOGE("RegisterOnFrameCallback failed: %{public}d", fr);
+        } else {
+            OH_NativeXComponent_ExpectedRateRange range = {1, 60, 60};
+            OH_ArkUI_XComponent_SetExpectedFrameRateRange(g_xc_node, range);
+        }
+        LOGI("SurfaceHolder ok: holder=%{public}p", (void *)g_holder);
+    }
+
+    // 5) 注册 native 触摸事件（替代 ArkTS .onTouch）。
+    g_node_api->registerNodeEvent(g_xc_node, NODE_TOUCH_EVENT, 0, nullptr);
+    g_node_api->addNodeEventReceiver(g_xc_node, OnNodeTouchEvent);
+
+    // 6) 挂到 NodeContent 上树（按官方 ContentSlot 范式同步挂载）。
+    int32_t adr = OH_ArkUI_NodeContent_AddNode(g_content, g_xc_node);
+    LOGI("NodeContent_AddNode rc=%{public}d", adr);
+    return nullptr;
+}
+
 // ---- 模块注册 ----
 static napi_value VmrpExport(napi_env env, napi_value exports) {
     napi_property_descriptor desc[] = {
@@ -406,24 +473,16 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"cancelEdit", nullptr, CancelEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isRunning", nullptr, IsRunning, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setEditCallback", nullptr, SetEditCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"createSurfaceNode", nullptr, CreateSurfaceNode, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
 
-    // 注册为 XComponent 的 native 插件（OH_NativeXComponent 方式）。
-    napi_value export_instance = nullptr;
-    napi_get_named_property(env, exports, OH_NATIVE_XCOMPONENT_OBJ, &export_instance);
-    OH_NativeXComponent *native_xcomp = nullptr;
-    napi_unwrap(env, export_instance, reinterpret_cast<void **>(&native_xcomp));
-    if (native_xcomp) {
-        OH_NativeXComponent_RegisterCallback(native_xcomp, &g_xcomp_cb);
-        LOGI("XComponent callback registered");
-    } else {
-        LOGE("XComponent native object not found");
-    }
+    // OH_ArkUI_SurfaceHolder 方式：不再用 libraryname 自动注入 OH_NATIVE_XCOMPONENT_OBJ，
+    // Surface 生命周期由 ArkTS 调 bindNode(frameNode) 主动绑定。
     return exports;
 }
 
-// XComponent 通过该符号发现并传入 native 组件对象。
+// 模块注册入口。
 EXTERN_C_START
 static napi_value VmrpXComponentInit(napi_env env, napi_value export_obj) {
     return VmrpExport(env, export_obj);

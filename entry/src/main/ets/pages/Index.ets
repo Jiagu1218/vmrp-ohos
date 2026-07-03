@@ -2,15 +2,18 @@
  * Index.ets - vmrp 鸿蒙主界面。
  *
  * 布局：
- *   - XComponent（id=vmrp_screen）：承载 native EGL/GLES 渲染 + 接收触摸事件。
+ *   - ContentSlot：占位渲染区，native 在其上树时 createNode(ARKUI_NODE_XCOMPONENT) 创建
+ *     XComponent 节点并挂入（官方范式5：NDK 节点创建 + OH_ArkUI_SurfaceHolder）。
  *   - 控制按钮：选择 MRP 文件、方向键、数字键、左右软键、确认键。
  *   - 文本编辑弹层：native 请求编辑时显示 TextInput。
  *
- * 渲染：XComponent 内部由 native 侧 EGL 渲染 RGB565 屏幕（240x320）。
- * 输入：触摸事件由 native XComponent 回调处理；实体按键/软键盘走 sendKey。
+ * 渲染：XComponent 节点由 native 侧 EGL 渲染（240x320）。
+ * 输入：XComponent 区域触摸由 native NODE_TOUCH_EVENT 回调处理（坐标归一化在 native）；
+ *       实体按键/软键盘按钮走 sendKey。
  */
 import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
+import { NodeContent } from '@kit.ArkUI';
 import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
   MR_KEY_UP, MR_KEY_DOWN, MR_KEY_LEFT, MR_KEY_RIGHT,
@@ -30,6 +33,9 @@ struct Index {
   private engine: VmrpEngineTs = new VmrpEngineTs();
   // 当前按住未释放的键，用于长按支持
   private pressedKeys: Set<number> = new Set();
+  // ContentSlot 占位容器：native 在 ON_ATTACH_TO_WINDOW 时 createNode(ARKUI_NODE_XCOMPONENT) 挂入。
+  // 范式5要求 XComponent 由 NDK 创建，否则 SurfaceHolder_Create 返回 rc=401。
+  private nodeContent: NodeContent = new NodeContent();
 
   aboutToAppear(): void {
     this.bootstrap();
@@ -71,9 +77,13 @@ struct Index {
         this.showEdit = true;
         this.editText = '';
       });
+
+      // 5. 把 ContentSlot 的 NodeContent 传给 native 注册回调。
+      //    ContentSlot 上树时 native 会创建 XComponent 节点 + SurfaceHolder + 挂载。
+      this.engine.createSurfaceNode(this.nodeContent);
+
       this.status = '就绪，正在启动默认MRP...';
-      
-      // 5. 自动启动默认MRP，解决启动卡开屏问题
+      // 6. 自动启动默认MRP，解决启动卡开屏问题
       await this.startDefault();
     } catch (e) {
       // ArkTS 对 Error 做 JSON.stringify 会得到 {}，用 message/businessError 更可读。
@@ -160,17 +170,15 @@ struct Index {
       .justifyContent(FlexAlign.Center)
       .padding(4)
 
-      // XComponent 屏幕：native 模块名 "entry" 对应 libentry.so。
-      // 用 OH_NativeXComponent 方式（libraryname）管理 Surface 生命周期——模拟器/真机均稳定。
-      // partial render 由 native 侧 OnSurfaceChanged → RebuildSurface 兜底修复。
-      XComponent({
-        id: 'vmrp_screen',
-        type: XComponentType.SURFACE,
-        libraryname: 'entry'
-      })
-        .width(240)
-        .height(320)
-        .backgroundColor(Color.Black)
+      // 渲染区：ContentSlot 占位，native 在其上树时创建 XComponent 节点（范式5）。
+      // XComponent 节点尺寸由 native 设为 240x320，触摸由 native NODE_TOUCH_EVENT 处理。
+      // ContentSlot 自身不支持设宽高，用 Stack 容器固定尺寸，ContentSlot 填满。
+      Stack() {
+        ContentSlot(this.nodeContent)
+      }
+      .width(240)
+      .height(320)
+      .backgroundColor(Color.Black)
 
       // 方向键 + 功能键（onTouch 支持长按）
       Grid() {

@@ -13,3 +13,4 @@ export const submitEdit: (text: string) => number;
 export const cancelEdit: () => number;
 export const isRunning: () => boolean;
 export const setEditCallback: (cb: () => void) => void;
+export const createSurfaceNode: (nodeContent: object) => void;
