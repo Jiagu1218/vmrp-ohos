@@ -36,14 +36,12 @@ struct EditDialog {
     Column() {
       Text('请输入文字')
         .fontSize(16)
-        .fontColor(Color.Black)
         .margin({ top: 16, bottom: 10 })
       TextArea({ text: this.editText })
         .onChange((v: string) => { this.editText = v; })
         .width('90%')
         .layoutWeight(1)
         .fontSize(16)
-        .fontColor(Color.Black)
       Row() {
         Button('取消')
           .width(100)
@@ -66,7 +64,6 @@ struct EditDialog {
     }
     .width('82%')
     .height(340)
-    .backgroundColor(Color.White)
     .borderRadius(16)
   }
 }
