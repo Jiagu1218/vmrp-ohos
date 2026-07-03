@@ -64,7 +64,6 @@ struct EditDialog {
     }
     .width('82%')
     .height(340)
-    .borderRadius(16)
   }
 }
 
@@ -90,7 +89,6 @@ struct Index {
       cancel: () => { this.engine.cancelEdit(); }
     }),
     alignment: DialogAlignment.Center,
-    customStyle: true,
     autoCancel: false
   });
 
