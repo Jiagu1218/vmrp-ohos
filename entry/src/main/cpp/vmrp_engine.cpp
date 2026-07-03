@@ -136,6 +136,7 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_audio_stop", audio_stop, void (*)(void));
 
     RESOLVE_SYM(so_handle_, "vmrp_api_is_edit_active", is_edit_active, int (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_get_edit_text", get_edit_text, const char *(*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_edit_text", set_edit_text, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "vmrp_api_cancel_edit", cancel_edit, int (*)(void));
 
@@ -207,6 +208,11 @@ int VmrpEngine::PullAudio(void *buffer, int frames) {
 void VmrpEngine::AudioStop() { if (api_.audio_stop) api_.audio_stop(); }
 
 bool VmrpEngine::EditActive() { return api_.is_edit_active && api_.is_edit_active() != 0; }
+std::string VmrpEngine::GetEditText() {
+    if (!api_.get_edit_text) return "";
+    const char *txt = api_.get_edit_text();
+    return txt ? std::string(txt) : std::string();
+}
 int VmrpEngine::SetEditText(const std::string &text) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     return api_.set_edit_text(text.c_str());

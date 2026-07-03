@@ -23,12 +23,57 @@ import {
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { gAbilityContext } from '../entryability/EntryAbility';
 
+// 居中文本编辑对话框。原文本由 controller 的 initialText 传入（回显），
+// 确定/取消分别走 submitEdit/cancelEdit 并关闭弹窗。
+@CustomDialog
+struct EditDialog {
+  controller: CustomDialogController;
+  @Link editText: string;
+  submit: (text: string) => void = () => {};
+  cancel: () => void = () => {};
+
+  build() {
+    Column() {
+      Text('请输入文字')
+        .fontSize(16)
+        .margin({ top: 16, bottom: 10 })
+      TextArea({ text: this.editText })
+        .onChange((v: string) => { this.editText = v; })
+        .width('90%')
+        .layoutWeight(1)
+        .fontSize(16)
+      Row() {
+        Button('取消')
+          .width(100)
+          .height(40)
+          .onClick(() => {
+            this.cancel();
+            this.controller.close();
+          })
+        Button('确定')
+          .width(100)
+          .height(40)
+          .onClick(() => {
+            this.submit(this.editText);
+            this.controller.close();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceEvenly)
+      .margin({ top: 12, bottom: 16 })
+    }
+    .width('82%')
+    .height(340)
+    .backgroundColor(Color.White)
+    .borderRadius(16)
+  }
+}
+
 @Entry
 @Component
 struct Index {
   @State status: string = '未启动';
   @State running: boolean = false;
-  @State showEdit: boolean = false;
   @State editText: string = '';
   private engine: VmrpEngineTs = new VmrpEngineTs();
   // 当前按住未释放的键，用于长按支持
@@ -36,6 +81,19 @@ struct Index {
   // ContentSlot 占位容器：native 在 ON_ATTACH_TO_WINDOW 时 createNode(ARKUI_NODE_XCOMPONENT) 挂入。
   // 范式5要求 XComponent 由 NDK 创建，否则 SurfaceHolder_Create 返回 rc=401。
   private nodeContent: NodeContent = new NodeContent();
+  // 居中编辑弹窗。alignment: Center 居中显示。
+  // autoCancel:false 禁止点遮罩/返回键关闭，强制用户用取消/确定按钮——
+  // 按钮内保证 cancel/submit 通知 native，避免非按钮关闭导致 native 死等卡死。
+  private editController: CustomDialogController = new CustomDialogController({
+    builder: EditDialog({
+      editText: this.editText,
+      submit: (t: string) => { this.engine.submitEdit(t); },
+      cancel: () => { this.engine.cancelEdit(); }
+    }),
+    alignment: DialogAlignment.Center,
+    customStyle: true,
+    autoCancel: false
+  });
 
   aboutToAppear(): void {
     this.bootstrap();
@@ -72,10 +130,10 @@ struct Index {
       this.engine.setScreen(240, 320);
       this.engine.setWorkDir(workDir);
 
-      // 4. 注册编辑回调：native 检测到 MRP 请求编辑时回调此处。
-      this.engine.setEditCallback(() => {
-        this.showEdit = true;
-        this.editText = '';
+      // 4. 注册编辑回调：native 检测到 MRP 请求编辑时回调此处，携带待编辑的原文本回显到输入框。
+      this.engine.setEditCallback((editText: string) => {
+        this.editText = editText;
+        this.editController.open();
       });
 
       // 5. 把 ContentSlot 的 NodeContent 传给 native 注册回调。
@@ -212,37 +270,5 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor(Color.White)
-
-    // 文本编辑弹层（native 请求编辑时显示）
-    .bindSheet($$this.showEdit, this.buildEditSheet(), {
-      height: 260,
-      dragBar: true
-    })
-  }
-
-  @Builder
-  buildEditSheet() {
-    Column() {
-      Text('请输入文字')
-        .fontSize(16)
-        .margin(8)
-      TextInput({ text: this.editText })
-        .onChange((v: string) => { this.editText = v; })
-        .width('90%')
-      Row() {
-        Button('取消')
-          .onClick(() => {
-            this.engine.cancelEdit();
-            this.showEdit = false;
-          })
-        Button('确定')
-          .onClick(() => {
-            this.engine.submitEdit(this.editText);
-            this.showEdit = false;
-          })
-      }
-      .margin(8)
-    }
-    .width('100%')
   }
 }

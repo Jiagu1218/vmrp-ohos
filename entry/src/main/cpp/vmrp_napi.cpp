@@ -183,14 +183,16 @@ static void TimerLoop() {
     LOGI("timer loop exited");
 }
 
-// 编辑通知：状态从无到有时回调 ArkTS。
+// 编辑通知：状态从无到有时回调 ArkTS，并携带待编辑的原文本用于回显。
 static std::atomic<bool> g_edit_notified{false};
 void NotifyEditIfNeeded() {
     bool active = VmrpEngine::Instance().EditActive();
     if (active && !g_edit_notified.exchange(true)) {
         if (g_edit_tsfn) {
+            // 取出 MRP 请求编辑时的初始文本，堆分配后跨线程传给 CallJsEdit（它会释放）。
+            std::string *text = new std::string(VmrpEngine::Instance().GetEditText());
             napi_acquire_threadsafe_function(g_edit_tsfn);
-            napi_call_threadsafe_function(g_edit_tsfn, nullptr, napi_tsfn_nonblocking);
+            napi_call_threadsafe_function(g_edit_tsfn, text, napi_tsfn_nonblocking);
             napi_release_threadsafe_function(g_edit_tsfn, napi_tsfn_release);
         }
     } else if (!active) {
@@ -327,11 +329,19 @@ static napi_value IsRunning(napi_env env, napi_callback_info info) {
 }
 
 // ---- 编辑回调 threadsafe function ----
-static void CallJsEdit(napi_env env, napi_value js_cb, void * /*context*/, void * /*data*/) {
+// data 是堆分配的 std::string（待编辑原文本），CallJs 转成 napi_string 传给 ArkTS 回调后释放。
+static void CallJsEdit(napi_env env, napi_value js_cb, void * /*context*/, void *data) {
     if (env && js_cb) {
-        napi_value undefined;
+        std::unique_ptr<std::string> text(static_cast<std::string *>(data));
+        napi_value undefined, arg;
         napi_get_undefined(env, &undefined);
-        napi_call_function(env, undefined, js_cb, 0, nullptr, nullptr);
+        napi_create_string_utf8(env, text ? text->c_str() : "",
+                                text ? text->size() : 0, &arg);
+        // ArkTS 回调签名: (editText: string) => void
+        napi_call_function(env, undefined, js_cb, 1, &arg, nullptr);
+    } else if (data) {
+        // env 不可用时仍要释放 data 避免泄漏。
+        delete static_cast<std::string *>(data);
     }
 }
 

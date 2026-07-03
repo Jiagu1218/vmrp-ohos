@@ -44,6 +44,7 @@ struct VmrpApi {
     void (*audio_stop)(void);
 
     int (*is_edit_active)(void);
+    const char *(*get_edit_text)(void);
     int (*set_edit_text)(const char *text);
     int (*cancel_edit)(void);
 };
@@ -90,6 +91,9 @@ public:
 
     // 文本编辑。
     bool EditActive();
+    // 获取当前待编辑的原文本（编辑激活时为 MRP 传入的初始文本，否则空串）。
+    // 返回的指针在下次调用前有效（vmrp 内部维护快照），调用方应立即拷贝。
+    std::string GetEditText();
     int SetEditText(const std::string &text);
     int CancelEdit();
 

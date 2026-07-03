@@ -88,7 +88,8 @@ export class VmrpEngineTs {
     return nativeIsRunning();
   }
 
-  setEditCallback(cb: () => void): void {
+  // 注册编辑回调：native 检测到 MRP 请求编辑时回调此处，并携带待编辑的原文本用于回显。
+  setEditCallback(cb: (editText: string) => void): void {
     nativeSetEditCallback(cb);
   }
 
