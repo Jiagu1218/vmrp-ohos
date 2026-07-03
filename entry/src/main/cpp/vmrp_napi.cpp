@@ -2,15 +2,19 @@
  * vmrp_napi.cpp - NAPI 桥接主入口。
  *
  * 把 VmrpEngine/VmrpRenderer/VmrpAudio 整合为 ArkTS 可调用的 NAPI 模块，
- * 并注册为 XComponent 的 native 插件（接收 surface 生命周期 + 触摸事件）。
+ * 并注册为 XComponent 的 native 插件（OH_NativeXComponent 方式，接收 surface
+ * 生命周期 + 触摸事件）。
  *
- * 驱动模型（参考 vmrp/docs/flutter-integration.md 的 pull 模型）：
- *   start() -> StepTimer() -> 若返回间隔>0，用定时器延时再 StepTimer()，循环；
- *   每次 StepTimer/SendEvent 后查 ScreenDirty()，若脏则 Render()；
- *   编辑状态变化通过 tsfn 回调 ArkTS 弹出输入框。
+ * partial render 修复（路径B）：旧实现 OnSurfaceCreated 一次性取尺寸（可能拿到
+ * 布局中间态 384x384），OnSurfaceChanged 是空壳。本实现：
+ *   - OnSurfaceCreated 用占位尺寸建 EGL surface（不依赖最终尺寸）；
+ *   - OnSurfaceChanged 拿到 window 后用 OH_NativeXComponent_GetXComponentSize 取最终
+ *     物理像素尺寸，调 renderer.RebuildSurface 重设 SET_BUFFER_GEOMETRY + 重建 eglSurface，
+ *     彻底纠正 Created 时拿到的中间态尺寸。
  *
- * 线程：所有 vmrp 引擎调用（Init/Start/Event/Timer/Render）都在 XComponent
- * 的工作线程或定时器线程上执行，保证 Unicorn 引擎单线程串行。
+ * 线程：所有 vmrp 引擎调用（Init/Start/Event/Timer/Render）都在 XComponent 的工作线程
+ * 或定时器线程上执行，保证 Unicorn 引擎单线程串行。EGL 渲染在 XComponent 渲染线程
+ * （帧回调线程），避免 EGL surface 跨线程 swap。
  */
 #include "napi/native_api.h"
 #include "vmrp_engine.h"
@@ -32,15 +36,12 @@
 #define LOGE(...) OH_LOG_ERROR(LOG_APP, __VA_ARGS__)
 
 namespace {
-constexpr char kXCompId[] = "vmrp_screen";
-
 // 全局状态：渲染器与音频在 XComponent 回调线程上创建/销毁。
 VmrpRenderer g_renderer;
 VmrpAudio    g_audio;
 std::mutex   g_render_mtx;
 
-// 定时器驱动线程：vmrp 的 timer 是 pull 模型，需宿主按 get_timer_interval()
-// 返回的毫秒数循环调度 timer()。
+// 定时器驱动线程：仅请求渲染 + 检测引擎退出（timer/event 由 vmrp 内部 worker 自驱）。
 std::thread  g_timer_thread;
 std::atomic<bool> g_timer_running{false};
 std::atomic<bool> g_engine_running{false};
@@ -54,8 +55,7 @@ constexpr int VMRP_MOUSE_UP   = 3;
 constexpr int VMRP_MOUSE_MOVE = 12;
 } // namespace
 
-// 这两个函数在全局命名空间定义（无 namespace），供本文件各处调用。
-// 定义放在匿名 namespace 外，避免与 DispatchTouchEvent/TimerLoop 的调用点产生歧义。
+// 这几个函数在全局命名空间定义（无 namespace），供本文件各处调用。
 void TryRender();
 void TryRenderForce(); // 不管 dirty 都渲染一帧（确保持续上屏）
 void NotifyEditIfNeeded();
@@ -85,25 +85,32 @@ static void OnFrameCallback(OH_NativeXComponent *component, uint64_t timestamp, 
 // ---- XComponent 回调 ----
 static void OnSurfaceCreated(OH_NativeXComponent *component, void *window) {
     g_xcomp = component;
+    // Created 时用引擎逻辑尺寸(240x320)建 EGL surface（占位，最终尺寸由 Changed 兜底）。
     int32_t w = VmrpEngine::Instance().ScreenWidth();
     int32_t h = VmrpEngine::Instance().ScreenHeight();
     if (w <= 0) w = 240;
     if (h <= 0) h = 320;
     std::lock_guard<std::mutex> lk(g_render_mtx);
-    g_renderer.OnSurfaceCreated(window, w, h);
+    g_renderer.OnSurfaceCreated(window);
     // 注册帧回调：在 XComponent 渲染线程做渲染，避免 EGL surface 跨线程。
-    // 设定 60fps 期望帧率，让 vsync 持续驱动帧回调。
     OH_NativeXComponent_RegisterOnFrameCallback(component, OnFrameCallback);
     OH_NativeXComponent_ExpectedRateRange range = {1, 60, 60};
     OH_NativeXComponent_SetExpectedFrameRateRange(component, &range);
-    LOGI("OnSurfaceCreated %dx%d, frame callback registered", w, h);
+    LOGI("OnSurfaceCreated screen=%dx%d, frame callback registered", w, h);
 }
 
 static void OnSurfaceChanged(OH_NativeXComponent *component, void *window) {
-    (void)component; (void)window;
-    // surface 尺寸变化（旋转、布局调整）时重新查询，保证 glViewport 铺满。
+    // 路径B 核心修复：用 XComponent 物理像素尺寸兜底重建 surface。
+    // Created 时 surface 尺寸可能是布局中间态（如 384x384），Changed 时取最终尺寸
+    // 重设 SET_BUFFER_GEOMETRY + 重建 eglSurface，纠正渲染区域。
+    uint64_t surf_w = 0, surf_h = 0;
+    int32_t gret = OH_NativeXComponent_GetXComponentSize(component, window, &surf_w, &surf_h);
     std::lock_guard<std::mutex> lk(g_render_mtx);
-    g_renderer.UpdateSurfaceSize();
+    if (gret == 0 && surf_w > 0 && surf_h > 0) {
+        g_renderer.RebuildSurface((int32_t)surf_w, (int32_t)surf_h);
+        LOGI("OnSurfaceChanged rebuilt to %llux%llu",
+             (unsigned long long)surf_w, (unsigned long long)surf_h);
+    }
 }
 
 static void OnSurfaceDestroyed(OH_NativeXComponent *component, void *window) {
@@ -128,9 +135,6 @@ static void DispatchTouchEvent(OH_NativeXComponent *component, void *window) {
     if (sw <= 0) sw = 240;
     if (sh <= 0) sh = 320;
 
-    // XComponent 的 touch.x/y 是相对元素左上的坐标。需确认其单位（vp 还是物理像素）
-    // 才能正确映射到 MRP 屏幕(240x320)。用 OH_NativeXComponent_GetXComponentSize
-    // 获取元素实际尺寸做归一化，避免单位假设错误。
     uint64_t xcomp_w = 0, xcomp_h = 0;
     OH_NativeXComponent_GetXComponentSize(component, window, &xcomp_w, &xcomp_h);
 
@@ -141,8 +145,7 @@ static void DispatchTouchEvent(OH_NativeXComponent *component, void *window) {
         y = touch.touchPoints[0].y;
     }
 
-    // 归一化到 [0,1] 再映射到 MRP 屏幕坐标。无论 touch 是 vp 还是物理像素，
-    // 除以 XComponent 实际尺寸都能得到正确比例。
+    // 归一化到 [0,1] 再映射到 MRP 屏幕坐标。
     int32_t mx, my;
     if (xcomp_w > 0 && xcomp_h > 0) {
         mx = static_cast<int32_t>(x / xcomp_w * sw);
@@ -178,19 +181,17 @@ void TryRender() {
     if (!VmrpEngine::Instance().ScreenDirty()) return;
     std::lock_guard<std::mutex> lk(g_render_mtx);
     if (!g_renderer.Ready()) return;
-    // 用 RGBA 路径：vmrp 内部 screen_lock 保证读屏线程安全（async worker 模型下
-    // worker 在并发写 screen_buf，RGB565 裸指针路径存在数据竞争）。
     const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
     g_renderer.Render(rgba, sw, sh);
 }
 
-// 在非渲染线程（timer/key）请求渲染：置标志，由帧回调线程消费。
+// 在非渲染线程（timer/key/touch）请求渲染：置标志，由帧回调线程消费。
 void RequestRender() { g_need_render.store(true); }
 
 // 强制渲染：不检查 dirty，每帧都上传纹理并 swap。
-// XComponent 的 EGL window surface 是双缓冲，需持续 eglSwapBuffers 维持显示；
+// EGL window surface 是双缓冲，需持续 eglSwapBuffers 维持显示；
 // 静态画面画完一帧后不再 dirty，但仍需每帧 swap 保持上屏。
 void TryRenderForce() {
     if (!g_engine_running.load()) return;
@@ -203,17 +204,9 @@ void TryRenderForce() {
 }
 
 // 渲染驱动循环。
-//
-// vmrp_api.c 在 VMRP_API_ASYNC_RUNNER=1（上游 c03feee 起硬编码）下采用 async
-// worker 模型：vmrp_api_start 成功后自动起 worker 线程，由 worker 自驱 timer()
-// 与 event()。此时外部若仍周期性调 vmrp_api_timer()，会反复清零 api_timer_active
-// 并打断 worker 的定时等待，导致 mr_timer 永不执行 -> 游戏卡屏。
-//
-// 因此本循环不再调用 StepTimer()（不再驱动 timer），只做两件事：
-//   1. 周期请求渲染（让 XComponent 帧回调线程查 ScreenDirty 并上屏）；
-//   2. 检测引擎退出，退出则停止循环。
-// timer/event 的实际驱动完全交给 vmrp 内部 worker 线程。
-// 渲染本身不在本线程做（EGL surface 须在 XComponent 渲染线程），只置标志。
+// vmrp_api.c 在 VMRP_API_ASYNC_RUNNER=1 下采用 async worker 模型：vmrp_api_start
+// 成功后自动起 worker 线程自驱 timer()/event()。本循环不再调 StepTimer()，
+// 只做两件事：1) 周期请求渲染；2) 检测引擎退出。
 static void TimerLoop() {
     LOGI("timer loop started (async: render-only)");
     while (g_timer_running.load()) {
@@ -221,16 +214,12 @@ static void TimerLoop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
-        // async worker 自驱 timer/event，这里不再调 StepTimer()。
-        RequestRender(); // 请求帧回调线程渲染
+        RequestRender();
         NotifyEditIfNeeded();
-
-        // vmrp 退出检测。
         if (!VmrpEngine::Instance().IsRunning()) {
             g_engine_running.store(false);
             break;
         }
-        // 固定节拍轮询渲染 + 退出检测；不依赖 get_timer_interval（async 下恒为 0）。
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
     }
     LOGI("timer loop exited");
@@ -281,7 +270,7 @@ static napi_value InitEngine(napi_env env, napi_callback_info info) {
     return result;
 }
 
-// setWorkDir(dir): 设置 vmrp 工作目录（MRP 文件 + mythroad 资源根）。
+// setWorkDir(dir): 设置 vmrp 工作目录。
 static napi_value SetWorkDir(napi_env env, napi_callback_info info) {
     size_t argc = 1;
     napi_value args[1];
@@ -309,10 +298,8 @@ static napi_value StartEngine(napi_env env, napi_callback_info info) {
     int r = VmrpEngine::Instance().Start(mrp, ext, entry);
     if (r == 0 && VmrpEngine::Instance().IsRunning()) {
         g_engine_running.store(true);
-        // 启动音频拉流（OHAudio 内部线程）。
         g_audio.Start(VmrpEngine::Instance().AudioSampleRate(),
                       VmrpEngine::Instance().AudioChannels());
-        // 启动定时器驱动线程（若未运行）。
         if (!g_timer_running.exchange(true)) {
             if (g_timer_thread.joinable()) g_timer_thread.join();
             g_timer_thread = std::thread(TimerLoop);
@@ -334,12 +321,12 @@ static napi_value StopEngine(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
-// sendKey(code): 发送按键事件（press/release）。
+// sendKey(type, key): 发送按键事件（press/release）。
 static napi_value SendKey(napi_env env, napi_callback_info info) {
     size_t argc = 2;
     napi_value args[2];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
-    int32_t type = 0, key = 0; // type: 0=press,1=release
+    int32_t type = 0, key = 0;
     napi_get_value_int32(env, args[0], &type);
     napi_get_value_int32(env, args[1], &key);
     int r = VmrpEngine::Instance().SendEvent(type, key, 0);
@@ -401,9 +388,6 @@ static napi_value SetEditCallback(napi_env env, napi_callback_info info) {
     }
     napi_value name;
     napi_create_string_utf8(env, "vmrp_edit_cb", NAPI_AUTO_LENGTH, &name);
-    // 11 参数版：env, func, async_resource, async_resource_name,
-    //           max_queue_size, initial_thread_count, thread_finalize_data,
-    //           thread_finalize_cb, context, call_js_cb, result。
     napi_create_threadsafe_function(env, args[0], nullptr, name, 0, 1, nullptr,
                                     nullptr, nullptr, CallJsEdit, &g_edit_tsfn);
     return nullptr;
@@ -425,7 +409,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
 
-    // 注册为 XComponent 的 native 插件。
+    // 注册为 XComponent 的 native 插件（OH_NativeXComponent 方式）。
     napi_value export_instance = nullptr;
     napi_get_named_property(env, exports, OH_NATIVE_XCOMPONENT_OBJ, &export_instance);
     OH_NativeXComponent *native_xcomp = nullptr;

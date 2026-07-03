@@ -18,6 +18,7 @@ import {
   MR_KEY_STAR, MR_KEY_POUND
 } from '../vmrp/VmrpEngine';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
+import { gAbilityContext } from '../entryability/EntryAbility';
 
 @Entry
 @Component
@@ -39,7 +40,8 @@ struct Index {
       this.status = '正在加载 native 模块...';
       await this.engine.init();
       this.status = 'native 模块已加载';
-      const ctx = getContext(this) as common.UIAbilityContext;
+      // getContext(this) 在 aboutToAppear 早期可能返回 undefined，优先用全局 ability context。
+      const ctx = (gAbilityContext ?? getContext(this)) as common.UIAbilityContext;
 
       // 1. 解压内置 mythroad 运行时到沙箱。
       this.status = '正在准备运行时资源...';
@@ -159,7 +161,8 @@ struct Index {
       .padding(4)
 
       // XComponent 屏幕：native 模块名 "entry" 对应 libentry.so。
-      // id 必须与 native 侧 OH_NATIVE_XCOMPONENT_OBJ 的 XComponent 匹配。
+      // 用 OH_NativeXComponent 方式（libraryname）管理 Surface 生命周期——模拟器/真机均稳定。
+      // partial render 由 native 侧 OnSurfaceChanged → RebuildSurface 兜底修复。
       XComponent({
         id: 'vmrp_screen',
         type: XComponentType.SURFACE,
