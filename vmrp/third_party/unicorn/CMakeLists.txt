@@ -198,8 +198,8 @@ else()
             endif()
         endif()
     else()
-        execute_process(COMMAND ${CMAKE_C_COMPILER} -dM -E -
-            INPUT_FILE /dev/null
+        execute_process(COMMAND ${CMAKE_BINARY_DIR}/ohos_helpers/ohos-cc.bat -dM -E -
+            INPUT_FILE ""
             OUTPUT_VARIABLE UC_COMPILER_MACRO)
 
         while(TRUE)
@@ -369,13 +369,13 @@ else()
 
     # GEN config-host.mak & target directories
     # MESSAGE(STATUS "sh ${CMAKE_CURRENT_SOURCE_DIR}/qemu/configure
-    #     --cc=${CMAKE_C_COMPILER}
+    #     --cc=${CMAKE_BINARY_DIR}/ohos_helpers/ohos-cc
     #     ${EXTRA_CFLAGS}
     #     ${TARGET_LIST}
     #     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}"
     # )
     execute_process(COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/qemu/configure
-        --cc=${CMAKE_C_COMPILER}
+        --cc=${CMAKE_BINARY_DIR}/ohos_helpers/ohos-cc
         ${EXTRA_CFLAGS}
         ${TARGET_LIST}
         WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
