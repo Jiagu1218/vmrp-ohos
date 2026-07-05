@@ -399,6 +399,8 @@ struct Index {
   @State editText: string = '';
   @State currentBp: string = 'sm';
   @State showControls: boolean = true;
+  @State private isFoldable: boolean = false;
+  @State private foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
   private engine: VmrpEngineTs = new VmrpEngineTs();
   private pressedKeys: Set<number> = new Set();
   private nodeContent: NodeContent = new NodeContent();
@@ -429,6 +431,10 @@ struct Index {
       const d = display.getDefaultDisplaySync();
       const wVP = this.getUIContext().px2vp(d.width);
       const hVP = this.getUIContext().px2vp(d.height);
+      this.isFoldable = display.isFoldable();
+      if (this.isFoldable) {
+        this.foldStatus = display.getFoldStatus();
+      }
       if (wVP >= 840) {
         this.currentBp = 'lg';
       } else if (wVP >= 520) {
@@ -438,6 +444,13 @@ struct Index {
       }
       this.screenAreaW = wVP;
       this.screenAreaH = hVP;
+      this.dualAreaW = wVP / 2 - 4;
+      this.dualAreaH = hVP;
+      if (this.isFoldable) {
+        display.on('foldStatusChange', (status: display.FoldStatus) => {
+          this.foldStatus = status;
+        });
+      }
     } catch (_e) {
       this.currentBp = 'sm';
     }
@@ -669,6 +682,107 @@ struct Index {
   }
 
   @Builder
+  foldExpandedLayout() {
+    Column() {
+      Column() {
+        Stack() {
+          Stack() {
+            ContentSlot(this.nodeContent)
+          }
+          .width(240)
+          .height(320)
+          .backgroundColor(SCREEN_BG)
+          .borderRadius(6)
+          .clip(true)
+          .scale({
+            x: Math.min(this.screenAreaW / 240, this.screenAreaH * 0.48 / 320),
+            y: Math.min(this.screenAreaW / 240, this.screenAreaH * 0.48 / 320)
+          })
+          .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+        }
+        .width('100%')
+        .height('50%')
+        .alignContent(Alignment.Center)
+
+        Row() {
+          Row()
+            .width(6)
+            .height(6)
+            .borderRadius(3)
+            .backgroundColor(this.running ? RUN_DOT : '#555577')
+            .margin({ right: 6 })
+          Text(this.status)
+            .fontSize(10)
+            .fontColor(STATUS_TEXT)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+      }
+      .width('100%')
+      .height('50%')
+      .alignItems(HorizontalAlign.Center)
+      .justifyContent(FlexAlign.Center)
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.screenAreaW = newVal.width as number;
+        this.screenAreaH = newVal.height as number;
+      })
+
+      Scroll() {
+        Column() {
+          Row() {
+            DPadWithFunc({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), dpadSize: Math.min(this.screenAreaW * 0.22, 120) })
+              .layoutWeight(1)
+
+            NumPad({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), btnSize: Math.min(this.screenAreaW * 0.07, 34) })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Row({ space: 8 }) {
+            Stack() {
+              Text('选择MRP')
+                .fontSize(11)
+                .fontColor('#CCCCCC')
+            }
+            .height(26)
+            .padding({ left: 14, right: 14 })
+            .borderRadius(13)
+            .backgroundColor(SOFTKEY_BG)
+            .onClick(() => this.pickAndStart())
+
+            Stack() {
+              Text('启动默认')
+                .fontSize(11)
+                .fontColor('#CCCCCC')
+            }
+            .height(26)
+            .padding({ left: 14, right: 14 })
+            .borderRadius(13)
+            .backgroundColor(SOFTKEY_BG)
+            .onClick(() => this.startDefault())
+          }
+          .padding({ top: 4, bottom: 4 })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+      .backgroundColor(SHELL_COLOR)
+      .borderRadius({ topLeft: 16, topRight: 16 })
+      .border({ width: 1, color: SHELL_BORDER })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
   dualScreenLayout() {
     GridRow({
       columns: this.gridColumns,
@@ -706,7 +820,10 @@ struct Index {
 
   build() {
     Column() {
-      if (this.currentBp === 'sm') {
+      if (this.isFoldable && (this.foldStatus === display.FoldStatus.FOLD_STATUS_EXPANDED ||
+        this.foldStatus === display.FoldStatus.FOLD_STATUS_HALF_FOLDED)) {
+        this.foldExpandedLayout()
+      } else if (this.currentBp === 'sm') {
         this.phoneLayout()
       } else {
         this.dualScreenLayout()
