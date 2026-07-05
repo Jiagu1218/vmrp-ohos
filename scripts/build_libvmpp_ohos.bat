@@ -1,11 +1,13 @@
 @echo off
 REM ===========================================================================
-REM  build_libvmpp_ohos.bat [vmrp_src] [abi]
+REM  build_libvmpp_ohos.bat [abi]  OR  build_libvmpp_ohos.bat [vmrp_src] [abi]
 REM  Prebuild libvmrp.so for the HarmonyOS entry module.
 REM
 REM  Args:
-REM    vmrp_src  - vmrp source root (default: ..\..\vmrp)
 REM    abi       - arm64-v8a (default, for real devices) or x86_64 (emulator)
+REM    vmrp_src  - vmrp source root (default: internal ..\vmrp).
+REM                Only pass this explicitly to override; the internal copy
+REM                is the project's source of truth.
 REM
 REM  Output: entry\src\main\cpp\prebuilt\<abi>\libvmrp.so
 REM          entry\libs\<abi>\libvmrp.so  (for HAP packaging)
@@ -21,11 +23,21 @@ REM      satisfy unicorn's qemu/configure shell dependency
 REM ===========================================================================
 setlocal enabledelayedexpansion
 
-set "VMRP_SRC=%~1"
-REM Default vmrp source is the submodule at project root (git submodule)
-if "%VMRP_SRC%"=="" set "VMRP_SRC=%~dp0..\vmrp"
-set "ABI=%~2"
-if "%ABI%"=="" set "ABI=arm64-v8a"
+REM Smart arg parsing: support both `bat <abi>` and `bat <vmrp_src> <abi>`.
+REM The internal vmrp/ (sibling of this script's parent) is the source of
+REM truth and the default; only an explicit non-ABI first arg overrides it.
+set "ABI=arm64-v8a"
+set "VMRP_SRC=%~dp0..\vmrp"
+if not "%~1"=="" (
+    if /I "%~1"=="arm64-v8a" (
+        set "ABI=%~1"
+    ) else if /I "%~1"=="x86_64" (
+        set "ABI=%~1"
+    ) else (
+        set "VMRP_SRC=%~1"
+        if not "%~2"=="" set "ABI=%~2"
+    )
+)
 
 REM Resolve to absolute path.
 pushd "%VMRP_SRC%" 2>nul

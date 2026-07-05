@@ -47,17 +47,14 @@ git --version
 ## 快速开始
 
 ```bash
-# 1. 克隆（含子模块：vmrp 源码 + unicorn）
-git clone --recurse-submodules https://github.com/<你的用户名>/vmrp-ohos.git
+# 1. 克隆
+git clone https://github.com/<你的用户名>/vmrp-ohos.git
 cd vmrp-ohos
 
-# 若已克隆但忘了子模块：
-git submodule update --init --recursive
-
 # 2. 预构建 libvmrp.so（需 Git for Windows 提供 POSIX sh）
-#    参数2=ABI（arm64-v8a 真机 / x86_64 模拟器），vmrp 源码默认是子模块目录
-scripts\build_libvmpp_ohos.bat vmrp x86_64       # 模拟器
-scripts\build_libvmpp_ohos.bat vmrp arm64-v8a     # 真机
+#    直接传 ABI 即可，vmrp 源码默认用项目内的 vmrp/ 目录
+scripts\build_libvmpp_ohos.bat x86_64       # 模拟器
+scripts\build_libvmpp_ohos.bat arm64-v8a    # 真机
 
 # 3. 用 DevEco Studio 打开工程，或用 devecocli：
 devecocli build
@@ -76,11 +73,12 @@ devecocli run --device "Mate 70 RS"
 鸿蒙 native 模块（libentry.so）依赖预构建的 `libvmrp.so`——它是 vmrp 核心 + Unicorn arm-softmmu 交叉编译的产物。
 
 ```bat
-scripts\build_libvmpp_ohos.bat [vmrp_src] [abi]
+scripts\build_libvmpp_ohos.bat [abi]
 ```
 
-- `vmrp_src`：vmrp 源码目录（默认 `..\vmrp`）
 - `abi`：`arm64-v8a`（真机，默认）或 `x86_64`（模拟器）
+
+> 也支持显式指定源码目录的旧用法 `bat [vmrp_src] [abi]`，但通常不需要——脚本默认用项目内的 `vmrp/` 目录，它是本仓库版本管理的一部分。
 
 产物输出到：
 - `entry\src\main\cpp\prebuilt\<abi>\libvmrp.so`（CMake 链接用）
@@ -88,11 +86,12 @@ scripts\build_libvmpp_ohos.bat [vmrp_src] [abi]
 
 **同时构建两个 ABI**（真机 + 模拟器都支持）：
 ```bat
-scripts\build_libvmpp_ohos.bat vmrp arm64-v8a
-scripts\build_libvmpp_ohos.bat vmrp x86_64
+scripts\build_libvmpp_ohos.bat arm64-v8a
+scripts\build_libvmpp_ohos.bat x86_64
 ```
 
 > 脚本内部用 OHOS NDK 的 `ohos.toolchain.cmake` + Ninja 交叉编译，复用 vmrp 的 `vmrp-shared` target（排除 main.c/e2e_control.c，不定义 VMRP_SDL_AUDIO，无 SDL 依赖）。
+> **注意**：vmrp 源码（`vmrp/`）已纳入本仓库版本管理，不再是独立 git submodule。构建脚本默认编译此目录；如需更新上游，在 `vmrp/` 内 `git pull` 后同步提交到本仓库。
 
 ### 第二步：构建鸿蒙工程
 
@@ -120,8 +119,8 @@ devecocli run --device "Mate 70 RS"      # 安装运行
 
 ```
 vmrp-ohos/
-├── vmrp/                          # [git submodule] vmrp 模拟器源码
-│   └── third_party/unicorn/      #   [嵌套 submodule] Unicorn 引擎
+├── vmrp/                          # vmrp 模拟器源码（已纳入版本管理）
+│   └── third_party/unicorn/      #   Unicorn 引擎
 ├── scripts/                       # 预构建脚本
 │   ├── build_libvmpp_ohos.bat    #   libvmrp.so 交叉编译入口
 │   └── CMakeLists.txt             #   CMake wrapper（含移植补丁）
@@ -131,14 +130,14 @@ vmrp-ohos/
 │   │   ├── vmrp_engine.cpp/.h     #   dlopen libvmrp.so + 引擎锁
 │   │   ├── vmrp_renderer.cpp/.h   #   XComponent + EGL/GLES 渲染
 │   │   ├── vmrp_audio.cpp/.h      #   OHAudio 拉流
-│   │   ├── include/vmrp_api.h     #   vmrp C ABI（18 个导出函数）
+│   │   ├── include/vmrp_api.h     #   vmrp C ABI（26 个导出函数）
 │   │   ├── types/libentry/Index.d.ts  # NAPI 类型声明
 │   │   └── CMakeLists.txt         #   native 构建
 │   ├── src/main/ets/              # ArkTS UI 层
 │   │   ├── pages/Index.ets        #   主界面（XComponent + 虚拟键盘）
 │   │   ├── vmrp/VmrpEngine.ets    #   native 模块封装
 │   │   └── vmrp/VmrpAssets.ets    #   mythroad 运行时资源管理
-│   ├── src/main/resources/rawfile/mythroad/  # 内置运行时（dsm_gm.mrp + 字体）
+│   ├── src/main/resources/rawfile/mythroad/  # 内置运行时（dsm_gm.mrp + 字体，递归导入）
 │   ├── libs/<abi>/                # libvmrp.so 打包位置（构建生成）
 │   ├── build-profile.json5        # externalNativeBuild + abiFilters
 │   └── oh-package.json5           # NAPI 类型声明引用
@@ -161,7 +160,7 @@ HarmonyOS App (API 26)
 │   ├── EGL/GLES：RGB565→RGBA 纹理渲染（XComponent 帧回调线程）
 │   ├── OHAudio：pull 模型 PCM 拉流（音频回调线程）
 │   └── 定时器驱动：timer loop 按间隔调度 vmrp_api_timer
-│       ↓ vmrp_api.h（18 个 C 函数，无 SDL）
+│       ↓ vmrp_api.h（26 个 C 函数，无 SDL）
 └── libvmrp.so（预构建）
     ├── vmrp 核心 + mythroad DSM 层
     ├── arm_ext_executor：Unicorn 执行 ARM ext
@@ -172,7 +171,7 @@ HarmonyOS App (API 26)
 
 1. **arm-softmmu 是纯软件 TCG 模拟**：把 ARM32 指令翻译成宿主机指令执行，不依赖宿主 ARM32 硬件。因此在 ARM64/x86_64 鸿蒙上都能跑 MRP 的 ARM32 代码。
 
-2. **vmrp 已有 SDL-free 共享库 API**（`vmrp_api.h`，18 个导出函数）：构建 `vmrp-shared` target 即可，不含 main.c，不定义 `VMRP_SDL_AUDIO`。这是移植的核心入口。
+2. **vmrp 已有 SDL-free 共享库 API**（`vmrp_api.h`，26 个导出函数）：构建 `vmrp-shared` target 即可，不含 main.c，不定义 `VMRP_SDL_AUDIO`。这是移植的核心入口。
 
 3. **渲染线程模型**：EGL surface 必须在 XComponent 帧回调线程（创建 surface 的同线程）渲染，否则 `eglSwapBuffers` 报 `EGL_BAD_SURFACE`。用 `OH_NativeXComponent_RegisterOnFrameCallback` 注册帧回调，在该线程做 `eglSwapBuffers`。
 
@@ -211,7 +210,7 @@ OHAudio 回调线程 ──→ PullAudio (不加锁) ──→ vmrp_api_audio_re
 | **MAP_32BIT** | native_dsm_funcs.c | `MAP_32BIT` 是 x86-glibc 专有，OHOS musl 缺失，x86_64 模拟器构建失败。替换为 0（有 calloc 兜底） |
 | **case 800 ARM 地址修复** | mythroad.c + arm_ext_executor.c | 部分 MRP（如 3D暴力摩托）的 cfunction loader 把 ext 放在 ARM 内存并用 ARM 地址调 case 800。arm_ext_load 把 ARM 地址当 host 指针读取导致全 0 崩溃。检测到 ARM 地址时用 `arm_ext_host_ptr` 转成 host 指针 |
 
-这些补丁只改 vmrp 子模块的工作区文件（构建时临时应用），不修改 vmrp 上游仓库。
+这些补丁在构建时临时应用到 vmrp 源码的工作区文件，每次构建前由 `:restore_patched` 恢复到提交状态，不残留。需持久保留的改动应直接提交到本仓库的 `vmrp/` 目录。
 
 ---
 
@@ -230,7 +229,7 @@ set OHOS_SDK_NATIVE=C:\ohos_ndk
 ### Q: 运行报 `Abi type supported by the device does not match`
 A: 模拟器是 x86_64，真机是 arm64。需构建对应 ABI 的 libvmrp.so：
 ```bat
-scripts\build_libvmpp_ohos.bat vmrp x86_64   # 模拟器
+scripts\build_libvmpp_ohos.bat x86_64   # 模拟器
 ```
 
 ### Q: 游戏启动后文字不显示
@@ -246,7 +245,7 @@ A: 已通过引擎锁（`engine_mtx_`）修复。若仍出现，确认 `vmrp_eng
 
 ## 许可
 
-vmrp 源码遵循其原始许可（见 vmrp 子模块）。本移植工程的鸿蒙适配代码可自由使用。
+vmrp 源码遵循其原始许可（见 [vmrp](https://github.com/msojocs/vmrp) 上游）。本移植工程的鸿蒙适配代码可自由使用。
 
 ## 致谢
 

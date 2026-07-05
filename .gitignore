@@ -47,10 +47,16 @@ Thumbs.db
 
 # ===== 诊断/截图（开发用，不入库）=====
 /screenshots/
+/screenshot/
+/screenshot*.png
 build_chk*.txt
 build_log*.txt
 build_fix.txt
 build_diag*.txt
+
+# ===== IDE/编辑器自动生成 =====
+.clang-tidy
+.clangd
 
 # ===== 注意：以下不入库但需要其他电脑具备 =====
 # - HarmonyOS SDK（DevEco Studio 自带，见 README 环境要求）
