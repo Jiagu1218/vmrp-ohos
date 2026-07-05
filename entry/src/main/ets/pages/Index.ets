@@ -1,18 +1,6 @@
-/*
- * Index.ets - vmrp 鸿蒙主界面。
- *
- * 布局：
- *   - ContentSlot：占位渲染区，native 在其上树时 createNode(ARKUI_NODE_XCOMPONENT) 创建
- *     XComponent 节点并挂入（官方范式5：NDK 节点创建 + OH_ArkUI_SurfaceHolder）。
- *   - 控制按钮：选择 MRP 文件、方向键、数字键、左右软键、确认键。
- *   - 文本编辑弹层：native 请求编辑时显示 TextInput。
- *
- * 渲染：XComponent 节点由 native 侧 EGL 渲染（240x320）。
- * 输入：XComponent 区域触摸由 native NODE_TOUCH_EVENT 回调处理（坐标归一化在 native）；
- *       实体按键/软键盘按钮走 sendKey。
- */
 import { picker } from '@kit.CoreFileKit';
 import { NodeContent } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
   MR_KEY_UP, MR_KEY_DOWN, MR_KEY_LEFT, MR_KEY_RIGHT,
@@ -22,8 +10,45 @@ import {
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { gAbilityContext } from '../entryability/EntryAbility';
 
-// 居中文本编辑对话框。原文本由 controller 的 initialText 传入（回显），
-// 确定/取消分别走 submitEdit/cancelEdit 并关闭弹窗。
+interface ScreenShellParam {
+  isTop: boolean;
+}
+
+interface GridRowColumns {
+  sm: number;
+  md: number;
+  lg: number;
+}
+
+interface GridRowGutter {
+  x: number;
+  y: number;
+}
+
+interface GridColSpan {
+  sm: number;
+  md: number;
+  lg: number;
+}
+
+interface GridRowBreakpoints {
+  value: string[];
+  reference: BreakpointsReference;
+}
+
+const SHELL_COLOR = '#1A1A2E';
+const HINGE_COLOR = '#2D2D44';
+const ACCENT_COLOR = '#E94560';
+const SCREEN_BG = '#000000';
+const DPAD_BG = '#16213E';
+const DPAD_ARROW = '#E94560';
+const SOFTKEY_BG = '#0F3460';
+const NUMKEY_BG = '#1A1A2E';
+const NUMKEY_TEXT = '#A7A7C4';
+const STATUS_TEXT = '#8888AA';
+const RUN_DOT = '#4ADE80';
+const SHELL_BORDER = '#2A2A4E';
+
 @CustomDialog
 struct EditDialog {
   controller: CustomDialogController;
@@ -35,16 +60,21 @@ struct EditDialog {
     Column() {
       Text('请输入文字')
         .fontSize(16)
+        .fontColor('#CCCCCC')
         .margin({ top: 16, bottom: 10 })
       TextArea({ text: this.editText })
         .onChange((v: string) => { this.editText = v; })
         .width('90%')
         .layoutWeight(1)
         .fontSize(16)
+        .backgroundColor('#1A1A2E')
+        .fontColor('#FFFFFF')
       Row() {
         Button('取消')
           .width(100)
           .height(40)
+          .backgroundColor('#333355')
+          .fontColor('#CCCCCC')
           .onClick(() => {
             this.cancel();
             this.controller.close();
@@ -52,6 +82,8 @@ struct EditDialog {
         Button('确定')
           .width(100)
           .height(40)
+          .backgroundColor(ACCENT_COLOR)
+          .fontColor('#FFFFFF')
           .onClick(() => {
             this.submit(this.editText);
             this.controller.close();
@@ -63,6 +95,299 @@ struct EditDialog {
     }
     .width('82%')
     .height(340)
+    .backgroundColor(SHELL_COLOR)
+    .borderRadius(16)
+  }
+}
+
+@Component
+struct DPadWithFunc {
+  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  dpadSize: number = 130;
+  softKeyH: number = 28;
+
+  build() {
+    Column({ space: 14 }) {
+      Row() {
+        Stack() {
+          Text('左软')
+            .fontSize(12)
+            .fontColor('#CCCCCC')
+            .fontWeight(FontWeight.Medium)
+        }
+        .height(this.softKeyH)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(this.softKeyH / 2)
+        .backgroundColor(SOFTKEY_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e))
+
+        Stack() {
+          Text('▲')
+            .fontSize(this.dpadSize * 0.2)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .margin({ left: 24, right: 24 })
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_UP, e))
+
+        Stack() {
+          Text('右软')
+            .fontSize(12)
+            .fontColor('#CCCCCC')
+            .fontWeight(FontWeight.Medium)
+        }
+        .height(this.softKeyH)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(this.softKeyH / 2)
+        .backgroundColor(SOFTKEY_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e))
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 16 }) {
+        Stack() {
+          Text('◀')
+            .fontSize(this.dpadSize * 0.17)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_LEFT, e))
+
+        Stack() {
+          Text('OK')
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.28)
+        .height(this.dpadSize * 0.28)
+        .borderRadius(this.dpadSize * 0.14)
+        .backgroundColor(ACCENT_COLOR)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SELECT, e))
+
+        Stack() {
+          Text('▶')
+            .fontSize(this.dpadSize * 0.17)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_RIGHT, e))
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+
+      Row() {
+        Stack() {
+          Text('▼')
+            .fontSize(this.dpadSize * 0.2)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_DOWN, e))
+      }
+      .justifyContent(FlexAlign.Center)
+    }
+    .alignItems(HorizontalAlign.Center)
+  }
+}
+
+@Component
+struct SoftKeys {
+  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+
+  build() {
+    Row({ space: 10 }) {
+      Stack() {
+        Text('左软')
+          .fontSize(12)
+          .fontColor('#CCCCCC')
+          .fontWeight(FontWeight.Medium)
+      }
+      .height(26)
+      .padding({ left: 16, right: 16 })
+      .borderRadius(13)
+      .backgroundColor(SOFTKEY_BG)
+      .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e))
+
+      Stack() {
+        Text('右软')
+          .fontSize(12)
+          .fontColor('#CCCCCC')
+          .fontWeight(FontWeight.Medium)
+      }
+      .height(26)
+      .padding({ left: 16, right: 16 })
+      .borderRadius(13)
+      .backgroundColor(SOFTKEY_BG)
+      .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e))
+    }
+    .justifyContent(FlexAlign.Center)
+  }
+}
+
+@Component
+struct NumPad {
+  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  btnSize: number = 36;
+
+  build() {
+    Grid() {
+      ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, MR_KEY_STAR, 0, MR_KEY_POUND], (k: number) => {
+        GridItem() {
+          Stack() {
+            Text(`${k === MR_KEY_STAR ? '✱' : k === MR_KEY_POUND ? '#' : k}`)
+              .fontSize(this.btnSize * 0.4)
+              .fontColor(NUMKEY_TEXT)
+              .fontWeight(FontWeight.Medium)
+          }
+          .width(this.btnSize)
+          .height(this.btnSize)
+          .borderRadius(this.btnSize / 2)
+          .backgroundColor(NUMKEY_BG)
+          .border({ width: 1, color: SHELL_BORDER })
+          .onTouch((e: TouchEvent) => this.onKeyTouch(k, e))
+        }
+      }, (k: number) => `num-${k}`)
+    }
+    .columnsTemplate('1fr 1fr 1fr')
+    .rowsTemplate('1fr 1fr 1fr 1fr')
+    .columnsGap(10)
+    .rowsGap(10)
+    .width('45%')
+    .height(this.btnSize * 4 + 50)
+  }
+}
+
+@Component
+struct TopScreen {
+  nodeContent: NodeContent = new NodeContent();
+  status: string = '';
+  running: boolean = false;
+  scaleVal: number = 1;
+
+  build() {
+    Column() {
+      Stack() {
+        Stack() {
+          ContentSlot(this.nodeContent)
+        }
+        .width(240)
+        .height(320)
+        .backgroundColor(SCREEN_BG)
+        .borderRadius(6)
+        .clip(true)
+        .scale({ x: this.scaleVal, y: this.scaleVal })
+        .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+      }
+      .width(240 * this.scaleVal)
+      .height(320 * this.scaleVal)
+      .alignContent(Alignment.Center)
+      .clip(true)
+
+      Row() {
+        Row()
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(this.running ? RUN_DOT : '#555577')
+          .margin({ right: 6 })
+        Text(this.status)
+          .fontSize(10)
+          .fontColor(STATUS_TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 8, right: 8, top: 4, bottom: 2 })
+      .constraintSize({ maxWidth: 240 * this.scaleVal + 16 })
+    }
+    .alignItems(HorizontalAlign.Center)
+  }
+}
+
+@Component
+struct BottomControls {
+  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  onPickMrp: () => void = () => {};
+  onStartDefault: () => void = () => {};
+  running: boolean = false;
+  dpadSize: number = 110;
+  btnSize: number = 30;
+
+  build() {
+    Column() {
+      DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: this.dpadSize })
+
+      NumPad({ onKeyTouch: this.onKeyTouch, btnSize: this.btnSize })
+
+      Row({ space: 8 }) {
+        Stack() {
+          Text('选择MRP')
+            .fontSize(11)
+            .fontColor('#CCCCCC')
+        }
+        .height(26)
+        .padding({ left: 14, right: 14 })
+        .borderRadius(13)
+        .backgroundColor(SOFTKEY_BG)
+        .onClick(() => this.onPickMrp())
+
+        Stack() {
+          Text('启动默认')
+            .fontSize(11)
+            .fontColor('#CCCCCC')
+        }
+        .height(26)
+        .padding({ left: 14, right: 14 })
+        .borderRadius(13)
+        .backgroundColor(SOFTKEY_BG)
+        .onClick(() => this.onStartDefault())
+      }
+      .padding({ top: 4, bottom: 4 })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 8, right: 8, top: 4, bottom: 8 })
+  }
+}
+
+@Component
+struct PhoneControls {
+  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  running: boolean = false;
+
+  build() {
+    Column({ space: 6 }) {
+      Row() {
+        DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: 110 })
+          .layoutWeight(1)
+
+        NumPad({ onKeyTouch: this.onKeyTouch, btnSize: 30 })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
   }
 }
 
@@ -72,15 +397,23 @@ struct Index {
   @State status: string = '未启动';
   @State running: boolean = false;
   @State editText: string = '';
+  @State currentBp: string = 'sm';
+  @State showControls: boolean = true;
   private engine: VmrpEngineTs = new VmrpEngineTs();
-  // 当前按住未释放的键，用于长按支持
   private pressedKeys: Set<number> = new Set();
-  // ContentSlot 占位容器：native 在 ON_ATTACH_TO_WINDOW 时 createNode(ARKUI_NODE_XCOMPONENT) 挂入。
-  // 范式5要求 XComponent 由 NDK 创建，否则 SurfaceHolder_Create 返回 rc=401。
   private nodeContent: NodeContent = new NodeContent();
-  // 居中编辑弹窗。alignment: Center 居中显示。
-  // autoCancel:false 禁止点遮罩/返回键关闭，强制用户用取消/确定按钮——
-  // 按钮内保证 cancel/submit 通知 native，避免非按钮关闭导致 native 死等卡死。
+  private gridColumns: GridRowColumns = { sm: 1, md: 2, lg: 2 };
+  private gridGutter: GridRowGutter = { x: 8, y: 6 };
+  private gridBreakpoints: GridRowBreakpoints = {
+    value: ['520vp', '840vp'],
+    reference: BreakpointsReference.WindowSize
+  };
+  private topSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
+  private bottomSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
+  @State private screenAreaW: number = 240;
+  @State private screenAreaH: number = 320;
+  @State private dualAreaW: number = 400;
+  @State private dualAreaH: number = 600;
   private editController: CustomDialogController = new CustomDialogController({
     builder: EditDialog({
       editText: this.editText,
@@ -92,67 +425,59 @@ struct Index {
   });
 
   aboutToAppear(): void {
+    try {
+      const d = display.getDefaultDisplaySync();
+      const wVP = this.getUIContext().px2vp(d.width);
+      const hVP = this.getUIContext().px2vp(d.height);
+      if (wVP >= 840) {
+        this.currentBp = 'lg';
+      } else if (wVP >= 520) {
+        this.currentBp = 'md';
+      } else {
+        this.currentBp = 'sm';
+      }
+      this.screenAreaW = wVP;
+      this.screenAreaH = hVP;
+    } catch (_e) {
+      this.currentBp = 'sm';
+    }
     this.bootstrap();
   }
 
   async bootstrap(): Promise<void> {
     try {
-      this.status = '正在加载 native 模块...';
+      this.status = '正在加载...';
       await this.engine.init();
-      this.status = 'native 模块已加载';
-      // getContext(this) 已废弃(API18)，优先用全局 ability context，其次 getHostContext。
       const ctx = gAbilityContext ?? this.getUIContext().getHostContext();
       if (!ctx) {
-        this.status = '初始化失败: 无法获取上下文';
+        this.status = '初始化失败';
         return;
       }
-
-      // 1. 解压内置 mythroad 运行时到沙箱。
-      this.status = '正在准备运行时资源...';
+      this.status = '准备资源...';
       const workDir = await VmrpAssets.ensureRuntime(ctx);
-      this.status = `工作目录就绪`;
-
-      // 2. 加载预构建 libvmrp.so。
-      //    libvmrp.so 与 libentry.so 一起打包在模块 libs/<abi>/，运行时
-      //    解压到应用沙箱 lib 目录，dlopen 用 soname 即可。
       let ok = this.engine.loadLib('libvmrp.so');
-      this.status = `loadLib(libvmrp.so) = ${ok}`;
       if (!ok) {
         ok = this.engine.loadLib(`${ctx.bundleCodeDir}/lib/arm64/libvmrp.so`);
-        this.status = `loadLib(绝对路径) = ${ok}`;
       }
       if (!ok) {
-        this.status = '加载 libvmrp.so 失败';
+        this.status = '加载失败';
         return;
       }
-
-      // 3. 设置默认屏幕（240x320）和工作目录。
       this.engine.setScreen(240, 320);
       this.engine.setWorkDir(workDir);
-
-      // 4. 注册编辑回调：native 检测到 MRP 请求编辑时回调此处，携带待编辑的原文本回显到输入框。
       this.engine.setEditCallback((editText: string) => {
         this.editText = editText;
         this.editController.open();
       });
-
-      // 5. 把 ContentSlot 的 NodeContent 传给 native 注册回调。
-      //    ContentSlot 上树时 native 会创建 XComponent 节点 + SurfaceHolder + 挂载。
       this.engine.createSurfaceNode(this.nodeContent);
-
-      this.status = '就绪，正在启动默认MRP...';
-      // 6. 自动启动默认MRP，解决启动卡开屏问题
+      this.status = '启动中...';
       await this.startDefault();
     } catch (e) {
-      // ArkTS 对 Error 做 JSON.stringify 会得到 {}，用 message/businessError 更可读。
       const err = e as Error;
-      const msg = err?.message ?? String(e);
-      this.status = `初始化失败: ${msg}`;
-      console.error(`vmrp bootstrap failed: ${msg}`);
+      this.status = `失败: ${err?.message ?? String(e)}`;
     }
   }
 
-  // 直接启动内置 gblmt.mrp（无需文件选择器），用于验证核心运行路径。
   async startDefault(): Promise<void> {
     try {
       const ctx = this.getUIContext().getHostContext();
@@ -160,21 +485,18 @@ struct Index {
         this.status = '无法获取上下文';
         return;
       }
-      // ensureRuntime 返回 files 根（chdir 目标，dsmWorkPath="mythroad/" 据此拼接）。
       const workDir = await VmrpAssets.ensureRuntime(ctx);
-      // mrp 文件在 mythroad 子目录下（绝对路径，不受 dsmWorkPath 影响）。
       const dst = `${VmrpAssets.getMythroadDir(ctx)}/dsm_gm.mrp`;
-      this.status = `启动默认: ${dst}`;
+      this.status = '启动中';
       const r = this.engine.start(dst, 'start.mr', '_dsm');
       this.running = this.engine.isRunning();
-      this.status = `启动结果: ${r}, 运行: ${this.running}`;
+      this.status = `${r}, ${this.running ? '运行中' : '已停止'}`;
     } catch (e) {
       const err = e as Error;
-      this.status = `启动失败: ${err?.message ?? String(e)}`;
+      this.status = `失败: ${err?.message ?? String(e)}`;
     }
   }
 
-  // 选择并加载 MRP 文件。
   async pickAndStart(): Promise<void> {
     try {
       const opt = new picker.DocumentSelectOptions();
@@ -192,13 +514,12 @@ struct Index {
       this.status = `启动: ${dst}`;
       const r = this.engine.start(dst, 'start.mr', '_dsm');
       this.running = this.engine.isRunning();
-      this.status = `启动结果: ${r}, 运行: ${this.running}`;
+      this.status = `${r}, ${this.running ? '运行中' : '已停止'}`;
     } catch (e) {
       this.status = `选择失败: ${JSON.stringify(e)}`;
     }
   }
 
-  // 按键触摸处理器：按下时发送 press，抬起时发送 release，支持长按。
   onKeyTouch(key: number, event: TouchEvent): void {
     if (event.type === TouchType.Down) {
       if (!this.pressedKeys.has(key)) {
@@ -213,69 +534,186 @@ struct Index {
     }
   }
 
-  build() {
+  @Builder
+  screenShell($$: ScreenShellParam) {
     Column() {
-      // 顶部状态栏
-      Text(this.status)
-        .fontSize(14)
-        .width('100%')
-        .padding(8)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      Row() {
-        Button('选择 MRP')
-          .onClick(() => this.pickAndStart())
-        Button('启动默认')
-          .onClick(() => this.startDefault())
-        Button(this.running ? '运行中' : '已停止')
-          .enabled(false)
-          .opacity(0.6)
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .padding(4)
-
-      // 渲染区：ContentSlot 占位，native 在其上树时创建 XComponent 节点（范式5）。
-      // XComponent 节点尺寸由 native 设为 240x320，触摸由 native NODE_TOUCH_EVENT 处理。
-      // ContentSlot 自身不支持设宽高，用 Stack 容器固定尺寸，ContentSlot 填满。
-      Stack() {
-        ContentSlot(this.nodeContent)
-      }
-      .width(240)
-      .height(320)
-      .backgroundColor(Color.Black)
-
-      // 方向键 + 功能键（onTouch 支持长按）
-      Grid() {
-        GridItem() { Button('↑').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_UP, e)) }
-        GridItem() { Button('←').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_LEFT, e)) }
-        GridItem() { Button('确认').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SELECT, e)) }
-        GridItem() { Button('→').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_RIGHT, e)) }
-        GridItem() { Button('↓').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_DOWN, e)) }
-        GridItem() { Button('左软').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e)) }
-        GridItem() { Button('右软').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e)) }
-      }
-      .columnsTemplate('1fr 1fr 1fr')
-      .width('100%')
-      .height(180)
-      .padding(4)
-
-      // 数字键（onTouch 支持长按）
-      Grid() {
-        ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, MR_KEY_STAR, 0, MR_KEY_POUND], (k: number) => {
-          GridItem() {
-            Button(`${k === MR_KEY_STAR ? '*' : k === MR_KEY_POUND ? '#' : k}`)
-              .fontSize(16)
-              .onTouch((e: TouchEvent) => this.onKeyTouch(k, e))
-          }
+      if ($$.isTop) {
+        TopScreen({
+          nodeContent: this.nodeContent,
+          status: this.status,
+          running: this.running,
+          scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / 240, (this.dualAreaH * 0.5 - 36) / 320)
         })
+      } else {
+        Scroll() {
+          Column() {
+            BottomControls({
+              onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+              onPickMrp: () => this.pickAndStart(),
+              onStartDefault: () => this.startDefault(),
+              running: this.running,
+              dpadSize: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
+              btnSize: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36)
+            })
+          }
+        }
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .height('100%')
       }
-      .columnsTemplate('1fr 1fr 1fr')
-      .width('100%')
-      .height(150)
     }
     .width('100%')
     .height('100%')
+    .alignItems(HorizontalAlign.Center)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(SHELL_COLOR)
+    .borderRadius(16)
+    .padding(12)
+    .border({ width: 1, color: SHELL_BORDER })
+  }
+
+  @Builder
+  phoneLayout() {
+    Column() {
+      Stack() {
+        Stack() {
+          ContentSlot(this.nodeContent)
+        }
+        .width(240)
+        .height(320)
+        .backgroundColor(SCREEN_BG)
+        .scale({
+          x: Math.min(this.screenAreaW / 240, this.screenAreaH / 320),
+          y: Math.min(this.screenAreaW / 240, this.screenAreaH / 320)
+        })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .alignContent(Alignment.Center)
+      .clip(true)
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.screenAreaW = newVal.width as number;
+        this.screenAreaH = newVal.height as number;
+      })
+
+      Row() {
+        Row()
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(this.running ? RUN_DOT : '#555577')
+          .margin({ right: 6 })
+        Text(this.status)
+          .fontSize(10)
+          .fontColor(STATUS_TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        Stack() {
+          Text('MRP')
+            .fontSize(9)
+            .fontColor(NUMKEY_TEXT)
+        }
+        .height(18)
+        .padding({ left: 6, right: 6 })
+        .borderRadius(9)
+        .backgroundColor(NUMKEY_BG)
+        .margin({ right: 4 })
+        .onClick(() => this.pickAndStart())
+        Stack() {
+          Text('默认')
+            .fontSize(9)
+            .fontColor(NUMKEY_TEXT)
+        }
+        .height(18)
+        .padding({ left: 6, right: 6 })
+        .borderRadius(9)
+        .backgroundColor(NUMKEY_BG)
+        .margin({ right: 4 })
+        .onClick(() => this.startDefault())
+        Stack() {
+          Text(this.showControls ? '收起' : '按键')
+            .fontSize(9)
+            .fontColor(DPAD_ARROW)
+        }
+        .height(18)
+        .padding({ left: 8, right: 8 })
+        .borderRadius(9)
+        .backgroundColor(DPAD_BG)
+        .onClick(() => { this.showControls = !this.showControls; })
+      }
+      .width('100%')
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+
+      if (this.showControls) {
+        Scroll() {
+          Column() {
+            PhoneControls({
+              onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+              running: this.running
+            })
+          }
+          .width('100%')
+          .backgroundColor(SHELL_COLOR)
+          .borderRadius({ topLeft: 16, topRight: 16 })
+          .border({ width: 1, color: SHELL_BORDER })
+          .padding({ top: 4, bottom: 4 })
+        }
+        .constraintSize({ maxHeight: '46%' })
+        .width('100%')
+        .scrollBar(BarState.Off)
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  dualScreenLayout() {
+    GridRow({
+      columns: this.gridColumns,
+      gutter: this.gridGutter,
+      breakpoints: this.gridBreakpoints
+    }) {
+      GridCol({ span: this.topSpan }) {
+        Column() {
+          this.screenShell({ isTop: true })
+        }
+        .width('100%')
+        .height('100%')
+      }
+      .height('100%')
+
+      GridCol({ span: this.bottomSpan }) {
+        Column() {
+          this.screenShell({ isTop: false })
+        }
+        .width('100%')
+        .height('100%')
+      }
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .onBreakpointChange((bp: string) => {
+      this.currentBp = bp;
+    })
+    .onAreaChange((_old: Area, newVal: Area) => {
+      this.dualAreaW = (newVal.width as number) / 2 - 4;
+      this.dualAreaH = newVal.height as number;
+    })
+  }
+
+  build() {
+    Column() {
+      if (this.currentBp === 'sm') {
+        this.phoneLayout()
+      } else {
+        this.dualScreenLayout()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#0D0D1A')
   }
 }
