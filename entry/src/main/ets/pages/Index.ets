@@ -11,7 +11,6 @@
  * 输入：XComponent 区域触摸由 native NODE_TOUCH_EVENT 回调处理（坐标归一化在 native）；
  *       实体按键/软键盘按钮走 sendKey。
  */
-import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { NodeContent } from '@kit.ArkUI';
 import {
@@ -101,8 +100,12 @@ struct Index {
       this.status = '正在加载 native 模块...';
       await this.engine.init();
       this.status = 'native 模块已加载';
-      // getContext(this) 在 aboutToAppear 早期可能返回 undefined，优先用全局 ability context。
-      const ctx = (gAbilityContext ?? getContext(this)) as common.UIAbilityContext;
+      // getContext(this) 已废弃(API18)，优先用全局 ability context，其次 getHostContext。
+      const ctx = gAbilityContext ?? this.getUIContext().getHostContext();
+      if (!ctx) {
+        this.status = '初始化失败: 无法获取上下文';
+        return;
+      }
 
       // 1. 解压内置 mythroad 运行时到沙箱。
       this.status = '正在准备运行时资源...';
@@ -152,7 +155,11 @@ struct Index {
   // 直接启动内置 gblmt.mrp（无需文件选择器），用于验证核心运行路径。
   async startDefault(): Promise<void> {
     try {
-      const ctx = getContext(this) as common.UIAbilityContext;
+      const ctx = this.getUIContext().getHostContext();
+      if (!ctx) {
+        this.status = '无法获取上下文';
+        return;
+      }
       // ensureRuntime 返回 files 根（chdir 目标，dsmWorkPath="mythroad/" 据此拼接）。
       const workDir = await VmrpAssets.ensureRuntime(ctx);
       // mrp 文件在 mythroad 子目录下（绝对路径，不受 dsmWorkPath 影响）。
@@ -176,7 +183,11 @@ struct Index {
       const docPicker = new picker.DocumentViewPicker();
       const uris = await docPicker.select(opt);
       if (!uris || uris.length === 0) return;
-      const ctx = getContext(this) as common.UIAbilityContext;
+      const ctx = this.getUIContext().getHostContext();
+      if (!ctx) {
+        this.status = '无法获取上下文';
+        return;
+      }
       const dst = await VmrpAssets.importMrp(ctx, uris[0]);
       this.status = `启动: ${dst}`;
       const r = this.engine.start(dst, 'start.mr', '_dsm');

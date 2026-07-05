@@ -22,7 +22,7 @@ export class VmrpAssets {
   // vmrp 的 dsmWorkPath 默认 "mythroad/"，它会拼接成 mythroad/<相对路径>，
   // 因此 chdir 目标应是 mythroad 的父目录（files），资源放在 files/mythroad/ 下。
   // 若 chdir 到 files/mythroad 反而会查找 files/mythroad/mythroad/... 多一层。
-  static getWorkDir(ctx: common.UIAbilityContext): string {
+  static getWorkDir(ctx: common.Context): string {
     const base = ctx.filesDir;
     // 确保 files/mythroad 子目录存在（资源解压目标）。
     try {
@@ -36,7 +36,7 @@ export class VmrpAssets {
   }
 
   // 获取 mythroad 资源目录（files/mythroad），mrp 和 system 在此。
-  static getMythroadDir(ctx: common.UIAbilityContext): string {
+  static getMythroadDir(ctx: common.Context): string {
     return `${ctx.filesDir}/mythroad`;
   }
 
@@ -49,7 +49,7 @@ export class VmrpAssets {
   // rawDir：相对 rawfile 的目录路径，如 'mythroad' 或 'mythroad/system'。
   // mythroadDir：沙箱目标根（files/mythroad）。
   // 返回本次成功拷贝的文件数。
-  private static async dumpRawDir(ctx: common.UIAbilityContext,
+  private static async dumpRawDir(ctx: common.Context,
                                   rawDir: string,
                                   mythroadDir: string): Promise<number> {
     // 确保沙箱侧当前层目录存在：顶层（mythroad）由调用方 getWorkDir 保证；
@@ -114,7 +114,7 @@ export class VmrpAssets {
   }
 
   // 确保 mythroad 运行时资源存在于 files/mythroad/。首次调用时从 rawfile 解压。
-  static async ensureRuntime(ctx: common.UIAbilityContext): Promise<string> {
+  static async ensureRuntime(ctx: common.Context): Promise<string> {
     // getWorkDir 会创建 files/mythroad，dumpRawDir 写顶层文件（如 dsm_gm.mrp）
     // 时依赖该目录已存在，否则 openSync 报 ENOENT。
     VmrpAssets.getWorkDir(ctx);
@@ -145,7 +145,7 @@ export class VmrpAssets {
   }
 
   // 把用户选择的 MRP 文件复制到 mythroad 目录，返回目标路径。
-  static async importMrp(ctx: common.UIAbilityContext, srcUri: string): Promise<string> {
+  static async importMrp(ctx: common.Context, srcUri: string): Promise<string> {
     const mythroadDir = VmrpAssets.getMythroadDir(ctx);
     const name = srcUri.substring(srcUri.lastIndexOf('/') + 1);
     const dst = `${mythroadDir}/${name}`;
