@@ -1,5 +1,5 @@
 import { picker } from '@kit.CoreFileKit';
-import { NodeContent } from '@kit.ArkUI';
+import { NodeContent, ComponentContent, AppStorageV2 } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
@@ -9,6 +9,7 @@ import {
 } from '../vmrp/VmrpEngine';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { gAbilityContext } from '../entryability/EntryAbility';
+import { AvoidData } from '../common/AvoidData';
 
 interface ScreenShellParam {
   isTop: boolean;
@@ -49,12 +50,17 @@ const STATUS_TEXT = '#8888AA';
 const RUN_DOT = '#4ADE80';
 const SHELL_BORDER = '#2A2A4E';
 
-@CustomDialog
-struct EditDialog {
-  controller: CustomDialogController;
-  @Link editText: string;
-  submit: (text: string) => void = () => {};
-  cancel: () => void = () => {};
+@ComponentV2
+struct EditDialogContent {
+  @Param editText: string = '';
+  @Event onTextChange: (v: string) => void = () => {};
+  @Event onSubmit: (text: string) => void = () => {};
+  @Event onCancel: () => void = () => {};
+  @Local private inputText: string = '';
+
+  aboutToAppear(): void {
+    this.inputText = this.editText;
+  }
 
   build() {
     Column() {
@@ -62,8 +68,8 @@ struct EditDialog {
         .fontSize(16)
         .fontColor('#CCCCCC')
         .margin({ top: 16, bottom: 10 })
-      TextArea({ text: this.editText })
-        .onChange((v: string) => { this.editText = v; })
+      TextArea({ text: this.inputText })
+        .onChange((v: string) => { this.inputText = v; })
         .width('90%')
         .layoutWeight(1)
         .fontSize(16)
@@ -76,8 +82,7 @@ struct EditDialog {
           .backgroundColor('#333355')
           .fontColor('#CCCCCC')
           .onClick(() => {
-            this.cancel();
-            this.controller.close();
+            this.onCancel();
           })
         Button('确定')
           .width(100)
@@ -85,8 +90,7 @@ struct EditDialog {
           .backgroundColor(ACCENT_COLOR)
           .fontColor('#FFFFFF')
           .onClick(() => {
-            this.submit(this.editText);
-            this.controller.close();
+            this.onSubmit(this.inputText);
           })
       }
       .width('100%')
@@ -100,11 +104,11 @@ struct EditDialog {
   }
 }
 
-@Component
+@ComponentV2
 struct DPadWithFunc {
-  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  dpadSize: number = 130;
-  softKeyH: number = 28;
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param dpadSize: number = 130;
+  @Param softKeyH: number = 28;
 
   build() {
     Column({ space: 14 }) {
@@ -208,9 +212,9 @@ struct DPadWithFunc {
   }
 }
 
-@Component
+@ComponentV2
 struct SoftKeys {
-  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
 
   build() {
     Row({ space: 10 }) {
@@ -242,10 +246,10 @@ struct SoftKeys {
   }
 }
 
-@Component
+@ComponentV2
 struct NumPad {
-  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  btnSize: number = 36;
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param btnSize: number = 36;
 
   build() {
     Grid() {
@@ -275,12 +279,12 @@ struct NumPad {
   }
 }
 
-@Component
+@ComponentV2
 struct TopScreen {
-  nodeContent: NodeContent = new NodeContent();
-  status: string = '';
-  running: boolean = false;
-  scaleVal: number = 1;
+  @Param nodeContent: NodeContent = new NodeContent();
+  @Param status: string = '';
+  @Param running: boolean = false;
+  @Param scaleVal: number = 1;
 
   build() {
     Column() {
@@ -323,14 +327,14 @@ struct TopScreen {
   }
 }
 
-@Component
+@ComponentV2
 struct BottomControls {
-  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  onPickMrp: () => void = () => {};
-  onStartDefault: () => void = () => {};
-  running: boolean = false;
-  dpadSize: number = 110;
-  btnSize: number = 30;
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param onPickMrp: () => void = () => {};
+  @Param onStartDefault: () => void = () => {};
+  @Param running: boolean = false;
+  @Param dpadSize: number = 110;
+  @Param btnSize: number = 30;
 
   build() {
     Column() {
@@ -370,10 +374,10 @@ struct BottomControls {
   }
 }
 
-@Component
+@ComponentV2
 struct PhoneControls {
-  onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  running: boolean = false;
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param running: boolean = false;
 
   build() {
     Column({ space: 6 }) {
@@ -392,15 +396,20 @@ struct PhoneControls {
 }
 
 @Entry
-@Component
+@ComponentV2
 struct Index {
-  @State status: string = '未启动';
-  @State running: boolean = false;
-  @State editText: string = '';
-  @State currentBp: string = 'sm';
-  @State showControls: boolean = true;
-  @State private isFoldable: boolean = false;
-  @State private foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
+  @Local status: string = '未启动';
+  @Local running: boolean = false;
+  @Local editText: string = '';
+  @Local currentBp: string = 'sm';
+  @Local showControls: boolean = true;
+  @Local isFoldable: boolean = false;
+  @Local foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
+  @Local screenAreaW: number = 240;
+  @Local screenAreaH: number = 320;
+  @Local dualAreaW: number = 400;
+  @Local dualAreaH: number = 600;
+  private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private engine: VmrpEngineTs = new VmrpEngineTs();
   private pressedKeys: Set<number> = new Set();
   private nodeContent: NodeContent = new NodeContent();
@@ -412,19 +421,6 @@ struct Index {
   };
   private topSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
   private bottomSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
-  @State private screenAreaW: number = 240;
-  @State private screenAreaH: number = 320;
-  @State private dualAreaW: number = 400;
-  @State private dualAreaH: number = 600;
-  private editController: CustomDialogController = new CustomDialogController({
-    builder: EditDialog({
-      editText: this.editText,
-      submit: (t: string) => { this.engine.submitEdit(t); },
-      cancel: () => { this.engine.cancelEdit(); }
-    }),
-    alignment: DialogAlignment.Center,
-    autoCancel: false
-  });
 
   aboutToAppear(): void {
     try {
@@ -480,7 +476,7 @@ struct Index {
       this.engine.setWorkDir(workDir);
       this.engine.setEditCallback((editText: string) => {
         this.editText = editText;
-        this.editController.open();
+        this.openEditDialog();
       });
       this.engine.createSurfaceNode(this.nodeContent);
       this.status = '启动中...';
@@ -489,6 +485,29 @@ struct Index {
       const err = e as Error;
       this.status = `失败: ${err?.message ?? String(e)}`;
     }
+  }
+
+  private openEditDialog(): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: EditDialogContentBuilderParams = {
+      editText: this.editText,
+      onTextChange: (_v: string) => {},
+      onSubmit: (t: string) => {
+        this.engine.submitEdit(t);
+        prompt.closeCustomDialog(contentNode);
+      },
+      onCancel: () => {
+        this.engine.cancelEdit();
+        prompt.closeCustomDialog(contentNode);
+      }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(EditDialogContentBuilder), params);
+    const opts: EditDialogOptions = {
+      alignment: DialogAlignment.Center,
+      autoCancel: false
+    };
+    prompt.openCustomDialog(contentNode, opts);
   }
 
   async startDefault(): Promise<void> {
@@ -832,5 +851,28 @@ struct Index {
     .width('100%')
     .height('100%')
     .backgroundColor('#0D0D1A')
+    .padding({ top: this.avoidData.topVp, bottom: this.avoidData.bottomVp })
   }
+}
+
+@Builder
+function EditDialogContentBuilder($$: EditDialogContentBuilderParams) {
+  EditDialogContent({
+    editText: $$.editText,
+    onTextChange: $$.onTextChange,
+    onSubmit: $$.onSubmit,
+    onCancel: $$.onCancel
+  })
+}
+
+interface EditDialogContentBuilderParams {
+  editText: string;
+  onTextChange: (v: string) => void;
+  onSubmit: (text: string) => void;
+  onCancel: () => void;
+}
+
+interface EditDialogOptions {
+  alignment: DialogAlignment;
+  autoCancel: boolean;
 }

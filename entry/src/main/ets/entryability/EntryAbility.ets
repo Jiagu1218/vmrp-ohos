@@ -15,7 +15,8 @@
 
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want, common } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
+import { window, AppStorageV2 } from '@kit.ArkUI';
+import { AvoidData } from '../common/AvoidData';
 
 const DOMAIN = 0x0000;
 
@@ -39,7 +40,6 @@ export default class EntryAbility extends UIAbility {
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
-    // Main window is created, set main page for this ability
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
 
     windowStage.loadContent('pages/Index', (err) => {
@@ -48,6 +48,25 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      try {
+        const win = windowStage.getMainWindowSync();
+        win.setWindowLayoutFullScreen(true);
+        const avoid: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
+        const uiCtx = win.getUIContext();
+        const sysAvoid = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
+        avoid.topVp = uiCtx.px2vp(sysAvoid.topRect.height);
+        const navAvoid = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR);
+        avoid.bottomVp = uiCtx.px2vp(navAvoid.bottomRect.height);
+        win.on('avoidAreaChange', (data) => {
+          if (data.type === window.AvoidAreaType.TYPE_SYSTEM) {
+            avoid.topVp = uiCtx.px2vp(data.area.topRect.height);
+          } else if (data.type === window.AvoidAreaType.TYPE_NAVIGATION_INDICATOR) {
+            avoid.bottomVp = uiCtx.px2vp(data.area.bottomRect.height);
+          }
+        });
+      } catch (e) {
+        hilog.error(DOMAIN, 'testTag', 'Failed to set immersive. Cause: %{public}s', JSON.stringify(e));
+      }
     });
   }
 
