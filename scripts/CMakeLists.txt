@@ -156,6 +156,13 @@ if(CMAKE_HOST_WIN32)
 "@echo off\r\n"
 "\"${_OHOS_CLANGXX_NATIVE}\" --target=${_OHOS_TARGET} --sysroot=\"${_OHOS_SYSROOT_NATIVE}\" -Wno-error=unused-command-line-argument %*\r\n")
 
+    # --- Logical refs written into Unicorn's CMakeLists.txt ---
+    # Inject a *literal* ${CMAKE_BINARY_DIR}/... (backslash escapes $) so the
+    # patch resolves per build dir and never leaks an absolute path. Real paths
+    # above (_OHOS_CC_SHW/_OHOS_CC_BAT) are only used to create wrappers here.
+    set(_OHOS_CC_REF    "\${CMAKE_BINARY_DIR}/ohos_helpers/ohos-cc")
+    set(_OHOS_CCBAT_REF "\${CMAKE_BINARY_DIR}/ohos_helpers/ohos-cc.bat")
+
     # Patch Unicorn's CMakeLists so qemu/configure is invoked with --cc pointing
     # at our sh wrapper instead of the bare clang. The wrapper forwards every arg
     # to the real clang with --target/--sysroot added.
@@ -166,13 +173,12 @@ if(CMAKE_HOST_WIN32)
         # The source literally contains:  --cc=${CMAKE_C_COMPILER}
         # Match that exact substring (\${ => literal ${ in the CMake string).
         string(REPLACE "--cc=\${CMAKE_C_COMPILER}"
-                       "--cc=${_OHOS_CC_SHW}"
+                       "--cc=${_OHOS_CC_REF}"
                        _uc_cml_text2 "${_uc_cml_text2}")
-        # Also handle previously-patched --cc paths (from a prior ABI).
-        # --cc=<anything>/ohos-cc matches any existing wrapper path (x86_64, arm64, etc.)
-        # but NOT ${CMAKE_C_COMPILER} (no /ohos-cc), so it's idempotent.
+        # Also handle previously-patched --cc paths (from a prior ABI). Matches
+        # any residue (older absolute path or ${CMAKE_BINARY_DIR}/... token).
         string(REGEX REPLACE "--cc=[^ \t\r\n]+/ohos-cc"
-                             "--cc=${_OHOS_CC_SHW}"
+                             "--cc=${_OHOS_CC_REF}"
                              _uc_cml_text2 "${_uc_cml_text2}")
         # Also patch the execute_process macro detection to use the .bat wrapper,
         # otherwise the bare clang defaults to x86_64 on Windows host and
@@ -180,8 +186,13 @@ if(CMAKE_HOST_WIN32)
         string(ASCII 10 _NL)
         string(REPLACE
 "        execute_process(COMMAND \${CMAKE_C_COMPILER} -dM -E -${_NL}            INPUT_FILE \"\""
-"        execute_process(COMMAND ${_OHOS_CC_BAT} -dM -E -${_NL}            INPUT_FILE \"\""
+"        execute_process(COMMAND ${_OHOS_CCBAT_REF} -dM -E -${_NL}            INPUT_FILE \"\""
           _uc_cml_text2 "${_uc_cml_text2}")
+        # REGEX fallback mirroring the --cc fallback: rewrite any stale wrapper
+        # path so UNICORN_TARGET_ARCH detection isn't left on the previous ABI.
+        string(REGEX REPLACE "execute_process\\(COMMAND [^ \t\r\n]+/ohos-cc\\.bat"
+                             "execute_process(COMMAND ${_OHOS_CCBAT_REF}"
+                             _uc_cml_text2 "${_uc_cml_text2}")
         file(WRITE "${_UC_CML}" "${_uc_cml_text2}")
         message(STATUS "[OHOS] Patched Unicorn --cc & macro detection to use target wrapper")
     endif()
@@ -245,6 +256,103 @@ if(EXISTS "${_VMRP_ARMEXT2}")
 "}\n")
         file(WRITE "${_VMRP_ARMEXT2}" "${_aet2}")
         message(STATUS "[OHOS] Patched arm_ext_host_ptr")
+    endif()
+endif()
+
+# --- Patch mythroad.c: dofile 后显式调用 _mr_entry 入口（恢复 b82dd68 修复）---
+# start.mr 只定义函数不在顶层执行，C 层必须显式调用入口才能驱动状态机。
+# 恢复 b82dd68 的修复（上游升级 d367585 时丢失）。幂等标记 OHOS_ENTRY_CALL。
+set(_VMRP_MRENTRY "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+if(EXISTS "${_VMRP_MRENTRY}")
+    file(READ "${_VMRP_MRENTRY}" _mrentry)
+    if(NOT _mrentry MATCHES "OHOS_ENTRY_CALL")
+        set(_MRENTRY_ANCHOR "    MRDBGPRINTF(\"After app init, memory left:%d\", LG_mem_left);")
+        set(_MRENTRY_BLOCK
+"    /* OHOS_ENTRY_CALL: dofile 后显式调用 _mr_entry 指向的入口函数（如 _dsm）。 */\n"
+"    mrp_getglobal(vm_state, \"_mr_entry\");\n"
+"    if (mrp_isstring(vm_state, -1)) {\n"
+"        const char *entry_name = mrp_tostring(vm_state, -1);\n"
+"        if (entry_name && *entry_name) {\n"
+"            mrp_getglobal(vm_state, entry_name);\n"
+"            if (mrp_isfunction(vm_state, -1)) {\n"
+"                fprintf(stderr, \"[_mr_intra_start] calling entry '%s'\\n\", entry_name); fflush(stderr);\n"
+"                _mr_pcall(0, 0);\n"
+"                mrp_pop(vm_state, 1);\n"
+"            } else {\n"
+"                mrp_pop(vm_state, 1);\n"
+"            }\n"
+"        }\n"
+"    }\n"
+"    mrp_pop(vm_state, 1);\n"
+"\n")
+        string(FIND "${_mrentry}" "${_MRENTRY_ANCHOR}" _anchor_pos)
+        if(_anchor_pos EQUAL -1)
+            message(FATAL_ERROR "[OHOS] _mr_entry patch anchor not found in mythroad.c")
+        endif()
+        string(REPLACE "${_MRENTRY_ANCHOR}" "${_MRENTRY_BLOCK}${_MRENTRY_ANCHOR}" _mrentry "${_mrentry}")
+        file(WRITE "${_VMRP_MRENTRY}" "${_mrentry}")
+        message(STATUS "[OHOS] Patched _mr_entry call after dofile (gblmt start fix)")
+    endif()
+endif()
+
+# --- Patch network.c: 阻塞式 connect() 加超时，避免断网卡死 worker 线程 ---
+# my_connectSync() 用阻塞 connect() 无超时。async worker 模型下网络调用跑在
+# worker 线程，宿主机断网时（模拟器内路由仍在，SYN 被静默丢弃，不像桌面拔网线
+# 会快速返回 ENETUNREACH）connect 会卡在 SYN 重传上数十秒~分钟级，卡死整个
+# worker（mr_timer 停摆 -> 游戏卡死无法操作）。
+# 修复：用「设非阻塞 -> connect -> select 等可写(3s 超时) -> 恢复阻塞 -> SO_ERROR」
+# 模式，超时则返回失败，让游戏继续运行。仅改 POSIX 路径。
+# 超时取 3s：gblmt 连国内云服务器正常 RTT 数十 ms，3s 足够覆盖网络抖动，断网时
+# 3s 后失败，体验可接受（远好于卡死数十秒）。
+# 为避免在 CMake 字符串里嵌入大段 C 代码的转义问题，新函数体写到生成文件，
+# 原函数替换为 #include 引用。
+set(_VMRP_NET "${VMRP_SRC_DIR}/src/network.c")
+if(EXISTS "${_VMRP_NET}")
+    file(READ "${_VMRP_NET}" _net_text)
+    if(NOT _net_text MATCHES "OHOS_CONNECT_TIMEOUT")
+        # 1) 加 fcntl.h include（POSIX 路径需要）
+        if(NOT _net_text MATCHES "#include <fcntl.h>")
+            string(REPLACE "#include <pthread.h>" "#include <pthread.h>\n#include <fcntl.h>" _net_text "${_net_text}")
+        endif()
+        # 2) 生成新的 my_connectSync 函数体到 build 目录
+        set(_NET_INC "${CMAKE_BINARY_DIR}/ohos_connect_timeout.inc")
+        file(WRITE "${_NET_INC}"
+"/* OHOS_CONNECT_TIMEOUT: generated by scripts/CMakeLists.txt */\n"
+"static int32 my_connectSync(SOCKET_T s, int32 ip, uint16 port) {\n"
+"    struct sockaddr_in clientService;\n"
+"    clientService.sin_family = AF_INET;\n"
+"    clientService.sin_port = htons(port);\n"
+"    clientService.sin_addr.s_addr = htonl(ip);\n"
+"    printf(\"my_connect('%s', %d)\\n\", inet_ntoa(clientService.sin_addr), port);\n"
+"#ifndef _MSC_VER\n"
+"    int flags = fcntl(s, F_GETFL, 0);\n"
+"    if (flags < 0) { printf(\"my_connect fcntl get fail\\n\"); return MR_FAILED; }\n"
+"    if (fcntl(s, F_SETFL, flags | O_NONBLOCK) < 0) { printf(\"my_connect fcntl set fail\\n\"); return MR_FAILED; }\n"
+"    int cret = connect(s, (struct sockaddr*)&clientService, sizeof(clientService));\n"
+"    if (cret == 0) { fcntl(s, F_SETFL, flags); printf(\"my_connect(0x%X) suc\\n\", ip); return MR_SUCCESS; }\n"
+"    if (errno != EINPROGRESS) { fcntl(s, F_SETFL, flags); printf(\"my_connect(0x%X) fail errno=%d\\n\", ip, errno); return MR_FAILED; }\n"
+"    fd_set writefds; FD_ZERO(&writefds); FD_SET(s, &writefds);\n"
+"    struct timeval cto = { .tv_sec = 3, .tv_usec = 0 };\n"
+"    int sret = select(s + 1, NULL, &writefds, NULL, &cto);\n"
+"    fcntl(s, F_SETFL, flags);\n"
+"    if (sret <= 0) { printf(\"my_connect(0x%X) timeout/fail\\n\", ip); return MR_FAILED; }\n"
+"    int soerr = 0; socklen_t sl = sizeof(soerr);\n"
+"    if (getsockopt(s, SOL_SOCKET, SO_ERROR, &soerr, &sl) < 0 || soerr != 0) { printf(\"my_connect(0x%X) soerr=%d\\n\", ip, soerr); return MR_FAILED; }\n"
+"    printf(\"my_connect(0x%X) suc\\n\", ip);\n"
+"    return MR_SUCCESS;\n"
+"#else\n"
+"    if (connect(s, (struct sockaddr*)&clientService, sizeof(clientService)) != 0) { printf(\"my_connect(0x%X) fail\\n\", ip); return MR_FAILED; }\n"
+"    printf(\"my_connect(0x%X) suc\\n\", ip);\n"
+"    return MR_SUCCESS;\n"
+"#endif\n"
+"}\n")
+        # 3) 把原函数体替换为 #include 引用（绝对路径，避免相对路径找不到）。
+        string(REGEX REPLACE
+"static int32 my_connectSync\\(SOCKET_T s, int32 ip, uint16 port\\) \\{[^}]*\\{[^}]*\\}[^}]*\\}"
+"#include \"${_NET_INC}\""
+            _net_text "${_net_text}")
+        file(WRITE "${_VMRP_NET}" "${_net_text}")
+        message(STATUS "[OHOS] Patched my_connectSync -> 3s timeout (via ${_NET_INC})")
     endif()
 endif()
 

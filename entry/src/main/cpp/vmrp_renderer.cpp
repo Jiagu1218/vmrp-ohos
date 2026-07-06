@@ -10,8 +10,10 @@
 #include "vmrp_renderer.h"
 
 #include <hilog/log.h>
+#include <cstdio>
 #include <cstring>
 #include <malloc.h>
+#include <native_window/external_window.h>
 
 #undef LOG_TAG
 #define LOG_TAG "vmrp_renderer"
@@ -93,9 +95,8 @@ void VmrpRenderer::DestroyGL() {
     tex_w_ = tex_h_ = 0;
 }
 
-int VmrpRenderer::OnSurfaceCreated(void *window, int32_t screen_w, int32_t screen_h) {
+int VmrpRenderer::OnSurfaceCreated(void *window) {
     native_window_ = reinterpret_cast<EGLNativeWindowType>(window);
-    (void)screen_w; (void)screen_h;
 
     egl_display_ = eglGetDisplay(EGL_DEFAULT_DISPLAY);
     if (egl_display_ == EGL_NO_DISPLAY) { LOGE("eglGetDisplay failed"); return -1; }
@@ -113,7 +114,9 @@ int VmrpRenderer::OnSurfaceCreated(void *window, int32_t screen_w, int32_t scree
         LOGE("eglChooseConfig failed num=%d", num);
         return -1;
     }
-    // 用 OHOS 的 native window 创建 EGLSurface（XComponent 传入的 window）。
+    // 用 OHOS 的 native window 创建 EGLSurface（SurfaceHolder 的 GetNativeWindow 传入）。
+    // Created 时布局可能未完成，surface 尺寸可能是中间态（如 384x384），
+    // 最终正确尺寸由 OnSurfaceChanged → RebuildSurface 兜底重建。
     egl_surface_ = eglCreateWindowSurface(egl_display_, egl_config_, native_window_, nullptr);
     if (egl_surface_ == EGL_NO_SURFACE) { LOGE("eglCreateWindowSurface failed"); return -1; }
 
@@ -126,8 +129,7 @@ int VmrpRenderer::OnSurfaceCreated(void *window, int32_t screen_w, int32_t scree
     }
     eglSwapInterval(egl_display_, 0); // 不限制 vsync，按脏标记驱动
 
-    // 查询 EGL surface 的实际像素尺寸：它是 XComponent 在屏幕上的绘制区域，
-    // 即 glViewport 应铺满的目标。MRP 屏幕（240x320）的纹理会被映射铺满它。
+    // 查询 EGL surface 当前像素尺寸（可能为中间态，Changed 后会更新）。
     EGLint sw = 0, sh = 0;
     eglQuerySurface(egl_display_, egl_surface_, EGL_WIDTH, &sw);
     eglQuerySurface(egl_display_, egl_surface_, EGL_HEIGHT, &sh);
@@ -136,8 +138,41 @@ int VmrpRenderer::OnSurfaceCreated(void *window, int32_t screen_w, int32_t scree
 
     if (InitGL() != 0) return -1;
     glDisable(GL_DEPTH_TEST);
-    LOGI("surface created, EGL %d.%d, surface %dx%d", major, minor, surface_w_, surface_h_);
+    LOGI("surface created, EGL %d.%d, surface %dx%d (may resize on SurfaceChanged)",
+         major, minor, surface_w_, surface_h_);
     return 0;
+}
+
+void VmrpRenderer::RebuildSurface(int32_t w, int32_t h) {
+    if (egl_display_ == EGL_NO_DISPLAY || native_window_ == 0 || w <= 0 || h <= 0) return;
+    // 若尺寸未变则跳过（避免每帧重建）。
+    if (w == surface_w_ && h == surface_h_ && egl_surface_ != EGL_NO_SURFACE) return;
+
+    // 1) 设 native window buffer geometry：决定 surface buffer 的真实分配尺寸。
+    //    必须在重建 eglSurface 之前设，新的 surface dequeue 时生效。
+    OH_NativeWindow_NativeWindowHandleOpt(reinterpret_cast<OHNativeWindow*>(native_window_),
+                                          SET_BUFFER_GEOMETRY, w, h);
+
+    // 2) 销毁旧 eglSurface（其 buffer 尺寸在创建时就定了，无法动态改），
+    //    用新 geometry 重建。eglConfig/context 可复用。
+    if (egl_surface_ != EGL_NO_SURFACE) {
+        eglMakeCurrent(egl_display_, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+        eglDestroySurface(egl_display_, egl_surface_);
+        egl_surface_ = EGL_NO_SURFACE;
+    }
+    egl_surface_ = eglCreateWindowSurface(egl_display_, egl_config_, native_window_, nullptr);
+    if (egl_surface_ == EGL_NO_SURFACE) {
+        LOGE("RebuildSurface: eglCreateWindowSurface failed");
+        surface_w_ = surface_h_ = 0;
+        return;
+    }
+    eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+    EGLint sw = 0, sh = 0;
+    eglQuerySurface(egl_display_, egl_surface_, EGL_WIDTH, &sw);
+    eglQuerySurface(egl_display_, egl_surface_, EGL_HEIGHT, &sh);
+    surface_w_ = sw;
+    surface_h_ = sh;
+    LOGI("surface rebuilt to %dx%d (eglQuery=%dx%d)", w, h, sw, sh);
 }
 
 void VmrpRenderer::OnSurfaceDestroyed() {
@@ -151,18 +186,6 @@ void VmrpRenderer::OnSurfaceDestroyed() {
     surface_w_ = surface_h_ = 0;
     native_window_ = 0;
     LOGI("surface destroyed");
-}
-
-void VmrpRenderer::UpdateSurfaceSize() {
-    if (egl_display_ == EGL_NO_DISPLAY || egl_surface_ == EGL_NO_SURFACE) return;
-    EGLint sw = 0, sh = 0;
-    eglQuerySurface(egl_display_, egl_surface_, EGL_WIDTH, &sw);
-    eglQuerySurface(egl_display_, egl_surface_, EGL_HEIGHT, &sh);
-    if (sw != surface_w_ || sh != surface_h_) {
-        surface_w_ = sw;
-        surface_h_ = sh;
-        LOGI("surface size changed to %dx%d", surface_w_, surface_h_);
-    }
 }
 
 int VmrpRenderer::Render(const uint16_t *src, int32_t screen_w, int32_t screen_h) {
@@ -216,6 +239,54 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t screen_w, int32_t screen_h
     glUniform1i(glGetUniformLocation(program_, "u_tex"), 0);
     glBindVertexArray(vao_);
     glDrawArrays(GL_TRIANGLES, 0, 3); // 一个大三角形覆盖整个 surface
+    GLenum glerr = glGetError();
+    if (glerr != GL_NO_ERROR) {
+        OH_LOG_ERROR(LOG_APP, "GL error after draw: 0x%{public}x", glerr);
+    }
+    glBindVertexArray(0);
+    EGLBoolean swapped = eglSwapBuffers(egl_display_, egl_surface_);
+    if (!swapped) {
+        OH_LOG_ERROR(LOG_APP, "eglSwapBuffers failed: 0x%{public}x", eglGetError());
+    }
+    return 0;
+}
+
+// RGBA8888 路径：src 已是 RGBA8888（vmrp 内部 screen_lock 保护下转换）。
+// screen_rgba_buf 仅由渲染线程经 get_screen_rgba_buffer 写入，worker 画屏只写
+// screen_buf，故 glTexSubImage2D 上传期间该 buffer 不会被并发改写。
+int VmrpRenderer::Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h) {
+    if (!Ready() || !rgba || screen_w <= 0 || screen_h <= 0) {
+        LOGE("Render(rgba) precondition fail: ready=%d rgba=%p w=%d h=%d",
+             Ready() ? 1 : 0, rgba, screen_w, screen_h);
+        return -1;
+    }
+    EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+    if (!mc) {
+        OH_LOG_ERROR(LOG_APP, "eglMakeCurrent failed: 0x%{public}x", eglGetError());
+        return -1;
+    }
+
+    if (tex_w_ != screen_w || tex_h_ != screen_h) {
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, screen_w, screen_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        tex_w_ = screen_w;
+        tex_h_ = screen_h;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, screen_w, screen_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+
+    int32_t vp_w = surface_w_ > 0 ? surface_w_ : screen_w;
+    int32_t vp_h = surface_h_ > 0 ? surface_h_ : screen_h;
+    glViewport(0, 0, vp_w, vp_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(program_);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glUniform1i(glGetUniformLocation(program_, "u_tex"), 0);
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
     GLenum glerr = glGetError();
     if (glerr != GL_NO_ERROR) {
         OH_LOG_ERROR(LOG_APP, "GL error after draw: 0x%{public}x", glerr);

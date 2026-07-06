@@ -32,6 +32,7 @@ struct VmrpApi {
     int (*get_timer_interval)(void);
 
     const uint16_t *(*get_screen_buffer)(void);
+    const uint8_t *(*get_screen_rgba_buffer)(void);
     int (*get_screen_dirty)(void);
     int (*get_screen_width)(void);
     int (*get_screen_height)(void);
@@ -43,6 +44,7 @@ struct VmrpApi {
     void (*audio_stop)(void);
 
     int (*is_edit_active)(void);
+    const char *(*get_edit_text)(void);
     int (*set_edit_text)(const char *text);
     int (*cancel_edit)(void);
 };
@@ -74,6 +76,8 @@ public:
 
     // 屏幕访问（RGB565）。dirty 会在读取后自动清除。
     const uint16_t *ScreenBuffer();
+    // 屏幕访问（RGBA8888，vmrp 内部 screen_lock 保护，async 下线程安全）。
+    const uint8_t *ScreenRgbaBuffer();
     int ScreenWidth();
     int ScreenHeight();
     bool ScreenDirty();
@@ -87,6 +91,9 @@ public:
 
     // 文本编辑。
     bool EditActive();
+    // 获取当前待编辑的原文本（编辑激活时为 MRP 传入的初始文本，否则空串）。
+    // 返回的指针在下次调用前有效（vmrp 内部维护快照），调用方应立即拷贝。
+    std::string GetEditText();
     int SetEditText(const std::string &text);
     int CancelEdit();
 

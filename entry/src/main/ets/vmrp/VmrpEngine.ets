@@ -14,7 +14,8 @@ import {
   loadLib, init as nativeInit, setWorkDir as nativeSetWorkDir,
   start as nativeStart, stop as nativeStop, sendKey as nativeSendKey,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
-  isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback
+  isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
+  createSurfaceNode as nativeCreateSurfaceNode
 } from 'libentry.so';
 
 // MRP 事件码（与 vmrp_api.h 一致）。
@@ -87,7 +88,14 @@ export class VmrpEngineTs {
     return nativeIsRunning();
   }
 
-  setEditCallback(cb: () => void): void {
+  // 注册编辑回调：native 检测到 MRP 请求编辑时回调此处，并携带待编辑的原文本用于回显。
+  setEditCallback(cb: (editText: string) => void): void {
     nativeSetEditCallback(cb);
+  }
+
+  // 把 ArkTS ContentSlot 的 NodeContent 传给 native，native 在其上树时创建 XComponent 节点。
+  // 必须在 aboutToAppear 时调用（UI 线程）。范式5：NDK 创建 XComponent 节点 + SurfaceHolder。
+  createSurfaceNode(nodeContent: object): void {
+    nativeCreateSurfaceNode(nodeContent);
   }
 }

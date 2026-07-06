@@ -2,7 +2,27 @@
   "color": [
     {
       "name": "start_window_background",
-      "value": "#000000"
+      "value": "#0D0D1A"
+    },
+    {
+      "name": "shell_color",
+      "value": "#1A1A2E"
+    },
+    {
+      "name": "accent_color",
+      "value": "#E94560"
+    },
+    {
+      "name": "hinge_color",
+      "value": "#2D2D44"
+    },
+    {
+      "name": "dpad_bg",
+      "value": "#16213E"
+    },
+    {
+      "name": "softkey_bg",
+      "value": "#0F3460"
     }
   ]
 }

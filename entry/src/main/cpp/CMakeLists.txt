@@ -43,4 +43,5 @@ target_link_libraries(vmrp_entry PUBLIC
     EGL
     GLESv3
     libohaudio.so
+    libnative_window.so
 )

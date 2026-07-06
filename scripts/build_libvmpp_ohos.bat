@@ -1,11 +1,13 @@
 @echo off
 REM ===========================================================================
-REM  build_libvmpp_ohos.bat [vmrp_src] [abi]
+REM  build_libvmpp_ohos.bat [abi]  OR  build_libvmpp_ohos.bat [vmrp_src] [abi]
 REM  Prebuild libvmrp.so for the HarmonyOS entry module.
 REM
 REM  Args:
-REM    vmrp_src  - vmrp source root (default: ..\..\vmrp)
 REM    abi       - arm64-v8a (default, for real devices) or x86_64 (emulator)
+REM    vmrp_src  - vmrp source root (default: internal ..\vmrp).
+REM                Only pass this explicitly to override; the internal copy
+REM                is the project's source of truth.
 REM
 REM  Output: entry\src\main\cpp\prebuilt\<abi>\libvmrp.so
 REM          entry\libs\<abi>\libvmrp.so  (for HAP packaging)
@@ -21,11 +23,21 @@ REM      satisfy unicorn's qemu/configure shell dependency
 REM ===========================================================================
 setlocal enabledelayedexpansion
 
-set "VMRP_SRC=%~1"
-REM Default vmrp source is the submodule at project root (git submodule)
-if "%VMRP_SRC%"=="" set "VMRP_SRC=%~dp0..\vmrp"
-set "ABI=%~2"
-if "%ABI%"=="" set "ABI=arm64-v8a"
+REM Smart arg parsing: support both `bat <abi>` and `bat <vmrp_src> <abi>`.
+REM The internal vmrp/ (sibling of this script's parent) is the source of
+REM truth and the default; only an explicit non-ABI first arg overrides it.
+set "ABI=arm64-v8a"
+set "VMRP_SRC=%~dp0..\vmrp"
+if not "%~1"=="" (
+    if /I "%~1"=="arm64-v8a" (
+        set "ABI=%~1"
+    ) else if /I "%~1"=="x86_64" (
+        set "ABI=%~1"
+    ) else (
+        set "VMRP_SRC=%~1"
+        if not "%~2"=="" set "ABI=%~2"
+    )
+)
 
 REM Resolve to absolute path.
 pushd "%VMRP_SRC%" 2>nul
@@ -85,10 +97,10 @@ if not exist "%VMRP_SRC%\third_party\unicorn\CMakeLists.txt" (
     popd
 )
 
-REM --- Restore Unicorn CMakeLists.txt pristine (undo previous ABI's patching) ---
-pushd "%VMRP_SRC%\third_party\unicorn"
-git checkout -- CMakeLists.txt >nul 2>&1
-popd
+REM --- Restore patched source files pristine before re-patching ---
+REM scripts/CMakeLists.txt patches several files in place during configure;
+REM restore all of them to their committed state so no previous residue leaks in.
+call :restore_patched
 
 REM --- Configure ---
 echo.
@@ -138,8 +150,34 @@ if "!SO_FOUND!"=="0" (
     exit /b 1
 )
 
+REM --- Restore patched sources so the working tree stays clean after a build ---
+REM Only on the success path; on failure we leave the patched files in place.
+call :restore_patched
+
 echo.
 echo [OK] libvmrp.so (%ABI%) built and copied to:
 echo     %PREBUILT_DIR%\libvmrp.so
 echo     %LIBS_DIR%\libvmrp.so
 endlocal
+goto :eof
+
+REM ===========================================================================
+REM  :restore_patched
+REM  Restore the source files that scripts/CMakeLists.txt patches in place
+REM  back to their committed (pristine) state. Tolerant: each checkout is
+REM  allowed to be a no-op (file clean or git-untracked) via 2>nul.
+REM  NOTE: discards uncommitted/unstaged edits to these files only, which by
+REM  convention are temporary build-time patches; permanent edits should be
+REM  committed. Files NOT patched by the script (e.g. mythroad_mini.c) are
+REM  untouched.
+REM ===========================================================================
+:restore_patched
+pushd "%VMRP_SRC%" >nul 2>&1
+if errorlevel 1 exit /b 0
+git checkout -- third_party\unicorn\CMakeLists.txt >nul 2>&1
+git checkout -- src\native_dsm_funcs.c            >nul 2>&1
+git checkout -- src\mythroad\mythroad.c           >nul 2>&1
+git checkout -- src\arm_ext_executor.c            >nul 2>&1
+git checkout -- src\network.c                     >nul 2>&1
+popd
+exit /b 0

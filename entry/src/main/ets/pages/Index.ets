@@ -1,16 +1,6 @@
-/*
- * Index.ets - vmrp 鸿蒙主界面。
- *
- * 布局：
- *   - XComponent（id=vmrp_screen）：承载 native EGL/GLES 渲染 + 接收触摸事件。
- *   - 控制按钮：选择 MRP 文件、方向键、数字键、左右软键、确认键。
- *   - 文本编辑弹层：native 请求编辑时显示 TextInput。
- *
- * 渲染：XComponent 内部由 native 侧 EGL 渲染 RGB565 屏幕（240x320）。
- * 输入：触摸事件由 native XComponent 回调处理；实体按键/软键盘走 sendKey。
- */
-import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
+import { NodeContent, ComponentContent, AppStorageV2 } from '@kit.ArkUI';
+import { display } from '@kit.ArkUI';
 import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
   MR_KEY_UP, MR_KEY_DOWN, MR_KEY_LEFT, MR_KEY_RIGHT,
@@ -18,89 +8,527 @@ import {
   MR_KEY_STAR, MR_KEY_POUND
 } from '../vmrp/VmrpEngine';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
+import { gAbilityContext } from '../entryability/EntryAbility';
+import { AvoidData } from '../common/AvoidData';
 
-@Entry
-@Component
-struct Index {
-  @State status: string = '未启动';
-  @State running: boolean = false;
-  @State showEdit: boolean = false;
-  @State editText: string = '';
-  private engine: VmrpEngineTs = new VmrpEngineTs();
-  // 当前按住未释放的键，用于长按支持
-  private pressedKeys: Set<number> = new Set();
+interface ScreenShellParam {
+  isTop: boolean;
+}
+
+interface GridRowColumns {
+  sm: number;
+  md: number;
+  lg: number;
+}
+
+interface GridRowGutter {
+  x: number;
+  y: number;
+}
+
+interface GridColSpan {
+  sm: number;
+  md: number;
+  lg: number;
+}
+
+interface GridRowBreakpoints {
+  value: string[];
+  reference: BreakpointsReference;
+}
+
+const SHELL_COLOR = '#1A1A2E';
+const HINGE_COLOR = '#2D2D44';
+const ACCENT_COLOR = '#E94560';
+const SCREEN_BG = '#000000';
+const DPAD_BG = '#16213E';
+const DPAD_ARROW = '#E94560';
+const SOFTKEY_BG = '#0F3460';
+const NUMKEY_BG = '#1A1A2E';
+const NUMKEY_TEXT = '#A7A7C4';
+const STATUS_TEXT = '#8888AA';
+const RUN_DOT = '#4ADE80';
+const SHELL_BORDER = '#2A2A4E';
+
+@ComponentV2
+struct EditDialogContent {
+  @Param editText: string = '';
+  @Event onTextChange: (v: string) => void = () => {};
+  @Event onSubmit: (text: string) => void = () => {};
+  @Event onCancel: () => void = () => {};
+  @Local private inputText: string = '';
 
   aboutToAppear(): void {
+    this.inputText = this.editText;
+  }
+
+  build() {
+    Column() {
+      Text('请输入文字')
+        .fontSize(16)
+        .fontColor('#CCCCCC')
+        .margin({ top: 16, bottom: 10 })
+      TextArea({ text: this.inputText })
+        .onChange((v: string) => { this.inputText = v; })
+        .width('90%')
+        .layoutWeight(1)
+        .fontSize(16)
+        .backgroundColor('#1A1A2E')
+        .fontColor('#FFFFFF')
+      Row() {
+        Button('取消')
+          .width(100)
+          .height(40)
+          .backgroundColor('#333355')
+          .fontColor('#CCCCCC')
+          .onClick(() => {
+            this.onCancel();
+          })
+        Button('确定')
+          .width(100)
+          .height(40)
+          .backgroundColor(ACCENT_COLOR)
+          .fontColor('#FFFFFF')
+          .onClick(() => {
+            this.onSubmit(this.inputText);
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.SpaceEvenly)
+      .margin({ top: 12, bottom: 16 })
+    }
+    .width('82%')
+    .height(340)
+    .backgroundColor(SHELL_COLOR)
+    .borderRadius(16)
+  }
+}
+
+@ComponentV2
+struct DPadWithFunc {
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param dpadSize: number = 130;
+  @Param softKeyH: number = 28;
+
+  build() {
+    Column({ space: 14 }) {
+      Row() {
+        Stack() {
+          Text('左软')
+            .fontSize(12)
+            .fontColor('#CCCCCC')
+            .fontWeight(FontWeight.Medium)
+        }
+        .height(this.softKeyH)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(this.softKeyH / 2)
+        .backgroundColor(SOFTKEY_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e))
+
+        Stack() {
+          Text('▲')
+            .fontSize(this.dpadSize * 0.2)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .margin({ left: 24, right: 24 })
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_UP, e))
+
+        Stack() {
+          Text('右软')
+            .fontSize(12)
+            .fontColor('#CCCCCC')
+            .fontWeight(FontWeight.Medium)
+        }
+        .height(this.softKeyH)
+        .padding({ left: 16, right: 16 })
+        .borderRadius(this.softKeyH / 2)
+        .backgroundColor(SOFTKEY_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e))
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+
+      Row({ space: 16 }) {
+        Stack() {
+          Text('◀')
+            .fontSize(this.dpadSize * 0.17)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_LEFT, e))
+
+        Stack() {
+          Text('OK')
+            .fontSize(14)
+            .fontColor('#FFFFFF')
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.28)
+        .height(this.dpadSize * 0.28)
+        .borderRadius(this.dpadSize * 0.14)
+        .backgroundColor(ACCENT_COLOR)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SELECT, e))
+
+        Stack() {
+          Text('▶')
+            .fontSize(this.dpadSize * 0.17)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_RIGHT, e))
+      }
+      .justifyContent(FlexAlign.Center)
+      .alignItems(VerticalAlign.Center)
+
+      Row() {
+        Stack() {
+          Text('▼')
+            .fontSize(this.dpadSize * 0.2)
+            .fontColor(DPAD_ARROW)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.dpadSize * 0.36)
+        .height(this.dpadSize * 0.36)
+        .borderRadius(8)
+        .backgroundColor(DPAD_BG)
+        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_DOWN, e))
+      }
+      .justifyContent(FlexAlign.Center)
+    }
+    .alignItems(HorizontalAlign.Center)
+  }
+}
+
+@ComponentV2
+struct SoftKeys {
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+
+  build() {
+    Row({ space: 10 }) {
+      Stack() {
+        Text('左软')
+          .fontSize(12)
+          .fontColor('#CCCCCC')
+          .fontWeight(FontWeight.Medium)
+      }
+      .height(26)
+      .padding({ left: 16, right: 16 })
+      .borderRadius(13)
+      .backgroundColor(SOFTKEY_BG)
+      .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e))
+
+      Stack() {
+        Text('右软')
+          .fontSize(12)
+          .fontColor('#CCCCCC')
+          .fontWeight(FontWeight.Medium)
+      }
+      .height(26)
+      .padding({ left: 16, right: 16 })
+      .borderRadius(13)
+      .backgroundColor(SOFTKEY_BG)
+      .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e))
+    }
+    .justifyContent(FlexAlign.Center)
+  }
+}
+
+@ComponentV2
+struct NumPad {
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param btnSize: number = 36;
+
+  build() {
+    Grid() {
+      ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, MR_KEY_STAR, 0, MR_KEY_POUND], (k: number) => {
+        GridItem() {
+          Stack() {
+            Text(`${k === MR_KEY_STAR ? '✱' : k === MR_KEY_POUND ? '#' : k}`)
+              .fontSize(this.btnSize * 0.4)
+              .fontColor(NUMKEY_TEXT)
+              .fontWeight(FontWeight.Medium)
+          }
+          .width(this.btnSize)
+          .height(this.btnSize)
+          .borderRadius(this.btnSize / 2)
+          .backgroundColor(NUMKEY_BG)
+          .border({ width: 1, color: SHELL_BORDER })
+          .onTouch((e: TouchEvent) => this.onKeyTouch(k, e))
+        }
+      }, (k: number) => `num-${k}`)
+    }
+    .columnsTemplate('1fr 1fr 1fr')
+    .rowsTemplate('1fr 1fr 1fr 1fr')
+    .columnsGap(10)
+    .rowsGap(10)
+    .width('45%')
+    .height(this.btnSize * 4 + 50)
+  }
+}
+
+@ComponentV2
+struct TopScreen {
+  @Param nodeContent: NodeContent = new NodeContent();
+  @Param status: string = '';
+  @Param running: boolean = false;
+  @Param scaleVal: number = 1;
+
+  build() {
+    Column() {
+      Stack() {
+        Stack() {
+          ContentSlot(this.nodeContent)
+        }
+        .width(240)
+        .height(320)
+        .backgroundColor(SCREEN_BG)
+        .borderRadius(6)
+        .clip(true)
+        .scale({ x: this.scaleVal, y: this.scaleVal })
+        .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+      }
+      .width(240 * this.scaleVal)
+      .height(320 * this.scaleVal)
+      .alignContent(Alignment.Center)
+      .clip(true)
+
+      Row() {
+        Row()
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(this.running ? RUN_DOT : '#555577')
+          .margin({ right: 6 })
+        Text(this.status)
+          .fontSize(10)
+          .fontColor(STATUS_TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+      }
+      .width('100%')
+      .padding({ left: 8, right: 8, top: 4, bottom: 2 })
+      .constraintSize({ maxWidth: 240 * this.scaleVal + 16 })
+    }
+    .alignItems(HorizontalAlign.Center)
+  }
+}
+
+@ComponentV2
+struct BottomControls {
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param onPickMrp: () => void = () => {};
+  @Param onStartDefault: () => void = () => {};
+  @Param running: boolean = false;
+  @Param dpadSize: number = 110;
+  @Param btnSize: number = 30;
+
+  build() {
+    Column() {
+      DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: this.dpadSize })
+
+      NumPad({ onKeyTouch: this.onKeyTouch, btnSize: this.btnSize })
+
+      Row({ space: 8 }) {
+        Stack() {
+          Text('选择MRP')
+            .fontSize(11)
+            .fontColor('#CCCCCC')
+        }
+        .height(26)
+        .padding({ left: 14, right: 14 })
+        .borderRadius(13)
+        .backgroundColor(SOFTKEY_BG)
+        .onClick(() => this.onPickMrp())
+
+        Stack() {
+          Text('启动默认')
+            .fontSize(11)
+            .fontColor('#CCCCCC')
+        }
+        .height(26)
+        .padding({ left: 14, right: 14 })
+        .borderRadius(13)
+        .backgroundColor(SOFTKEY_BG)
+        .onClick(() => this.onStartDefault())
+      }
+      .padding({ top: 4, bottom: 4 })
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Center)
+    .justifyContent(FlexAlign.Center)
+    .padding({ left: 8, right: 8, top: 4, bottom: 8 })
+  }
+}
+
+@ComponentV2
+struct PhoneControls {
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param running: boolean = false;
+
+  build() {
+    Column({ space: 6 }) {
+      Row() {
+        DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: 110 })
+          .layoutWeight(1)
+
+        NumPad({ onKeyTouch: this.onKeyTouch, btnSize: 30 })
+      }
+      .width('100%')
+      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+  }
+}
+
+@Entry
+@ComponentV2
+struct Index {
+  @Local status: string = '未启动';
+  @Local running: boolean = false;
+  @Local editText: string = '';
+  @Local currentBp: string = 'sm';
+  @Local showControls: boolean = true;
+  @Local isFoldable: boolean = false;
+  @Local foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
+  @Local screenAreaW: number = 240;
+  @Local screenAreaH: number = 320;
+  @Local dualAreaW: number = 400;
+  @Local dualAreaH: number = 600;
+  private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
+  private engine: VmrpEngineTs = new VmrpEngineTs();
+  private pressedKeys: Set<number> = new Set();
+  private nodeContent: NodeContent = new NodeContent();
+  private gridColumns: GridRowColumns = { sm: 1, md: 2, lg: 2 };
+  private gridGutter: GridRowGutter = { x: 8, y: 6 };
+  private gridBreakpoints: GridRowBreakpoints = {
+    value: ['520vp', '840vp'],
+    reference: BreakpointsReference.WindowSize
+  };
+  private topSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
+  private bottomSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
+
+  aboutToAppear(): void {
+    try {
+      const d = display.getDefaultDisplaySync();
+      const wVP = this.getUIContext().px2vp(d.width);
+      const hVP = this.getUIContext().px2vp(d.height);
+      this.isFoldable = display.isFoldable();
+      if (this.isFoldable) {
+        this.foldStatus = display.getFoldStatus();
+      }
+      if (wVP >= 840) {
+        this.currentBp = 'lg';
+      } else if (wVP >= 520) {
+        this.currentBp = 'md';
+      } else {
+        this.currentBp = 'sm';
+      }
+      this.screenAreaW = wVP;
+      this.screenAreaH = hVP;
+      this.dualAreaW = wVP / 2 - 4;
+      this.dualAreaH = hVP;
+      if (this.isFoldable) {
+        display.on('foldStatusChange', (status: display.FoldStatus) => {
+          this.foldStatus = status;
+        });
+      }
+    } catch (_e) {
+      this.currentBp = 'sm';
+    }
     this.bootstrap();
   }
 
   async bootstrap(): Promise<void> {
     try {
-      this.status = '正在加载 native 模块...';
+      this.status = '正在加载...';
       await this.engine.init();
-      this.status = 'native 模块已加载';
-      const ctx = getContext(this) as common.UIAbilityContext;
-
-      // 1. 解压内置 mythroad 运行时到沙箱。
-      this.status = '正在准备运行时资源...';
-      const workDir = await VmrpAssets.ensureRuntime(ctx);
-      this.status = `工作目录就绪`;
-
-      // 2. 加载预构建 libvmrp.so。
-      //    libvmrp.so 与 libentry.so 一起打包在模块 libs/<abi>/，运行时
-      //    解压到应用沙箱 lib 目录，dlopen 用 soname 即可。
-      let ok = this.engine.loadLib('libvmrp.so');
-      this.status = `loadLib(libvmrp.so) = ${ok}`;
-      if (!ok) {
-        ok = this.engine.loadLib(`${ctx.bundleCodeDir}/lib/arm64/libvmrp.so`);
-        this.status = `loadLib(绝对路径) = ${ok}`;
-      }
-      if (!ok) {
-        this.status = '加载 libvmrp.so 失败';
+      const ctx = gAbilityContext ?? this.getUIContext().getHostContext();
+      if (!ctx) {
+        this.status = '初始化失败';
         return;
       }
-
-      // 3. 设置默认屏幕（240x320）和工作目录。
+      this.status = '准备资源...';
+      const workDir = await VmrpAssets.ensureRuntime(ctx);
+      let ok = this.engine.loadLib('libvmrp.so');
+      if (!ok) {
+        ok = this.engine.loadLib(`${ctx.bundleCodeDir}/lib/arm64/libvmrp.so`);
+      }
+      if (!ok) {
+        this.status = '加载失败';
+        return;
+      }
       this.engine.setScreen(240, 320);
       this.engine.setWorkDir(workDir);
-
-      // 4. 注册编辑回调：native 检测到 MRP 请求编辑时回调此处。
-      this.engine.setEditCallback(() => {
-        this.showEdit = true;
-        this.editText = '';
+      this.engine.setEditCallback((editText: string) => {
+        this.editText = editText;
+        this.openEditDialog();
       });
-      this.status = '就绪，正在启动默认MRP...';
-      
-      // 5. 自动启动默认MRP，解决启动卡开屏问题
+      this.engine.createSurfaceNode(this.nodeContent);
+      this.status = '启动中...';
       await this.startDefault();
     } catch (e) {
-      // ArkTS 对 Error 做 JSON.stringify 会得到 {}，用 message/businessError 更可读。
       const err = e as Error;
-      const msg = err?.message ?? String(e);
-      this.status = `初始化失败: ${msg}`;
-      console.error(`vmrp bootstrap failed: ${msg}`);
+      this.status = `失败: ${err?.message ?? String(e)}`;
     }
   }
 
-  // 直接启动内置 gblmt.mrp（无需文件选择器），用于验证核心运行路径。
+  private openEditDialog(): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: EditDialogContentBuilderParams = {
+      editText: this.editText,
+      onTextChange: (_v: string) => {},
+      onSubmit: (t: string) => {
+        this.engine.submitEdit(t);
+        prompt.closeCustomDialog(contentNode);
+      },
+      onCancel: () => {
+        this.engine.cancelEdit();
+        prompt.closeCustomDialog(contentNode);
+      }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(EditDialogContentBuilder), params);
+    const opts: EditDialogOptions = {
+      alignment: DialogAlignment.Center,
+      autoCancel: false
+    };
+    prompt.openCustomDialog(contentNode, opts);
+  }
+
   async startDefault(): Promise<void> {
     try {
-      const ctx = getContext(this) as common.UIAbilityContext;
-      // ensureRuntime 返回 files 根（chdir 目标，dsmWorkPath="mythroad/" 据此拼接）。
+      const ctx = this.getUIContext().getHostContext();
+      if (!ctx) {
+        this.status = '无法获取上下文';
+        return;
+      }
       const workDir = await VmrpAssets.ensureRuntime(ctx);
-      // mrp 文件在 mythroad 子目录下（绝对路径，不受 dsmWorkPath 影响）。
       const dst = `${VmrpAssets.getMythroadDir(ctx)}/dsm_gm.mrp`;
-      this.status = `启动默认: ${dst}`;
+      this.status = '启动中';
       const r = this.engine.start(dst, 'start.mr', '_dsm');
       this.running = this.engine.isRunning();
-      this.status = `启动结果: ${r}, 运行: ${this.running}`;
+      this.status = `${r}, ${this.running ? '运行中' : '已停止'}`;
     } catch (e) {
       const err = e as Error;
-      this.status = `启动失败: ${err?.message ?? String(e)}`;
+      this.status = `失败: ${err?.message ?? String(e)}`;
     }
   }
 
-  // 选择并加载 MRP 文件。
   async pickAndStart(): Promise<void> {
     try {
       const opt = new picker.DocumentSelectOptions();
@@ -109,18 +537,21 @@ struct Index {
       const docPicker = new picker.DocumentViewPicker();
       const uris = await docPicker.select(opt);
       if (!uris || uris.length === 0) return;
-      const ctx = getContext(this) as common.UIAbilityContext;
+      const ctx = this.getUIContext().getHostContext();
+      if (!ctx) {
+        this.status = '无法获取上下文';
+        return;
+      }
       const dst = await VmrpAssets.importMrp(ctx, uris[0]);
       this.status = `启动: ${dst}`;
       const r = this.engine.start(dst, 'start.mr', '_dsm');
       this.running = this.engine.isRunning();
-      this.status = `启动结果: ${r}, 运行: ${this.running}`;
+      this.status = `${r}, ${this.running ? '运行中' : '已停止'}`;
     } catch (e) {
       this.status = `选择失败: ${JSON.stringify(e)}`;
     }
   }
 
-  // 按键触摸处理器：按下时发送 press，抬起时发送 release，支持长按。
   onKeyTouch(key: number, event: TouchEvent): void {
     if (event.type === TouchType.Down) {
       if (!this.pressedKeys.has(key)) {
@@ -135,103 +566,313 @@ struct Index {
     }
   }
 
-  build() {
+  @Builder
+  screenShell($$: ScreenShellParam) {
     Column() {
-      // 顶部状态栏
-      Text(this.status)
-        .fontSize(14)
-        .width('100%')
-        .padding(8)
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      Row() {
-        Button('选择 MRP')
-          .onClick(() => this.pickAndStart())
-        Button('启动默认')
-          .onClick(() => this.startDefault())
-        Button(this.running ? '运行中' : '已停止')
-          .enabled(false)
-          .opacity(0.6)
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .padding(4)
-
-      // XComponent 屏幕：native 模块名 "entry" 对应 libentry.so。
-      // id 必须与 native 侧 OH_NATIVE_XCOMPONENT_OBJ 的 XComponent 匹配。
-      XComponent({
-        id: 'vmrp_screen',
-        type: XComponentType.SURFACE,
-        libraryname: 'entry'
-      })
-        .width(240)
-        .height(320)
-        .backgroundColor(Color.Black)
-
-      // 方向键 + 功能键（onTouch 支持长按）
-      Grid() {
-        GridItem() { Button('↑').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_UP, e)) }
-        GridItem() { Button('←').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_LEFT, e)) }
-        GridItem() { Button('确认').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SELECT, e)) }
-        GridItem() { Button('→').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_RIGHT, e)) }
-        GridItem() { Button('↓').fontSize(20).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_DOWN, e)) }
-        GridItem() { Button('左软').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e)) }
-        GridItem() { Button('右软').fontSize(14).onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e)) }
-      }
-      .columnsTemplate('1fr 1fr 1fr')
-      .width('100%')
-      .height(180)
-      .padding(4)
-
-      // 数字键（onTouch 支持长按）
-      Grid() {
-        ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, MR_KEY_STAR, 0, MR_KEY_POUND], (k: number) => {
-          GridItem() {
-            Button(`${k === MR_KEY_STAR ? '*' : k === MR_KEY_POUND ? '#' : k}`)
-              .fontSize(16)
-              .onTouch((e: TouchEvent) => this.onKeyTouch(k, e))
-          }
+      if ($$.isTop) {
+        TopScreen({
+          nodeContent: this.nodeContent,
+          status: this.status,
+          running: this.running,
+          scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / 240, (this.dualAreaH * 0.5 - 36) / 320)
         })
+      } else {
+        Scroll() {
+          Column() {
+            BottomControls({
+              onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+              onPickMrp: () => this.pickAndStart(),
+              onStartDefault: () => this.startDefault(),
+              running: this.running,
+              dpadSize: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
+              btnSize: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36)
+            })
+          }
+        }
+        .scrollBar(BarState.Off)
+        .width('100%')
+        .height('100%')
       }
-      .columnsTemplate('1fr 1fr 1fr')
-      .width('100%')
-      .height(150)
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(Color.White)
-
-    // 文本编辑弹层（native 请求编辑时显示）
-    .bindSheet($$this.showEdit, this.buildEditSheet(), {
-      height: 260,
-      dragBar: true
-    })
+    .alignItems(HorizontalAlign.Center)
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor(SHELL_COLOR)
+    .borderRadius(16)
+    .padding(12)
+    .border({ width: 1, color: SHELL_BORDER })
   }
 
   @Builder
-  buildEditSheet() {
+  phoneLayout() {
     Column() {
-      Text('请输入文字')
-        .fontSize(16)
-        .margin(8)
-      TextInput({ text: this.editText })
-        .onChange((v: string) => { this.editText = v; })
-        .width('90%')
-      Row() {
-        Button('取消')
-          .onClick(() => {
-            this.engine.cancelEdit();
-            this.showEdit = false;
-          })
-        Button('确定')
-          .onClick(() => {
-            this.engine.submitEdit(this.editText);
-            this.showEdit = false;
-          })
+      Stack() {
+        Stack() {
+          ContentSlot(this.nodeContent)
+        }
+        .width(240)
+        .height(320)
+        .backgroundColor(SCREEN_BG)
+        .scale({
+          x: Math.min(this.screenAreaW / 240, this.screenAreaH / 320),
+          y: Math.min(this.screenAreaW / 240, this.screenAreaH / 320)
+        })
       }
-      .margin(8)
+      .width('100%')
+      .layoutWeight(1)
+      .alignContent(Alignment.Center)
+      .clip(true)
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.screenAreaW = newVal.width as number;
+        this.screenAreaH = newVal.height as number;
+      })
+
+      Row() {
+        Row()
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(this.running ? RUN_DOT : '#555577')
+          .margin({ right: 6 })
+        Text(this.status)
+          .fontSize(10)
+          .fontColor(STATUS_TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        Stack() {
+          Text('MRP')
+            .fontSize(9)
+            .fontColor(NUMKEY_TEXT)
+        }
+        .height(18)
+        .padding({ left: 6, right: 6 })
+        .borderRadius(9)
+        .backgroundColor(NUMKEY_BG)
+        .margin({ right: 4 })
+        .onClick(() => this.pickAndStart())
+        Stack() {
+          Text('默认')
+            .fontSize(9)
+            .fontColor(NUMKEY_TEXT)
+        }
+        .height(18)
+        .padding({ left: 6, right: 6 })
+        .borderRadius(9)
+        .backgroundColor(NUMKEY_BG)
+        .margin({ right: 4 })
+        .onClick(() => this.startDefault())
+        Stack() {
+          Text(this.showControls ? '收起' : '按键')
+            .fontSize(9)
+            .fontColor(DPAD_ARROW)
+        }
+        .height(18)
+        .padding({ left: 8, right: 8 })
+        .borderRadius(9)
+        .backgroundColor(DPAD_BG)
+        .onClick(() => { this.showControls = !this.showControls; })
+      }
+      .width('100%')
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+
+      if (this.showControls) {
+        Scroll() {
+          Column() {
+            PhoneControls({
+              onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+              running: this.running
+            })
+          }
+          .width('100%')
+          .backgroundColor(SHELL_COLOR)
+          .borderRadius({ topLeft: 16, topRight: 16 })
+          .border({ width: 1, color: SHELL_BORDER })
+          .padding({ top: 4, bottom: 4 })
+        }
+        .constraintSize({ maxHeight: '46%' })
+        .width('100%')
+        .scrollBar(BarState.Off)
+      }
     }
     .width('100%')
+    .height('100%')
   }
+
+  @Builder
+  foldExpandedLayout() {
+    Column() {
+      Column() {
+        Stack() {
+          Stack() {
+            ContentSlot(this.nodeContent)
+          }
+          .width(240)
+          .height(320)
+          .backgroundColor(SCREEN_BG)
+          .borderRadius(6)
+          .clip(true)
+          .scale({
+            x: Math.min(this.screenAreaW / 240, this.screenAreaH * 0.48 / 320),
+            y: Math.min(this.screenAreaW / 240, this.screenAreaH * 0.48 / 320)
+          })
+          .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+        }
+        .width('100%')
+        .height('50%')
+        .alignContent(Alignment.Center)
+
+        Row() {
+          Row()
+            .width(6)
+            .height(6)
+            .borderRadius(3)
+            .backgroundColor(this.running ? RUN_DOT : '#555577')
+            .margin({ right: 6 })
+          Text(this.status)
+            .fontSize(10)
+            .fontColor(STATUS_TEXT)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+      }
+      .width('100%')
+      .height('50%')
+      .alignItems(HorizontalAlign.Center)
+      .justifyContent(FlexAlign.Center)
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.screenAreaW = newVal.width as number;
+        this.screenAreaH = newVal.height as number;
+      })
+
+      Scroll() {
+        Column() {
+          Row() {
+            DPadWithFunc({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), dpadSize: Math.min(this.screenAreaW * 0.22, 120) })
+              .layoutWeight(1)
+
+            NumPad({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), btnSize: Math.min(this.screenAreaW * 0.07, 34) })
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          Row({ space: 8 }) {
+            Stack() {
+              Text('选择MRP')
+                .fontSize(11)
+                .fontColor('#CCCCCC')
+            }
+            .height(26)
+            .padding({ left: 14, right: 14 })
+            .borderRadius(13)
+            .backgroundColor(SOFTKEY_BG)
+            .onClick(() => this.pickAndStart())
+
+            Stack() {
+              Text('启动默认')
+                .fontSize(11)
+                .fontColor('#CCCCCC')
+            }
+            .height(26)
+            .padding({ left: 14, right: 14 })
+            .borderRadius(13)
+            .backgroundColor(SOFTKEY_BG)
+            .onClick(() => this.startDefault())
+          }
+          .padding({ top: 4, bottom: 4 })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Center)
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .scrollBar(BarState.Off)
+      .backgroundColor(SHELL_COLOR)
+      .borderRadius({ topLeft: 16, topRight: 16 })
+      .border({ width: 1, color: SHELL_BORDER })
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  dualScreenLayout() {
+    GridRow({
+      columns: this.gridColumns,
+      gutter: this.gridGutter,
+      breakpoints: this.gridBreakpoints
+    }) {
+      GridCol({ span: this.topSpan }) {
+        Column() {
+          this.screenShell({ isTop: true })
+        }
+        .width('100%')
+        .height('100%')
+      }
+      .height('100%')
+
+      GridCol({ span: this.bottomSpan }) {
+        Column() {
+          this.screenShell({ isTop: false })
+        }
+        .width('100%')
+        .height('100%')
+      }
+      .height('100%')
+    }
+    .width('100%')
+    .height('100%')
+    .onBreakpointChange((bp: string) => {
+      this.currentBp = bp;
+    })
+    .onAreaChange((_old: Area, newVal: Area) => {
+      this.dualAreaW = (newVal.width as number) / 2 - 4;
+      this.dualAreaH = newVal.height as number;
+    })
+  }
+
+  build() {
+    Column() {
+      if (this.isFoldable && (this.foldStatus === display.FoldStatus.FOLD_STATUS_EXPANDED ||
+        this.foldStatus === display.FoldStatus.FOLD_STATUS_HALF_FOLDED)) {
+        this.foldExpandedLayout()
+      } else if (this.currentBp === 'sm') {
+        this.phoneLayout()
+      } else {
+        this.dualScreenLayout()
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor('#0D0D1A')
+    .padding({ top: this.avoidData.topVp, bottom: this.avoidData.bottomVp })
+  }
+}
+
+@Builder
+function EditDialogContentBuilder($$: EditDialogContentBuilderParams) {
+  EditDialogContent({
+    editText: $$.editText,
+    onTextChange: $$.onTextChange,
+    onSubmit: $$.onSubmit,
+    onCancel: $$.onCancel
+  })
+}
+
+interface EditDialogContentBuilderParams {
+  editText: string;
+  onTextChange: (v: string) => void;
+  onSubmit: (text: string) => void;
+  onCancel: () => void;
+}
+
+interface EditDialogOptions {
+  alignment: DialogAlignment;
+  autoCancel: boolean;
 }

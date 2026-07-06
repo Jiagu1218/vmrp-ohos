@@ -19,18 +19,27 @@ public:
     VmrpRenderer() = default;
     ~VmrpRenderer();
 
-    // window 由 XComponent 的 OnSurfaceCreated 回调传入（EGLNativeWindowType）。
-    int OnSurfaceCreated(void *window, int32_t screen_w, int32_t screen_h);
+    // window 由 SurfaceHolder 的 OnSurfaceCreated 回调传入（OHNativeWindow*）。
+    // Created 时布局可能未完成（尺寸不可靠），只建 EGL context/surface；
+    // 最终尺寸由 OnSurfaceChanged → RebuildSurface 兜底（官方双回调分工）。
+    int OnSurfaceCreated(void *window);
+    // OnSurfaceChanged(w,h) 回调时调用：重设 native window buffer geometry
+    // 并重建 EGL surface，纠正 Created 时拿到的布局中间态尺寸（如 384x384）。
+    // 必须在渲染线程（帧回调线程）调用，配合 g_render_mtx 保护。
+    void RebuildSurface(int32_t w, int32_t h);
     void OnSurfaceDestroyed();
 
     // 渲染一帧。src 是 RGB565 缓冲（screen_w * screen_h 个 uint16）。
     // 若 src 为空或未就绪则返回 -1。
     int Render(const uint16_t *src, int32_t screen_w, int32_t screen_h);
-
-    // surface 尺寸变化时重新查询（由 OnSurfaceChanged 调用）。
-    void UpdateSurfaceSize();
+    // 渲染一帧（RGBA8888 路径，src 已是 RGBA8888，直接上传纹理，无需转换）。
+    // 用于 async worker 模型：vmrp 内部 screen_lock 保证读屏线程安全。
+    int Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h);
 
     bool Ready() const { return egl_display_ != EGL_NO_DISPLAY && texture_ != 0; }
+    // 当前 EGL surface 像素尺寸（触屏坐标归一化用）。0 表示尚未就绪。
+    int32_t SurfaceWidth() const { return surface_w_; }
+    int32_t SurfaceHeight() const { return surface_h_; }
 
 private:
     int InitGL();   // 编译 shader、生成纹理/vao
