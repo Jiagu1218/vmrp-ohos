@@ -15,6 +15,10 @@
     {
       "name": "permission_internet_reason",
       "value": "运行支持网络通信的 MRP 程序需要访问网络"
+    },
+    {
+      "name": "permission_vibrate_reason",
+      "value": "按钮触控震动反馈需要使用振动马达"
     }
   ]
 }

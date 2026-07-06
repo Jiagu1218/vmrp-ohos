@@ -11,6 +11,7 @@
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
+    "routerMap": "$profile:route_map",
     "abilities": [
       {
         "name": "EntryAbility",
@@ -35,9 +36,16 @@
     ],
     "requestPermissions": [
       {
-        // 网络权限：vmrp 的 MRP 网络功能（BSD socket）需要。
         "name": "ohos.permission.INTERNET",
         "reason": "$string:permission_internet_reason",
+        "usedScene": {
+          "abilities": ["EntryAbility"],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.VIBRATE",
+        "reason": "$string:permission_vibrate_reason",
         "usedScene": {
           "abilities": ["EntryAbility"],
           "when": "inuse"

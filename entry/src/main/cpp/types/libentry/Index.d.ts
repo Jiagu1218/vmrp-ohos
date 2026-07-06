@@ -6,6 +6,7 @@
 export const loadLib: (soPath: string) => boolean;
 export const init: (width: number, height: number) => number;
 export const setWorkDir: (dir: string) => number;
+export const setMemory: (memoryMb: number) => number;
 export const start: (mrpPath: string, ext: string, entry: string) => number;
 export const stop: () => void;
 export const sendKey: (type: number, key: number) => number;

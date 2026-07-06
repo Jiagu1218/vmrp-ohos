@@ -51,6 +51,12 @@ export default class EntryAbility extends UIAbility {
       try {
         const win = windowStage.getMainWindowSync();
         win.setWindowLayoutFullScreen(true);
+        win.setWindowSystemBarProperties({
+          statusBarColor: '#00000000',
+          statusBarContentColor: '#FFFFFF',
+          navigationBarColor: '#00000000',
+          navigationBarContentColor: '#FFFFFF'
+        });
         const avoid: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
         const uiCtx = win.getUIContext();
         const sysAvoid = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
