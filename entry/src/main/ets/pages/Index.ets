@@ -337,12 +337,15 @@ struct BottomControls {
   @Param running: boolean = false;
   @Param dpadSize: number = 110;
   @Param btnSize: number = 30;
+  @Param showNumPad: boolean = true;
 
   build() {
     Column() {
       DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: this.dpadSize })
 
-      NumPad({ onKeyTouch: this.onKeyTouch, btnSize: this.btnSize })
+      if (this.showNumPad) {
+        NumPad({ onKeyTouch: this.onKeyTouch, btnSize: this.btnSize })
+      }
 
       Row({ space: 8 }) {
         Stack() {
@@ -380,16 +383,19 @@ struct BottomControls {
 struct PhoneControls {
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
   @Param running: boolean = false;
+  @Param showNumPad: boolean = true;
 
   build() {
     Column({ space: 6 }) {
       Row() {
         DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: 110 })
-          .layoutWeight(1)
 
-        NumPad({ onKeyTouch: this.onKeyTouch, btnSize: 30 })
+        if (this.showNumPad) {
+          NumPad({ onKeyTouch: this.onKeyTouch, btnSize: 30 })
+        }
       }
       .width('100%')
+      .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
     }
     .width('100%')
@@ -405,6 +411,7 @@ struct Index {
   @Local editText: string = '';
   @Local currentBp: string = 'sm';
   @Local showControls: boolean = true;
+  @Local showNumPad: boolean = true;
   @Local isFoldable: boolean = false;
   @Local foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
   @Local screenAreaW: number = 240;
@@ -596,7 +603,8 @@ struct Index {
               onStartDefault: () => this.startDefault(),
               running: this.running,
               dpadSize: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
-              btnSize: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36)
+              btnSize: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36),
+              showNumPad: this.showNumPad
             })
           }
         }
@@ -686,6 +694,17 @@ struct Index {
         .margin({ right: 4 })
         .onClick(() => { HapticManager.performClick(); this.navPathStack.pushPathByName('Settings', null); })
         Stack() {
+          Text(this.showNumPad ? '数字' : '数字')
+            .fontSize(9)
+            .fontColor(this.showNumPad ? DPAD_ARROW : NUMKEY_TEXT)
+        }
+        .height(18)
+        .padding({ left: 6, right: 6 })
+        .borderRadius(9)
+        .backgroundColor(this.showNumPad ? DPAD_BG : NUMKEY_BG)
+        .margin({ right: 4 })
+        .onClick(() => { HapticManager.performClick(); this.showNumPad = !this.showNumPad; })
+        Stack() {
           Text(this.showControls ? '收起' : '按键')
             .fontSize(9)
             .fontColor(DPAD_ARROW)
@@ -704,7 +723,8 @@ struct Index {
           Column() {
             PhoneControls({
               onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
-              running: this.running
+              running: this.running,
+              showNumPad: this.showNumPad
             })
           }
           .width('100%')
@@ -775,12 +795,13 @@ struct Index {
         Column() {
           Row() {
             DPadWithFunc({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), dpadSize: Math.min(this.screenAreaW * 0.22, 120) })
-              .layoutWeight(1)
 
-            NumPad({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), btnSize: Math.min(this.screenAreaW * 0.07, 34) })
-              .layoutWeight(1)
+            if (this.showNumPad) {
+              NumPad({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), btnSize: Math.min(this.screenAreaW * 0.07, 34) })
+            }
           }
           .width('100%')
+          .justifyContent(FlexAlign.Center)
           .alignItems(VerticalAlign.Center)
 
           Row({ space: 8 }) {
@@ -793,7 +814,7 @@ struct Index {
             .padding({ left: 14, right: 14 })
             .borderRadius(13)
             .backgroundColor(SOFTKEY_BG)
-        .onClick(() => { HapticManager.performClick(); this.pickAndStart(); })
+            .onClick(() => { HapticManager.performClick(); this.pickAndStart(); })
 
             Stack() {
               Text('启动默认')
@@ -804,7 +825,18 @@ struct Index {
             .padding({ left: 14, right: 14 })
             .borderRadius(13)
             .backgroundColor(SOFTKEY_BG)
-        .onClick(() => { HapticManager.performClick(); this.startDefault(); })
+            .onClick(() => { HapticManager.performClick(); this.startDefault(); })
+
+            Stack() {
+              Text(this.showNumPad ? '收起数字' : '数字')
+                .fontSize(11)
+                .fontColor(this.showNumPad ? DPAD_ARROW : '#CCCCCC')
+            }
+            .height(26)
+            .padding({ left: 14, right: 14 })
+            .borderRadius(13)
+            .backgroundColor(this.showNumPad ? DPAD_BG : SOFTKEY_BG)
+            .onClick(() => { HapticManager.performClick(); this.showNumPad = !this.showNumPad; })
           }
           .padding({ top: 4, bottom: 4 })
         }
