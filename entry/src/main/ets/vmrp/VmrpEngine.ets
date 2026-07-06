@@ -12,6 +12,7 @@
 // 类型由 entry/src/main/cpp/types/libentry/Index.d.ts 提供。
 import {
   loadLib, init as nativeInit, setWorkDir as nativeSetWorkDir,
+  setMemory as nativeSetMemory,
   start as nativeStart, stop as nativeStop, sendKey as nativeSendKey,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
@@ -62,6 +63,10 @@ export class VmrpEngineTs {
 
   setWorkDir(dir: string): number {
     return nativeSetWorkDir(dir);
+  }
+
+  setMemory(memoryMb: number): number {
+    return nativeSetMemory(memoryMb);
   }
 
   start(mrpPath: string, ext: string, entry: string): number {

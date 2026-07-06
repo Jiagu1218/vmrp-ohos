@@ -62,11 +62,10 @@ std::atomic<bool> g_engine_running{false};
 // 编辑回调：把编辑状态通知到 ArkTS（通过 napi_threadsafe_function）。
 napi_threadsafe_function g_edit_tsfn = nullptr;
 
-// 触摸事件码（vmrp_api.h）。
-constexpr int VMRP_MOUSE_DOWN = 2;
-constexpr int VMRP_MOUSE_UP   = 3;
-constexpr int VMRP_MOUSE_MOVE = 12;
+// 触摸事件码由 vmrp_api.h 宏提供。
 } // namespace
+
+#include "vmrp_api.h"
 
 // 这几个函数在全局命名空间定义（无 namespace），供本文件各处调用。
 void TryRender();
@@ -239,6 +238,19 @@ static napi_value SetWorkDir(napi_env env, napi_callback_info info) {
     size_t len = 0;
     napi_get_value_string_utf8(env, args[0], dir, sizeof(dir), &len);
     int r = VmrpEngine::Instance().SetWorkDir(dir);
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
+// setMemory(memoryMb): 设置 MRP 可见内存（MB），允许值 1/2/4/6/8/16，须在 start 前调用。
+static napi_value SetMemory(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t memMb = 1;
+    napi_get_value_int32(env, args[0], &memMb);
+    int r = vmrp_api_set_memory(memMb);
     napi_value result;
     napi_create_int32(env, r, &result);
     return result;
@@ -476,6 +488,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"loadLib", nullptr, LoadLib, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"init", nullptr, InitEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setWorkDir", nullptr, SetWorkDir, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setMemory", nullptr, SetMemory, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"start", nullptr, StartEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"stop", nullptr, StopEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sendKey", nullptr, SendKey, nullptr, nullptr, nullptr, napi_default, nullptr},
