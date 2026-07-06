@@ -49,9 +49,11 @@ export struct SettingsPage {
   async saveMemory(mb: number): Promise<void> {
     this.memoryMb = mb;
     try {
-      if (this.pref) {
-        await this.pref.put(KEY_MEMORY, mb);
-        await this.pref.flush();
+      const ctx = this.getUIContext().getHostContext();
+      if (ctx) {
+        const pref = await preferences.getPreferences(ctx, PREF_NAME);
+        await pref.put(KEY_MEMORY, mb);
+        await pref.flush();
       }
     } catch (_e) {
     }
@@ -147,9 +149,22 @@ export struct SettingsPage {
                   .fontColor('#CCCCCC')
                   .layoutWeight(1)
 
-                this.selectStyle(MEMORY_OPTIONS, this.selectedIndex,
-                  `${this.memoryMb} MB`,
-                  (index: number) => {
+                Select(MEMORY_OPTIONS)
+                  .selected(this.selectedIndex)
+                  .value(`${this.memoryMb} MB`)
+                  .font({ size: 14 })
+                  .fontColor('#FFFFFF')
+                  .selectedOptionFont({ size: 15, weight: FontWeight.Bold })
+                  .selectedOptionFontColor('#FFFFFF')
+                  .selectedOptionBgColor('#E94560')
+                  .optionFont({ size: 14 })
+                  .optionFontColor('#CCCCCC')
+                  .optionBgColor('#0D0D1A')
+                  .menuBackgroundColor('#0D0D1A')
+                  .menuBackgroundBlurStyle(BlurStyle.NONE)
+                  .backgroundColor('#16213E')
+                  .borderRadius(8)
+                  .onSelect((index: number) => {
                     this.selectedIndex = index;
                     this.saveMemory(MEMORY_VALUES[index]);
                   })
