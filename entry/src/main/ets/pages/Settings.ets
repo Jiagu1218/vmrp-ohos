@@ -1,6 +1,7 @@
 import { AppStorageV2 } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { AvoidData } from '../common/AvoidData';
+import { HapticManager, HapticState, HapticStrength } from '../common/HapticManager';
 
 const PREF_NAME = 'vmrp_settings';
 const KEY_MEMORY = 'memory_mb';
@@ -9,16 +10,27 @@ const MEMORY_OPTIONS: SelectOption[] = [
   { value: '6 MB' }, { value: '8 MB' }, { value: '16 MB' }
 ];
 const MEMORY_VALUES: number[] = [1, 2, 4, 6, 8, 16];
+const STRENGTH_OPTIONS: SelectOption[] = [
+  { value: '轻柔' }, { value: '适中' }, { value: '强烈' }
+];
+const STRENGTH_VALUES: HapticStrength[] =
+  [HapticStrength.LIGHT, HapticStrength.MEDIUM, HapticStrength.STRONG];
 
 @ComponentV2
 export struct SettingsPage {
   @Local memoryMb: number = 1;
   @Local selectedIndex: number = 0;
+  @Local hapticEnabled: boolean = true;
+  @Local strengthIndex: number = 1;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
+  private hapticState: HapticState = HapticManager.getState();
   private pref: preferences.Preferences | null = null;
   private navPathStack: NavPathStack | null = null;
 
   aboutToAppear(): void {
+    this.hapticEnabled = this.hapticState.enabled;
+    this.strengthIndex = STRENGTH_VALUES.indexOf(this.hapticState.strength);
+    if (this.strengthIndex < 0) this.strengthIndex = 1;
     this.loadPrefs();
   }
 
@@ -45,6 +57,26 @@ export struct SettingsPage {
     }
   }
 
+  async saveHaptic(enabled: boolean): Promise<void> {
+    this.hapticEnabled = enabled;
+    const ctx = this.getUIContext().getHostContext();
+    if (ctx) {
+      await HapticManager.saveEnabledPref(ctx, enabled);
+    }
+    if (enabled) {
+      HapticManager.performClick();
+    }
+  }
+
+  async saveStrength(index: number): Promise<void> {
+    this.strengthIndex = index;
+    const ctx = this.getUIContext().getHostContext();
+    if (ctx) {
+      await HapticManager.saveStrengthPref(ctx, STRENGTH_VALUES[index]);
+      HapticManager.performClick();
+    }
+  }
+
   @Builder
   sectionHeader(title: string) {
     Text(title)
@@ -52,6 +84,26 @@ export struct SettingsPage {
       .fontColor('#8888AA')
       .width('100%')
       .padding({ left: 4, top: 16, bottom: 8 })
+  }
+
+  @Builder
+  selectStyle(opts: SelectOption[], selected: number, value: string, onSelect: (index: number) => void) {
+    Select(opts)
+      .selected(selected)
+      .value(value)
+      .font({ size: 14 })
+      .fontColor('#FFFFFF')
+      .selectedOptionFont({ size: 15, weight: FontWeight.Bold })
+      .selectedOptionFontColor('#FFFFFF')
+      .selectedOptionBgColor('#E94560')
+      .optionFont({ size: 14 })
+      .optionFontColor('#CCCCCC')
+      .optionBgColor('#0D0D1A')
+      .menuBackgroundColor('#0D0D1A')
+      .menuBackgroundBlurStyle(BlurStyle.NONE)
+      .backgroundColor('#16213E')
+      .borderRadius(8)
+      .onSelect(onSelect)
   }
 
   build() {
@@ -95,22 +147,9 @@ export struct SettingsPage {
                   .fontColor('#CCCCCC')
                   .layoutWeight(1)
 
-                Select(MEMORY_OPTIONS)
-                  .selected(this.selectedIndex)
-                  .value(`${this.memoryMb} MB`)
-                  .font({ size: 14 })
-                  .fontColor('#FFFFFF')
-                  .selectedOptionFont({ size: 15, weight: FontWeight.Bold })
-                  .selectedOptionFontColor('#FFFFFF')
-                  .selectedOptionBgColor('#E94560')
-                  .optionFont({ size: 14 })
-                  .optionFontColor('#CCCCCC')
-                  .optionBgColor('#0D0D1A')
-                  .menuBackgroundColor('#0D0D1A')
-                  .menuBackgroundBlurStyle(BlurStyle.NONE)
-                  .backgroundColor('#16213E')
-                  .borderRadius(8)
-                  .onSelect((index: number) => {
+                this.selectStyle(MEMORY_OPTIONS, this.selectedIndex,
+                  `${this.memoryMb} MB`,
+                  (index: number) => {
                     this.selectedIndex = index;
                     this.saveMemory(MEMORY_VALUES[index]);
                   })
@@ -123,6 +162,60 @@ export struct SettingsPage {
 
             ListItem() {
               Text('内存大小决定 MRP 可见的堆空间，需在下一次启动时生效。')
+                .fontSize(12)
+                .fontColor('#666688')
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 4, bottom: 12 })
+            }
+          }
+          .divider({ strokeWidth: 0.5, color: '#2A2A4E', startMargin: 16, endMargin: 16 })
+          .backgroundColor('#1A1A2E')
+          .borderRadius(16)
+
+          ListItemGroup({ header: this.sectionHeader('交互') }) {
+            ListItem() {
+              Row() {
+                Text('按键震动')
+                  .fontSize(16)
+                  .fontColor('#CCCCCC')
+                  .layoutWeight(1)
+
+                Toggle({ type: ToggleType.Switch, isOn: this.hapticEnabled })
+                  .selectedColor('#E94560')
+                  .switchPointColor('#FFFFFF')
+                  .onChange((isOn: boolean) => {
+                    this.saveHaptic(isOn);
+                  })
+              }
+              .width('100%')
+              .height(56)
+              .alignItems(VerticalAlign.Center)
+              .padding({ left: 16, right: 16 })
+            }
+
+            ListItem() {
+              Row() {
+                Text('震动强度')
+                  .fontSize(16)
+                  .fontColor('#CCCCCC')
+                  .layoutWeight(1)
+
+                this.selectStyle(STRENGTH_OPTIONS, this.strengthIndex,
+                  STRENGTH_OPTIONS[this.strengthIndex].value as string,
+                  (index: number) => {
+                    this.saveStrength(index);
+                  })
+              }
+              .width('100%')
+              .height(56)
+              .alignItems(VerticalAlign.Center)
+              .padding({ left: 16, right: 16 })
+              .enabled(this.hapticEnabled)
+              .opacity(this.hapticEnabled ? 1 : 0.4)
+            }
+
+            ListItem() {
+              Text('调节按键触控时的震动反馈力度，选择后即时体验。')
                 .fontSize(12)
                 .fontColor('#666688')
                 .width('100%')

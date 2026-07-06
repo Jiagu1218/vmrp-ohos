@@ -11,6 +11,7 @@ import {
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { gAbilityContext } from '../entryability/EntryAbility';
 import { AvoidData } from '../common/AvoidData';
+import { HapticManager } from '../common/HapticManager';
 
 interface ScreenShellParam {
   isTop: boolean;
@@ -353,7 +354,7 @@ struct BottomControls {
         .padding({ left: 14, right: 14 })
         .borderRadius(13)
         .backgroundColor(SOFTKEY_BG)
-        .onClick(() => this.onPickMrp())
+        .onClick(() => { HapticManager.performClick(); this.onPickMrp(); })
 
         Stack() {
           Text('启动默认')
@@ -364,7 +365,7 @@ struct BottomControls {
         .padding({ left: 14, right: 14 })
         .borderRadius(13)
         .backgroundColor(SOFTKEY_BG)
-        .onClick(() => this.onStartDefault())
+        .onClick(() => { HapticManager.performClick(); this.onStartDefault(); })
       }
       .padding({ top: 4, bottom: 4 })
     }
@@ -479,6 +480,7 @@ struct Index {
         const pref = await preferences.getPreferences(ctx, 'vmrp_settings');
         const mem = (await pref.get('memory_mb', 1)) as number;
         this.engine.setMemory(mem);
+        await HapticManager.loadPref(ctx);
       } catch (_e) {
       }
       this.engine.setWorkDir(workDir);
@@ -565,6 +567,7 @@ struct Index {
       if (!this.pressedKeys.has(key)) {
         this.pressedKeys.add(key);
         this.engine.sendKey(VMRP_KEY_PRESS, key);
+        HapticManager.performClick();
       }
     } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
       if (this.pressedKeys.has(key)) {
@@ -659,7 +662,7 @@ struct Index {
         .borderRadius(9)
         .backgroundColor(NUMKEY_BG)
         .margin({ right: 4 })
-        .onClick(() => this.pickAndStart())
+        .onClick(() => { HapticManager.performClick(); this.pickAndStart(); })
         Stack() {
           Text('默认')
             .fontSize(9)
@@ -670,7 +673,7 @@ struct Index {
         .borderRadius(9)
         .backgroundColor(NUMKEY_BG)
         .margin({ right: 4 })
-        .onClick(() => this.startDefault())
+        .onClick(() => { HapticManager.performClick(); this.startDefault(); })
         Stack() {
           Text('设置')
             .fontSize(9)
@@ -681,7 +684,7 @@ struct Index {
         .borderRadius(9)
         .backgroundColor(NUMKEY_BG)
         .margin({ right: 4 })
-        .onClick(() => { this.navPathStack.pushPathByName('Settings', null); })
+        .onClick(() => { HapticManager.performClick(); this.navPathStack.pushPathByName('Settings', null); })
         Stack() {
           Text(this.showControls ? '收起' : '按键')
             .fontSize(9)
@@ -691,7 +694,7 @@ struct Index {
         .padding({ left: 8, right: 8 })
         .borderRadius(9)
         .backgroundColor(DPAD_BG)
-        .onClick(() => { this.showControls = !this.showControls; })
+        .onClick(() => { HapticManager.performClick(); this.showControls = !this.showControls; })
       }
       .width('100%')
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
@@ -790,7 +793,7 @@ struct Index {
             .padding({ left: 14, right: 14 })
             .borderRadius(13)
             .backgroundColor(SOFTKEY_BG)
-            .onClick(() => this.pickAndStart())
+        .onClick(() => { HapticManager.performClick(); this.pickAndStart(); })
 
             Stack() {
               Text('启动默认')
@@ -801,7 +804,7 @@ struct Index {
             .padding({ left: 14, right: 14 })
             .borderRadius(13)
             .backgroundColor(SOFTKEY_BG)
-            .onClick(() => this.startDefault())
+        .onClick(() => { HapticManager.performClick(); this.startDefault(); })
           }
           .padding({ top: 4, bottom: 4 })
         }
