@@ -1,4 +1,5 @@
 import { picker } from '@kit.CoreFileKit';
+import { abilityAccessCtrl } from '@kit.AbilityKit';
 import { NodeContent, ComponentContent, AppStorageV2 } from '@kit.ArkUI';
 import { display } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
@@ -487,7 +488,15 @@ struct Index {
         const pref = await preferences.getPreferences(ctx, 'vmrp_settings');
         const mem = (await pref.get('memory_mb', 1)) as number;
         this.engine.setMemory(mem);
+        const sensitivity = (await pref.get('motion_sensitivity', 1.0)) as number;
+        this.engine.setMotionSensitivity(sensitivity);
         await HapticManager.loadPref(ctx);
+      } catch (_e) {
+      }
+      // 预请求加速度传感器权限，C 侧 OH_Sensor_Subscribe 需要此权限。
+      try {
+        const atManager = abilityAccessCtrl.createAtManager();
+        await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.ACCELEROMETER']);
       } catch (_e) {
       }
       this.engine.setWorkDir(workDir);

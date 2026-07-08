@@ -14,6 +14,8 @@ import {
   loadLib, init as nativeInit, setWorkDir as nativeSetWorkDir,
   setMemory as nativeSetMemory,
   start as nativeStart, stop as nativeStop, sendKey as nativeSendKey,
+  sendMotion as nativeSendMotion,
+  setMotionSensitivity as nativeSetMotionSensitivity,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
   createSurfaceNode as nativeCreateSurfaceNode
@@ -79,6 +81,16 @@ export class VmrpEngineTs {
 
   sendKey(type: number, key: number): number {
     return nativeSendKey(type, key);
+  }
+
+  // 发送重力感应数据（mG 单位，静止平放 z≈1000）。
+  sendMotion(xMg: number, yMg: number, zMg: number): number {
+    return nativeSendMotion(xMg, yMg, zMg);
+  }
+
+  // 设置动感灵敏度倍率（默认 1.0，大于 1 提高灵敏度）。
+  setMotionSensitivity(sensitivity: number): void {
+    nativeSetMotionSensitivity(sensitivity);
   }
 
   submitEdit(text: string): number {

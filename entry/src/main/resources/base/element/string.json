@@ -19,6 +19,10 @@
     {
       "name": "permission_vibrate_reason",
       "value": "按钮触控震动反馈需要使用振动马达"
+    },
+    {
+      "name": "permission_accelerometer_reason",
+      "value": "运行体感游戏需要"
     }
   ]
 }

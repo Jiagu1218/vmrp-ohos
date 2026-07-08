@@ -71,6 +71,13 @@ VMRP_EXPORT int vmrp_api_set_dns_map(const char *map);
 VMRP_EXPORT int vmrp_api_event(int code, int p0, int p1);
 
 /*
+ * 重力感应：写入三轴加速度（mG）并投递 MR_MOTION_EVENT。
+ * 仅当 MRP 应用已调用 mr_plat(4004/4005) 开启监听时才实际投递事件。
+ * 静止平放参考值：x=0, y=0, z=1000。
+ */
+VMRP_EXPORT int vmrp_api_motion_event(int x_mg, int y_mg, int z_mg);
+
+/*
  * Timer: shared-library builds run the VM timer on a native worker thread so
  * Flutter hosts do not need to schedule it on the UI isolate. These functions
  * are kept for ABI compatibility with hosts that still use manual scheduling.
@@ -124,6 +131,21 @@ VMRP_EXPORT int vmrp_api_is_edit_active(void);
 VMRP_EXPORT const char *vmrp_api_get_edit_text(void);
 VMRP_EXPORT int vmrp_api_set_edit_text(const char *text);
 VMRP_EXPORT int vmrp_api_cancel_edit(void);
+
+/*
+ * 动感芯片上电/断电回调：dsm.c 的 mr_plat(4002/4003) 调用
+ * vmrp_api_motion_power()，由宿主通过 vmrp_api_set_motion_power_cb()
+ * 注册的回调来启停平台传感器订阅。
+ */
+typedef void (*vmrp_motion_power_cb)(int on);
+VMRP_EXPORT void vmrp_api_set_motion_power_cb(vmrp_motion_power_cb cb);
+VMRP_EXPORT void vmrp_api_motion_power(int on);
+
+/*
+ * 动感灵敏度倍率：应用于 m/s²→mG 转换，默认 1.0。
+ * 大于 1 提高灵敏度，小于 1 降低。由宿主设置，下次采样生效。
+ */
+VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float sensitivity);
 
 #ifdef __cplusplus
 }

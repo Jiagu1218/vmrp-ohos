@@ -5,6 +5,11 @@ import { HapticManager, HapticState, HapticStrength } from '../common/HapticMana
 
 const PREF_NAME = 'vmrp_settings';
 const KEY_MEMORY = 'memory_mb';
+const KEY_SENSITIVITY = 'motion_sensitivity';
+const SENSITIVITY_MIN = 0.2;
+const SENSITIVITY_MAX = 3.0;
+const SENSITIVITY_STEP = 0.1;
+const SENSITIVITY_DEFAULT = 1.0;
 const MEMORY_OPTIONS: SelectOption[] = [
   { value: '1 MB' }, { value: '2 MB' }, { value: '4 MB' },
   { value: '6 MB' }, { value: '8 MB' }, { value: '16 MB' }
@@ -22,6 +27,7 @@ export struct SettingsPage {
   @Local selectedIndex: number = 0;
   @Local hapticEnabled: boolean = true;
   @Local strengthIndex: number = 1;
+  @Local sensitivity: number = SENSITIVITY_DEFAULT;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private pref: preferences.Preferences | null = null;
@@ -42,6 +48,7 @@ export struct SettingsPage {
       this.memoryMb = (await this.pref.get(KEY_MEMORY, 1)) as number;
       this.selectedIndex = MEMORY_VALUES.indexOf(this.memoryMb);
       if (this.selectedIndex < 0) this.selectedIndex = 0;
+      this.sensitivity = (await this.pref.get(KEY_SENSITIVITY, SENSITIVITY_DEFAULT)) as number;
     } catch (_e) {
     }
   }
@@ -76,6 +83,19 @@ export struct SettingsPage {
     if (ctx) {
       await HapticManager.saveStrengthPref(ctx, STRENGTH_VALUES[index]);
       HapticManager.performClick();
+    }
+  }
+
+  async saveSensitivity(val: number): Promise<void> {
+    this.sensitivity = val;
+    try {
+      const ctx = this.getUIContext().getHostContext();
+      if (ctx) {
+        const pref = await preferences.getPreferences(ctx, PREF_NAME);
+        await pref.put(KEY_SENSITIVITY, val);
+        await pref.flush();
+      }
+    } catch (_e) {
     }
   }
 
@@ -231,6 +251,56 @@ export struct SettingsPage {
 
             ListItem() {
               Text('调节按键触控时的震动反馈力度，选择后即时体验。')
+                .fontSize(12)
+                .fontColor('#666688')
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 4, bottom: 12 })
+            }
+          }
+          .divider({ strokeWidth: 0.5, color: '#2A2A4E', startMargin: 16, endMargin: 16 })
+          .backgroundColor('#1A1A2E')
+          .borderRadius(16)
+
+          ListItemGroup({ header: this.sectionHeader('动感') }) {
+            ListItem() {
+              Row() {
+                Text('灵敏度')
+                  .fontSize(16)
+                  .fontColor('#CCCCCC')
+                  .layoutWeight(1)
+
+                Text(`${this.sensitivity.toFixed(1)}x`)
+                  .fontSize(14)
+                  .fontColor('#E94560')
+                  .width(40)
+                  .textAlign(TextAlign.End)
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 12, bottom: 0 })
+            }
+
+            ListItem() {
+              Slider({
+                value: this.sensitivity,
+                min: SENSITIVITY_MIN,
+                max: SENSITIVITY_MAX,
+                step: SENSITIVITY_STEP
+              })
+                .width('100%')
+                .trackColor('#2A2A4E')
+                .selectedColor('#E94560')
+                .blockColor('#FFFFFF')
+                .blockBorderColor('#E94560')
+                .blockBorderWidth(2)
+                .blockSize({ width: 20, height: 20 })
+                .padding({ left: 16, right: 16 })
+                .onChange((value: number) => {
+                  this.saveSensitivity(value);
+                })
+            }
+
+            ListItem() {
+              Text('调节加速度传感器灵敏度倍率，1.0 为默认值。值越大，动感游戏中球的移动越灵敏。需重启游戏后生效。')
                 .fontSize(12)
                 .fontColor('#666688')
                 .width('100%')
