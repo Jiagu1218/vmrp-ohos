@@ -28,7 +28,7 @@ MRP（Mythroad）是斯凯平台的手机应用格式，其 `.mrp` 包内是 **A
 |------|---------|------|
 | **DevEco Studio** | 含 HarmonyOS SDK API 26（HarmonyOS 6.0+） | 鸿蒙应用开发、编译、模拟器、签名 |
 | **Git for Windows** | 任意版本 | 提供构建 Unicorn 所需的 POSIX sh/sed/rm |
-| **Git** | 任意版本 | 克隆仓库与子模块 |
+| **Git** | 任意版本 | 克隆仓库 |
 
 > DevEco Studio 自带 HarmonyOS SDK、NDK（ohos.toolchain.cmake）、node、ohpm 工具链，无需单独安装。
 
@@ -47,8 +47,8 @@ git --version
 ## 快速开始
 
 ```bash
-# 1. 克隆
-git clone https://github.com/<你的用户名>/vmrp-ohos.git
+# 1. 克隆（vmrp 源码已纳入仓库，无需 --recurse-submodules）
+git clone https://github.com/Jiagu1218/vmrp-ohos.git
 cd vmrp-ohos
 
 # 2. 预构建 libvmrp.so（需 Git for Windows 提供 POSIX sh）
@@ -121,6 +121,16 @@ devecocli run --device "Mate 70 RS"      # 安装运行
 vmrp-ohos/
 ├── vmrp/                          # vmrp 模拟器源码（已纳入版本管理）
 │   └── third_party/unicorn/      #   Unicorn 引擎
+├── ohos_src/                      # 鸿蒙专属源码（独立于 vmrp 树，避免上游冲突）
+│   ├── ohos_image_decode.h        #   SkyEngine 图片/GIF API 声明
+│   └── ohos_image_decode.cpp      #   鸿蒙原生 Image C API 实现
+├── docs/                          # 补丁/功能文档
+│   ├── skyengine-image-api.md     #   SkyEngine 图片接口文档
+│   ├── motion-chip-adaptation.md  #   重力感应适配文档
+│   ├── arm-alloc-oob-crash-fix.md #   arm_alloc 越界修复文档
+│   ├── exception-heap-recovery.md #   UC_ERR_EXCEPTION 堆恢复文档
+│   ├── platex-memory-extension.md #   PlatEx 内存扩展文档
+│   └── timer-interval-override-fix.md  # Timer 间隔覆盖修复文档
 ├── scripts/                       # 预构建脚本
 │   ├── build_libvmpp_ohos.bat    #   libvmrp.so 交叉编译入口
 │   └── CMakeLists.txt             #   CMake wrapper（含移植补丁）
@@ -130,11 +140,12 @@ vmrp-ohos/
 │   │   ├── vmrp_engine.cpp/.h     #   dlopen libvmrp.so + 引擎锁
 │   │   ├── vmrp_renderer.cpp/.h   #   XComponent + EGL/GLES 渲染
 │   │   ├── vmrp_audio.cpp/.h      #   OHAudio 拉流
-│   │   ├── include/vmrp_api.h     #   vmrp C ABI（26 个导出函数）
+│   │   ├── include/vmrp_api.h     #   vmrp C ABI（含鸿蒙扩展）
 │   │   ├── types/libentry/Index.d.ts  # NAPI 类型声明
 │   │   └── CMakeLists.txt         #   native 构建
 │   ├── src/main/ets/              # ArkTS UI 层
 │   │   ├── pages/Index.ets        #   主界面（XComponent + 虚拟键盘）
+│   │   ├── pages/Settings.ets     #   设置页（内存/重力/震动）
 │   │   ├── vmrp/VmrpEngine.ets    #   native 模块封装
 │   │   └── vmrp/VmrpAssets.ets    #   mythroad 运行时资源管理
 │   ├── src/main/resources/rawfile/mythroad/  # 内置运行时（dsm_gm.mrp + 字体，递归导入）
@@ -154,16 +165,18 @@ vmrp-ohos/
 
 ```
 HarmonyOS App (API 26)
-├── ArkTS UI（XComponent 屏幕 + 虚拟键盘 + 文件选择器）
+├── ArkTS UI（XComponent 屏幕 + 虚拟键盘 + 文件选择器 + 设置页）
 ├── Native 桥接（libentry.so）
 │   ├── NAPI：init/start/stop/sendKey/submitEdit
 │   ├── EGL/GLES：RGB565→RGBA 纹理渲染（XComponent 帧回调线程）
 │   ├── OHAudio：pull 模型 PCM 拉流（音频回调线程）
 │   └── 定时器驱动：timer loop 按间隔调度 vmrp_api_timer
-│       ↓ vmrp_api.h（26 个 C 函数，无 SDL）
+│       ↓ vmrp_api.h（26+ 个 C 函数，无 SDL）
 └── libvmrp.so（预构建）
     ├── vmrp 核心 + mythroad DSM 层
     ├── arm_ext_executor：Unicorn 执行 ARM ext
+    ├── ohos_image_decode：鸿蒙原生图片/GIF 解码（Image C API）
+    ├── ohos_gif_tick：GIF 动画帧推进（mr_timer 内驱动）
     └── unicorn arm-softmmu：TCG 软件模拟 ARM32
 ```
 
@@ -171,7 +184,7 @@ HarmonyOS App (API 26)
 
 1. **arm-softmmu 是纯软件 TCG 模拟**：把 ARM32 指令翻译成宿主机指令执行，不依赖宿主 ARM32 硬件。因此在 ARM64/x86_64 鸿蒙上都能跑 MRP 的 ARM32 代码。
 
-2. **vmrp 已有 SDL-free 共享库 API**（`vmrp_api.h`，26 个导出函数）：构建 `vmrp-shared` target 即可，不含 main.c，不定义 `VMRP_SDL_AUDIO`。这是移植的核心入口。
+2. **vmrp 已有 SDL-free 共享库 API**（`vmrp_api.h`，26+ 个导出函数）：构建 `vmrp-shared` target 即可，不含 main.c，不定义 `VMRP_SDL_AUDIO`。这是移植的核心入口。
 
 3. **渲染线程模型**：EGL surface 必须在 XComponent 帧回调线程（创建 surface 的同线程）渲染，否则 `eglSwapBuffers` 报 `EGL_BAD_SURFACE`。用 `OH_NativeXComponent_RegisterOnFrameCallback` 注册帧回调，在该线程做 `eglSwapBuffers`。
 
@@ -183,16 +196,27 @@ HarmonyOS App (API 26)
 
 7. **stdio→hilog 重定向**：vmrp 核心全用 `printf`/`fprintf`，鸿蒙下默认不进 hilog。在 `VmrpEngine::Load` 把 stdout/stderr 重定向到 pipe，读线程转发到 hilog，使崩溃信息、mr_open 等日志可见。
 
+8. **SkyEngine 图片/GIF 解码**：使用鸿蒙原生 `OH_ImageSourceNative`/`OH_PixelmapNative` C API 解码图片（PNG/JPG→RGB565）和 GIF 多帧动画。GIF 动画由 `ohos_gif_tick()` 在 `mr_timer()` 内驱动，保证帧推进与 vmrp worker 线程串行，避免并发写 `mr_screenBuf`。详见 [docs/skyengine-image-api.md](docs/skyengine-image-api.md)。
+
+9. **重力感应适配**：使用鸿蒙 `OH_Sensor` C API（加速度计），通过异步队列分发到 vmrp 事件系统，灵敏度/反转可在设置页调节。详见 [docs/motion-chip-adaptation.md](docs/motion-chip-adaptation.md)。
+
 ### 数据流
 
 ```
 触摸事件 ──→ XComponent 触摸回调 ──→ SendEvent (加锁) ──→ vmrp_api_event ──→ ARM 事件处理
-                                                                                      ↓
+                                                                                       ↓
+重力感应 ──→ OH_Sensor 回调 ──→ 异步队列 ──→ vmrp_api_event ──→ ARM 重力处理
+                                                                                       ↓
 定时器线程 ──→ StepTimer (加锁) ──→ vmrp_api_timer ──→ ARM 定时器逻辑 ──→ 绘图到 screen_buf
-                                                                                      ↓
+                                                                                       ↓                                     ↓
+                                                          ohos_gif_tick() ──→ GIF 帧推进 ──→ RGB565 写入 screen_buf
+                                                                                       ↓
 XComponent 帧回调 ──→ ScreenBuffer (RGB565) ──→ EGL/GLES 渲染 ──→ eglSwapBuffers ──→ 屏幕
-                                                                                      ↓
+                                                                                       ↓
 OHAudio 回调线程 ──→ PullAudio (不加锁) ──→ vmrp_api_audio_render_s16le ──→ PCM ──→ 扬声器
+
+图片/GIF 解码路径：
+MRP 调 mr_plat(300x) ──→ dsm.c ──→ ohos_image_decode ──→ OH_ImageSourceNative ──→ RGB565 ──→ mr_screenBuf
 ```
 
 ---
@@ -200,6 +224,8 @@ OHAudio 回调线程 ──→ PullAudio (不加锁) ──→ vmrp_api_audio_re
 ## 移植补丁说明
 
 构建脚本 `scripts/CMakeLists.txt` 在 `add_subdirectory(vmrp)` 前会自动应用以下补丁（幂等，可重复运行）：
+
+### 基础移植补丁
 
 | 补丁 | 文件 | 原因 |
 |------|------|------|
@@ -210,7 +236,49 @@ OHAudio 回调线程 ──→ PullAudio (不加锁) ──→ vmrp_api_audio_re
 | **MAP_32BIT** | native_dsm_funcs.c | `MAP_32BIT` 是 x86-glibc 专有，OHOS musl 缺失，x86_64 模拟器构建失败。替换为 0（有 calloc 兜底） |
 | **case 800 ARM 地址修复** | mythroad.c + arm_ext_executor.c | 部分 MRP（如 3D暴力摩托）的 cfunction loader 把 ext 放在 ARM 内存并用 ARM 地址调 case 800。arm_ext_load 把 ARM 地址当 host 指针读取导致全 0 崩溃。检测到 ARM 地址时用 `arm_ext_host_ptr` 转成 host 指针 |
 
-这些补丁在构建时临时应用到 vmrp 源码的工作区文件，每次构建前由 `:restore_patched` 恢复到提交状态，不残留。需持久保留的改动应直接提交到本仓库的 `vmrp/` 目录。
+### 稳定性修复补丁
+
+| 补丁 | 文件 | 原因 |
+|------|------|------|
+| **ARM_ALLOC_U64** | arm_ext_executor.c | `arm_alloc` 分配大小用 `int` 计算，大内存请求时整数溢出导致分配过小，后续 `memset` 越界 SIGSEGV。改用 `uint64_t` 计算 + 边界守卫 |
+| **MEMSET_BOUNDS_GUARD** | arm_ext_executor.c | `memset` 写入长度可能超过 `arm_alloc` 实际分配大小，导致堆溢出。增加边界检查 |
+| **MEMSET_NULL_GUARD** | arm_ext_executor.c | case 14 中 `memset2` 目标指针可能为 NULL（未映射 ARM 地址），导致空指针解引用 SIGSEGV。增加 NULL 检查 |
+| **UNMAPPED_GRACEFUL_EXIT** | arm_ext_executor.c | Unicorn 访问未映射 ARM 地址时 UC_ERR_EXCEPTION 直接崩溃。改为优雅退出当前 ARM 调用，返回 MR_IGNORE，避免闪退 |
+| **EXCEPTION_HEAP_RECOVERY** | arm_ext_executor.c | 定时器线程中 UC_ERR_EXCEPTION 会导致 ARM 引擎状态损坏，后续所有调用均失败。检测到异常后重建 Unicorn 引擎 + 重映射内存，恢复正常运行 |
+| **TIMER_NO_OVERRIDE** | mythroad.c | `arm_ext_call_dispatch(native_ext, 0, 50)` 硬编码 timer 间隔为 50ms，覆盖 MRP 应用自己设置的间隔，导致定时器运行过快。改为尊重应用设定的间隔 |
+
+### 功能扩展补丁
+
+| 补丁 | 文件 | 原因 |
+|------|------|------|
+| **PLATEX_MEM_EXT** | arm_ext_executor.c | SkyEngine `mr_platEx` 1001/1002/1012/1013 接口：获取/设置内存布局信息（IRAM/EXRAM/屏幕缓冲区地址和大小），MRP 应用通过此接口动态配置内存 |
+| **GIF_TICK** | mythroad.c | GIF 动画驱动：在 `mr_timer()` 末尾注入 `ohos_gif_tick()` 调用，每 tick 推进活跃 GIF 动画的当前帧，实现动画播放 |
+
+### 鸿蒙专属源码（ohos_src/）
+
+不在 vmrp 源码树内，由 CMake 单独编译链接，避免上游合并冲突：
+
+| 文件 | 功能 |
+|------|------|
+| `ohos_image_decode.cpp` | SkyEngine 图片/GIF API 的鸿蒙原生实现。使用 `OH_ImageSourceNative`/`OH_PixelmapNative`（鸿蒙 Image C API），支持 PNG/JPG 解码为 RGB565、GIF 多帧解码与动画播放、DMA 刷屏、直接绘制 |
+
+**已实现的 SkyEngine 接口**（详见 [docs/skyengine-image-api.md](docs/skyengine-image-api.md)）：
+
+| 接口号 | 功能 | 状态 |
+|--------|------|------|
+| 3001 | 获取图片信息（宽高） | ✅ |
+| 3002 | 图片解码→RGB565 | ✅ |
+| 3004 | GIF 多帧解码 | ✅ |
+| 3005 | 释放 GIF 资源 | ✅ |
+| 3007 | MR_DRAW_BUFFER | ✅ (no-op) |
+| 3008 | MR_GET_ACT_LAYER | ✅ (MR_IGNORE) |
+| 3009 | DMA 刷屏 | ✅ |
+| 3010 | 直接绘制图片 | ✅ |
+| 3011 | 显示 GIF 动画 | ✅ |
+| 3012 | 停止 GIF 动画 | ✅ |
+| 3014/3015 | MTK 私有资源格式 | 待定（低优先级） |
+
+> 这些补丁在构建时临时应用到 vmrp 源码的工作区文件，每次构建前由 `:restore_patched` 恢复到提交状态，不残留。需持久保留的改动应直接提交到本仓库的 `vmrp/` 目录。
 
 ---
 
@@ -240,6 +308,21 @@ A: 这是 vmrp 对个别游戏的兼容性限制（如 3D暴力摩托）。vmrp 
 
 ### Q: 游戏运行中触摸闪退
 A: 已通过引擎锁（`engine_mtx_`）修复。若仍出现，确认 `vmrp_engine.cpp` 的 SendEvent/StepTimer 等方法都持有 `engine_mtx_` 锁。
+
+### Q: 游戏画面花屏/卡死
+A: 已通过 `UNMAPPED_GRACEFUL_EXIT` 补丁修复——当 ARM 代码访问未映射地址时优雅退出而非崩溃。若仍出现，可能是 MRP 应用的绘图指令超出了屏幕缓冲区范围。
+
+### Q: 游戏运行一段时间后定时器停了
+A: 已通过 `EXCEPTION_HEAP_RECOVERY` 补丁修复——UC_ERR_EXCEPTION 后自动重建 Unicorn 引擎。若仍出现，查看 hilog 中 `vmrp_core:` 标签的日志。
+
+### Q: 游戏中图片不显示
+A: SkyEngine 图片 API（3001-3012）已实现。若图片仍不显示，可能是 MRP 使用了 3014/3015（MTK 私有资源格式，暂未实现），或图片文件路径无法通过 `mr_open` 访问。
+
+### Q: 重力感应不工作
+A: 需要设备支持加速度计，且应用需声明 `ohos.permission.ACCELEROMETER` 权限（已声明）。在设置页可调节灵敏度（0.2x-3.0x）和 Y 轴反转。
+
+### Q: vmrp/ 目录下显示有未提交的修改
+A: 这是正常的。CMake 补丁在构建时修改 vmrp 源码，部分文件不在 `:restore_patched` 恢复列表中。这些修改不影响远程仓库（已提交的文件内容是正确的），其他设备 clone 后构建时会自动应用补丁。
 
 ---
 
