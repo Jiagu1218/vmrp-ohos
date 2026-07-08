@@ -308,6 +308,31 @@ static napi_value SendKey(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// sendMotion(x, y, z): 发送重力感应数据（mG 单位）。
+// 不调 RequestRender()——传感器高频，MRP 自身 timer 驱动重绘。
+static napi_value SendMotion(napi_env env, napi_callback_info info) {
+    size_t argc = 3;
+    napi_value args[3];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t x = 0, y = 0, z = 0;
+    napi_get_value_int32(env, args[0], &x);
+    napi_get_value_int32(env, args[1], &y);
+    napi_get_value_int32(env, args[2], &z);
+    VmrpEngine::Instance().SendMotion(x, y, z);
+    return nullptr;
+}
+
+// setMotionSensitivity(sensitivity: number)
+static napi_value SetMotionSensitivity(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    double val = 1.0;
+    napi_get_value_double(env, args[0], &val);
+    VmrpEngine::Instance().SetMotionSensitivity(static_cast<float>(val));
+    return nullptr;
+}
+
 // submitEdit(text) / cancelEdit()
 static napi_value SubmitEdit(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -492,6 +517,8 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"start", nullptr, StartEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"stop", nullptr, StopEngine, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sendKey", nullptr, SendKey, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"sendMotion", nullptr, SendMotion, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setMotionSensitivity", nullptr, SetMotionSensitivity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"submitEdit", nullptr, SubmitEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cancelEdit", nullptr, CancelEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isRunning", nullptr, IsRunning, nullptr, nullptr, nullptr, napi_default, nullptr},

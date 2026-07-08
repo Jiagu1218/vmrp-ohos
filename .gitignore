@@ -38,6 +38,8 @@ cmake_install.cmake
 local.properties
 .codegenie/
 .opencode/
+.cache/
+.deveco/
 
 # ===== 系统/临时 =====
 .DS_Store

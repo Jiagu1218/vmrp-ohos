@@ -17,6 +17,7 @@
 #include <hilog/log.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <sensors/oh_sensor.h>
 
 #include <atomic>
 #include <chrono>
@@ -120,6 +121,7 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_set_dns_map", set_dns_map, int (*)(const char *));
 
     RESOLVE_SYM(so_handle_, "vmrp_api_event", event, int (*)(int, int, int));
+    RESOLVE_SYM(so_handle_, "vmrp_api_motion_event", motion_event, int (*)(int, int, int));
     RESOLVE_SYM(so_handle_, "vmrp_api_timer", timer, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_get_timer_interval", get_timer_interval, int (*)(void));
 
@@ -139,9 +141,24 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_get_edit_text", get_edit_text, const char *(*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_edit_text", set_edit_text, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "vmrp_api_cancel_edit", cancel_edit, int (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_power_cb", set_motion_power_cb, void (*)(void (*)(int)));
+    RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_sensitivity", set_motion_sensitivity, void (*)(float));
 
     loaded_ = true;
     LOGI("vmrp API resolved, loaded=true");
+
+    // 注册动感芯片上电/断电回调：dsm.c 的 mr_plat(4002/4003) 触发
+    // vmrp_api_motion_power()，最终调此回调启停 OH_Sensor 订阅。
+    if (api_.set_motion_power_cb) {
+        api_.set_motion_power_cb([](int on) {
+            if (on) {
+                VmrpEngine::Instance().StartSensor();
+            } else {
+                VmrpEngine::Instance().StopSensor();
+            }
+        });
+        LOGI("motion power callback registered");
+    }
     return true;
 }
 
@@ -175,6 +192,14 @@ void VmrpEngine::Destroy() {
 int VmrpEngine::SendEvent(int code, int p0, int p1) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     return api_.event(code, p0, p1);
+}
+
+int VmrpEngine::SendMotion(int x, int y, int z) {
+    if (!api_.motion_event) return -1;
+    /* 不持 engine_mtx_：vmrp_api_motion_event 内部走 api_queue_command
+     * （持 api_lock），不再同步调 mr_event/Unicorn，无并发风险。
+     * 持 engine_mtx_ 反而可能与 api_lock 产生死锁。 */
+    return api_.motion_event(x, y, z);
 }
 
 // 驱动一次 timer() 并返回下一次所需间隔。调用方据此调度下一次 StepTimer。
@@ -220,4 +245,72 @@ int VmrpEngine::SetEditText(const std::string &text) {
 int VmrpEngine::CancelEdit() {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     return api_.cancel_edit();
+}
+
+// ---- 加速度传感器（OH_Sensor C 原生 API）----
+
+namespace {
+/* 传感器订阅需要的持久对象：Subscribe/Unsubscribe 需传入同一组指针，
+ * 故必须是全局或 static，不能栈分配。 */
+Sensor_SubscriptionId *g_sensor_sub_id = nullptr;
+Sensor_SubscriptionAttribute *g_sensor_sub_attr = nullptr;
+Sensor_Subscriber *g_sensor_subscriber = nullptr;
+
+/* OH_Sensor 回调：m/s² → mG 转换 + Y 轴取反 + 灵敏度倍率，
+ * 再通过 SendMotion 投递到 vmrp 异步队列。 */
+void OnAccelerometerData(Sensor_Event *event) {
+    float *data = nullptr;
+    uint32_t len = 0;
+    if (OH_SensorEvent_GetData(event, &data, &len) != SENSOR_SUCCESS || !data || len < 3) return;
+    float s = VmrpEngine::Instance().GetMotionSensitivity();
+    // 传感器 Y 轴正方向朝上，MRP 屏幕 Y 轴正方向朝下，需取反。
+    // 1 m/s² ≈ 102 mG (1000/9.80665)。
+    int xMg = static_cast<int>(data[0] * 102.0f * s);
+    int yMg = -static_cast<int>(data[1] * 102.0f * s);
+    int zMg = static_cast<int>(data[2] * 102.0f * s);
+    VmrpEngine::Instance().SendMotion(xMg, yMg, zMg);
+}
+} // namespace
+
+void VmrpEngine::StartSensor() {
+    if (sensor_subscribed_) return;
+    // 创建订阅 ID（SENSOR_TYPE_ACCELEROMETER = 1）
+    g_sensor_sub_id = OH_Sensor_CreateSubscriptionId();
+    if (!g_sensor_sub_id) { LOGE("OH_Sensor_CreateSubscriptionId failed"); return; }
+    OH_SensorSubscriptionId_SetType(g_sensor_sub_id, SENSOR_TYPE_ACCELEROMETER);
+
+    // 设置采样间隔 20ms（20000000ns）
+    g_sensor_sub_attr = OH_Sensor_CreateSubscriptionAttribute();
+    if (!g_sensor_sub_attr) { LOGE("OH_Sensor_CreateSubscriptionAttribute failed"); return; }
+    OH_SensorSubscriptionAttribute_SetSamplingInterval(g_sensor_sub_attr, 20000000);
+
+    // 设置回调
+    g_sensor_subscriber = OH_Sensor_CreateSubscriber();
+    if (!g_sensor_subscriber) { LOGE("OH_Sensor_CreateSubscriber failed"); return; }
+    OH_SensorSubscriber_SetCallback(g_sensor_subscriber, OnAccelerometerData);
+
+    int r = OH_Sensor_Subscribe(g_sensor_sub_id, g_sensor_sub_attr, g_sensor_subscriber);
+    if (r == SENSOR_SUCCESS) {
+        sensor_subscribed_ = true;
+        LOGI("OH_Sensor_Subscribe OK (accelerometer)");
+    } else {
+        LOGE("OH_Sensor_Subscribe failed: %{public}d", r);
+    }
+}
+
+void VmrpEngine::StopSensor() {
+    if (!sensor_subscribed_) return;
+    if (g_sensor_sub_id && g_sensor_subscriber) {
+        OH_Sensor_Unsubscribe(g_sensor_sub_id, g_sensor_subscriber);
+    }
+    if (g_sensor_subscriber) { OH_Sensor_DestroySubscriber(g_sensor_subscriber); g_sensor_subscriber = nullptr; }
+    if (g_sensor_sub_attr) { OH_Sensor_DestroySubscriptionAttribute(g_sensor_sub_attr); g_sensor_sub_attr = nullptr; }
+    if (g_sensor_sub_id) { OH_Sensor_DestroySubscriptionId(g_sensor_sub_id); g_sensor_sub_id = nullptr; }
+    sensor_subscribed_ = false;
+    LOGI("OH_Sensor_Unsubscribe OK (accelerometer)");
+}
+
+void VmrpEngine::SetMotionSensitivity(float s) {
+    motion_sensitivity_ = s;
+    if (api_.set_motion_sensitivity) api_.set_motion_sensitivity(s);
 }

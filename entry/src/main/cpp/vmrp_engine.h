@@ -28,6 +28,7 @@ struct VmrpApi {
     int (*set_dns_map)(const char *map);
 
     int (*event)(int code, int p0, int p1);
+    int (*motion_event)(int x_mg, int y_mg, int z_mg);
     int (*timer)(void);
     int (*get_timer_interval)(void);
 
@@ -47,6 +48,9 @@ struct VmrpApi {
     const char *(*get_edit_text)(void);
     int (*set_edit_text)(const char *text);
     int (*cancel_edit)(void);
+
+    void (*set_motion_power_cb)(void (*cb)(int on));
+    void (*set_motion_sensitivity)(float sensitivity);
 };
 
 // 单例引擎。所有方法都应在引擎线程（EngineThread）上调用；
@@ -71,6 +75,9 @@ public:
     // 输入事件（MRP 事件码）。code 见 vmrp_api.h 的 VMRP_* 常量。
     int SendEvent(int code, int p0, int p1);
 
+    // 重力感应数据（mG 单位，静止平放 z≈1000）。
+    int SendMotion(int x, int y, int z);
+
     // 定时器：驱动一次 timer()，返回下一次需要的间隔（ms），0 表示无需再调度。
     int StepTimer();
 
@@ -91,11 +98,15 @@ public:
 
     // 文本编辑。
     bool EditActive();
-    // 获取当前待编辑的原文本（编辑激活时为 MRP 传入的初始文本，否则空串）。
-    // 返回的指针在下次调用前有效（vmrp 内部维护快照），调用方应立即拷贝。
     std::string GetEditText();
     int SetEditText(const std::string &text);
     int CancelEdit();
+
+    // 加速度传感器：由 MRP 上电/断电回调驱动启停。
+    void StartSensor();
+    void StopSensor();
+    void SetMotionSensitivity(float s);
+    float GetMotionSensitivity() const { return motion_sensitivity_; }
 
     const VmrpApi *Api() const { return &api_; }
 
@@ -108,6 +119,8 @@ private:
     void *so_handle_ = nullptr;
     bool loaded_ = false;
     VmrpApi api_ = {};
+    bool sensor_subscribed_ = false;
+    float motion_sensitivity_ = 1.0f;
     // Unicorn ARM 引擎不支持并发。触摸线程的 SendEvent 和 timer 线程的 StepTimer
     // 都会调 uc_emu_start 执行 ARM 代码，并发会导致 TCG 的 TB cache/链表损坏
     //（translate-all.c g_assert_not_reached，UC_ERR_EXCEPTION），表现为运行中闪退。

@@ -71,6 +71,13 @@ VMRP_EXPORT int vmrp_api_set_dns_map(const char *map);
 VMRP_EXPORT int vmrp_api_event(int code, int p0, int p1);
 
 /*
+ * 重力感应：写入三轴加速度（mG）并投递 MR_MOTION_EVENT。
+ * 仅当 MRP 应用已调用 mr_plat(4004/4005) 开启监听时才实际投递事件。
+ * 静止平放参考值：x=0, y=0, z=1000。
+ */
+VMRP_EXPORT int vmrp_api_motion_event(int x_mg, int y_mg, int z_mg);
+
+/*
  * Timer: shared-library builds run the VM timer on a native worker thread so
  * Flutter hosts do not need to schedule it on the UI isolate. These functions
  * are kept for ABI compatibility with hosts that still use manual scheduling.

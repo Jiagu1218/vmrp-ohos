@@ -1834,6 +1834,58 @@ static int arm_ext_child_has_compact_timer_walker(const uint8_t *code,
     return 0;
 }
 
+static uint32_t find_wrapper_compact_heap_free_return(const uint8_t *code,
+                                                      uint32_t len,
+                                                      uint32_t *ctrl_off_out) {
+    if (ctrl_off_out) *ctrl_off_out = 0;
+    if (!code || len < 0x90u) return 0;
+
+    for (uint32_t off = 0; off + 0x90u <= len; off += 2u) {
+        uint16_t ldr = arm_ext_code_u16(code, off);
+        uint32_t ctrl_off = 0;
+        if ((ldr & 0xF800u) != 0x4800u || ((ldr >> 8) & 0x7u) != 2u)
+            continue;
+        if (!arm_ext_thumb_ldr_literal_u32(code, len, off, &ctrl_off))
+            continue;
+        if (ctrl_off < 0x80u || ctrl_off >= 0x1000u ||
+            (ctrl_off & 3u) != 0) {
+            continue;
+        }
+
+        /*
+         * Compact SDK mr_free() starts by loading the heap-control pointer
+         * from [R9+literal], then walks a {next,len} free-list rooted at
+         * ctrl+0x18.  The final block updates ctrl+0x0c before returning;
+         * a hook on the pop instruction lets the executor remove live timer
+         * nodes from the free-list after the allocator's own merge is done.
+         */
+        if (arm_ext_code_u16(code, off + 0x02u) != 0xB4F0u ||
+            arm_ext_code_u16(code, off + 0x04u) != 0x444Au ||
+            arm_ext_code_u16(code, off + 0x06u) != 0x6813u ||
+            arm_ext_code_u16(code, off + 0x08u) != 0x1C02u ||
+            arm_ext_code_u16(code, off + 0x0Au) != 0x3107u ||
+            arm_ext_code_u16(code, off + 0x0Cu) != 0x08CCu ||
+            arm_ext_code_u16(code, off + 0x0Eu) != 0x00E4u ||
+            arm_ext_code_u16(code, off + 0x16u) != 0x689Du ||
+            arm_ext_code_u16(code, off + 0x1Cu) != 0x691Eu ||
+            arm_ext_code_u16(code, off + 0x2Eu) != 0x3118u ||
+            arm_ext_code_u16(code, off + 0x30u) != 0x6998u ||
+            arm_ext_code_u16(code, off + 0x64u) != 0x600Du ||
+            arm_ext_code_u16(code, off + 0x6Cu) != 0xC114u ||
+            arm_ext_code_u16(code, off + 0x86u) != 0x68D8u ||
+            arm_ext_code_u16(code, off + 0x88u) != 0x1900u ||
+            arm_ext_code_u16(code, off + 0x8Au) != 0x60D8u ||
+            arm_ext_code_u16(code, off + 0x8Cu) != 0xBCF0u ||
+            arm_ext_code_u16(code, off + 0x8Eu) != 0x4770u) {
+            continue;
+        }
+
+        if (ctrl_off_out) *ctrl_off_out = ctrl_off;
+        return EXT_CODE_ADDR + off + 0x8Cu;
+    }
+    return 0;
+}
+
 static int arm_ext_child_reads_record100_to_compact_r9_buffer(
     const uint8_t *code,
     uint32_t file_len) {
@@ -3003,19 +3055,24 @@ static int run_arm_with_sp(ArmExtModule *m, uint32_t start, uint32_t sp) {
     if (err == UC_ERR_INSN_INVALID || err == UC_ERR_EXCEPTION) {
         uint32_t pc = reg_read32(m->uc, UC_ARM_REG_PC);
         if (pc != EXT_STOP_ADDR && pc != 0) {
+            /* 只在 PC 位于已知可执行代码段时切 Thumb 重试。
+             * 被踩的栈帧可能把 extChunk/P 等数据地址弹入 PC，该地址
+             * 在 ARM 模式下解码失败后若盲目切 Thumb 重试，数据字节恰好
+             * 构成有效 Thumb 指令(如 strb)就会写入未映射地址导致崩溃。
+             * 只对 wrapper 代码段或已注册的子模块代码段做 Thumb 修正。 */
+            int pc_in_code = (pc >= EXT_CODE_ADDR &&
+                              pc < EXT_CODE_ADDR + m->code_len);
+            if (!pc_in_code) {
+                uint32_t _fa = 0, _fl = 0;
+                pc_in_code = arm_ext_nested_exec_range_for_lr(m, pc, &_fa, &_fl);
+            }
             uint32_t cpsr = reg_read32(m->uc, UC_ARM_REG_CPSR);
-            if ((cpsr & (1u << 5)) == 0) {
+            if (pc_in_code && (cpsr & (1u << 5)) == 0) {
                 cpsr |= (1u << 5);
                 reg_write32(m->uc, UC_ARM_REG_CPSR, cpsr);
                 if (getenv("VMRP_ARM_EXT_TRACE")) {
                     printf("arm_ext_executor: retrying in Thumb mode at pc=0x%X\n", pc);
                 }
-                /*
-                 * Unicorn selects Thumb entry semantics from the low address
-                 * bit on uc_emu_start().  Changing CPSR.T alone is not enough
-                 * when a BLX target lost bit 0 and stopped on valid Thumb
-                 * bytes, so restart the callback at the Thumb-tagged PC.
-                 */
                 err = uc_emu_start(m->uc, pc | 1u, EXT_STOP_ADDR, 0, 0);
                 if (err == UC_ERR_OK && m->pending_intr_no) {
                     err = UC_ERR_EXCEPTION;
@@ -4021,6 +4078,30 @@ static void arm_ext_bump_block_remove(ArmExtBumpBlock *arr,
     (*count)--;
 }
 
+static void arm_ext_app_alloc_track(ArmExtModule *m,
+                                    uint32_t addr,
+                                    uint32_t len) {
+    if (!m || !addr || !len) return;
+    if (!arm_ext_bump_block_append(&m->app_live_blocks,
+                                   &m->app_live_count,
+                                   &m->app_live_cap,
+                                   m->app_live_count,
+                                   addr, align4(len))) {
+        return;
+    }
+}
+
+static void arm_ext_app_alloc_untrack(ArmExtModule *m, uint32_t addr) {
+    if (!m || !addr) return;
+    for (uint32_t i = 0; i < m->app_live_count; ++i) {
+        if (m->app_live_blocks[i].addr == addr) {
+            arm_ext_bump_block_remove(m->app_live_blocks,
+                                      &m->app_live_count, i);
+            return;
+        }
+    }
+}
+
 static int arm_ext_bump_free_insert(ArmExtModule *m, uint32_t addr,
                                     uint32_t len) {
     if (!m || !addr || !len) return 0;
@@ -4169,6 +4250,8 @@ static void arm_ext_protect_registered_module_storage(ArmExtModule *m,
                                     &m->bump_live_cap, file_addr, file_len);
     arm_ext_bump_block_remove_range(&m->bump_free_blocks, &m->bump_free_count,
                                     &m->bump_free_cap, file_addr, file_len);
+    arm_ext_bump_block_remove_range(&m->app_live_blocks, &m->app_live_count,
+                                    &m->app_live_cap, file_addr, file_len);
 }
 
 /* 应用可见内存分配/释放的统一入口(table[0]/[2]/[125] 输出):
@@ -4187,11 +4270,13 @@ static uint32_t arm_ext_app_mem_malloc(ArmExtModule *m, uint32_t len) {
             /* 登记失败(宿主内存不足)时块仍有效,只是不可回收 */
         }
     }
+    if (ret) arm_ext_app_alloc_track(m, ret, len);
     return ret;
 }
 
 static void arm_ext_app_mem_free(ArmExtModule *m, uint32_t p, uint32_t len) {
     if (!m || !p) return;
+    arm_ext_app_alloc_untrack(m, p);
     if (m->origin_mem_addr && p >= m->origin_mem_addr &&
         p < m->origin_mem_addr + m->origin_mem_len) {
         arm_ext_watch_alloc_report(m, "pool_free", p, len);
@@ -4239,6 +4324,377 @@ static void write_game_timer_head(ArmExtModule *m, uint32_t grw, uint32_t val) {
     } else {
         memcpy(arm_ptr(m, grw + GAME_TIMER_HEAD_OFFSET_ALT), &val, 4);
     }
+}
+
+#define ARM_EXT_COMPACT_TIMER_MAGIC 0x79ABBCCFu
+#define ARM_EXT_COMPACT_TIMER_PROTECT_MAX 128u
+
+static int arm_ext_compact_timer_magic_node_is_valid(ArmExtModule *m,
+                                                     uint32_t node) {
+    if (!m || !node || !arm_ext_addr_range_mapped(m, node, 0x20u))
+        return 0;
+    return arm_ext_read_u32_or_zero_(m, node) == ARM_EXT_COMPACT_TIMER_MAGIC;
+}
+
+static void arm_ext_compact_timer_protect_add(ArmExtModule *m,
+                                              ArmExtBumpBlock *ranges,
+                                              uint32_t *count,
+                                              uint32_t node,
+                                              int include_alloc_header) {
+    if (!ranges || !count || *count >= ARM_EXT_COMPACT_TIMER_PROTECT_MAX)
+        return;
+    if (!arm_ext_compact_timer_magic_node_is_valid(m, node))
+        return;
+
+    uint32_t lo = node;
+    uint32_t hi = node + 0x20u;
+    if (hi < node) return;
+    if (include_alloc_header) {
+        if (node < 4u || node + 0x24u < node) return;
+        /*
+         * game.ext's SDK malloc fallback asks table[0] for len+4, stores the
+         * size header at user-4, then returns the timer node at user.  The
+         * compact allocator rounds that 0x24 request to 0x28, so the protected
+         * range must include the header and trailing alignment bytes.
+         */
+        lo = node - 4u;
+        hi = node + 0x24u;
+    }
+
+    for (uint32_t i = 0; i < *count; ++i) {
+        if (ranges[i].addr == lo && ranges[i].len == hi - lo)
+            return;
+    }
+    ranges[*count].addr = lo;
+    ranges[*count].len = hi - lo;
+    (*count)++;
+}
+
+static void arm_ext_collect_compact_timer_chain(ArmExtModule *m,
+                                                ArmExtBumpBlock *ranges,
+                                                uint32_t *count,
+                                                uint32_t node,
+                                                uint32_t next_off,
+                                                int include_alloc_header) {
+    for (uint32_t i = 0; i < ARM_EXT_COMPACT_TIMER_PROTECT_MAX && node; ++i) {
+        uint32_t next = 0;
+        if (!arm_ext_compact_timer_magic_node_is_valid(m, node))
+            return;
+        arm_ext_compact_timer_protect_add(m, ranges, count, node,
+                                          include_alloc_header);
+        next = arm_ext_read_u32_or_zero_(m, node + next_off);
+        if (next == node) return;
+        for (uint32_t seen = 0; seen < *count; ++seen) {
+            uint32_t seen_node = ranges[seen].addr;
+            if (include_alloc_header && seen_node + 4u >= seen_node)
+                seen_node += 4u;
+            if (next == seen_node) return;
+        }
+        node = next;
+    }
+}
+
+static void arm_ext_collect_compact_timer_queue_pair(ArmExtModule *m,
+                                                     ArmExtBumpBlock *ranges,
+                                                     uint32_t *count,
+                                                     uint32_t queued,
+                                                     uint32_t current,
+                                                     int include_alloc_header) {
+    arm_ext_collect_compact_timer_chain(m, ranges, count, queued, 0x18u,
+                                        include_alloc_header);
+    arm_ext_collect_compact_timer_chain(m, ranges, count, current, 0x1Cu,
+                                        include_alloc_header);
+}
+
+static void arm_ext_collect_primary_compact_timer_nodes(ArmExtModule *m,
+                                                       ArmExtBumpBlock *ranges,
+                                                       uint32_t *count) {
+    uint32_t rw = arm_ext_primary_rw_base_(m);
+    if (!rw) return;
+
+    /*
+     * gzwdzjs game.ext proves the compact game scheduler at R9+0x84:
+     * +0x08 is the delta queue, +0x0c is the fired/current queue, and timer
+     * nodes carry 0x79ABBCCF at word 0.  Trying R9+0x80 as well preserves the
+     * older read_game_timer_head() offsets without naming a package.
+     */
+    static const uint32_t sched_offsets[] = { 0x84u, 0x80u };
+    for (uint32_t i = 0; i < sizeof(sched_offsets) / sizeof(sched_offsets[0]);
+         ++i) {
+        uint32_t off = sched_offsets[i];
+        if (!arm_ext_addr_range_mapped(m, rw + off, 0x14u))
+            continue;
+        arm_ext_collect_compact_timer_queue_pair(
+            m, ranges, count,
+            arm_ext_read_u32_or_zero_(m, rw + off + 0x08u),
+            arm_ext_read_u32_or_zero_(m, rw + off + 0x0Cu), 1);
+    }
+    arm_ext_collect_compact_timer_chain(m, ranges, count,
+                                        read_game_timer_head(m, rw),
+                                        0x18u, 1);
+}
+
+static void arm_ext_collect_wrapper_compact_timer_nodes(ArmExtModule *m,
+                                                       ArmExtBumpBlock *ranges,
+                                                       uint32_t *count) {
+    uint32_t wrapper_rw = arm_ext_wrapper_rw_base_(m);
+    uint32_t off = m ? m->wrapper_compact_timer_scheduler_off : 0;
+    if (!wrapper_rw || !off ||
+        !arm_ext_addr_range_mapped(m, wrapper_rw + off, 0x18u)) {
+        return;
+    }
+
+    arm_ext_collect_compact_timer_queue_pair(
+        m, ranges, count,
+        arm_ext_read_u32_or_zero_(m, wrapper_rw + off + 0x0Cu),
+        arm_ext_read_u32_or_zero_(m, wrapper_rw + off + 0x10u), 0);
+}
+
+static void arm_ext_collect_active_compact_timer_nodes(ArmExtModule *m,
+                                                      ArmExtBumpBlock *ranges,
+                                                      uint32_t *count) {
+    if (!m || !m->active_p_addr || m->active_p_addr == m->primary_p_addr ||
+        m->active_p_addr == m->p_addr) {
+        return;
+    }
+    ArmExtNestedModule *mod = arm_ext_find_nested_module_by_p(
+        m, m->active_p_addr);
+    if (!mod || !mod->file_addr || !mod->file_len)
+        return;
+    const uint8_t *code = (const uint8_t *)arm_ptr(m, mod->file_addr);
+    if (!arm_ext_child_has_compact_timer_walker(code, mod->file_len))
+        return;
+
+    uint32_t rw = arm_ext_active_rw_base(m);
+    static const uint32_t sched_offsets[] = { 0x0C0u, 0x248u };
+    for (uint32_t i = 0; i < sizeof(sched_offsets) / sizeof(sched_offsets[0]);
+         ++i) {
+        uint32_t off = sched_offsets[i];
+        if (!arm_ext_addr_range_mapped(m, rw + off, 0x14u))
+            continue;
+        arm_ext_collect_compact_timer_queue_pair(
+            m, ranges, count,
+            arm_ext_read_u32_or_zero_(m, rw + off + 0x08u),
+            arm_ext_read_u32_or_zero_(m, rw + off + 0x0Cu), 0);
+    }
+}
+
+static int arm_ext_compact_heap_cut_range(ArmExtModule *m,
+                                          uint32_t ctrl,
+                                          uint32_t protect_lo,
+                                          uint32_t protect_hi) {
+    if (!m || !ctrl || protect_lo >= protect_hi ||
+        !arm_ext_addr_range_mapped(m, ctrl, 0x1Cu)) {
+        return 0;
+    }
+
+    uint32_t base = arm_ext_read_u32_or_zero_(m, ctrl + 0x08u);
+    uint32_t end = arm_ext_read_u32_or_zero_(m, ctrl + 0x10u);
+    if (end <= base || !arm_ext_addr_range_mapped(m, base, end - base))
+        return 0;
+
+    uint32_t heap_len = end - base;
+    uint32_t prev_slot = ctrl + 0x18u;
+    uint32_t off = arm_ext_read_u32_or_zero_(m, prev_slot);
+    uint32_t iter_limit = heap_len / 8u + 4u;
+    int changed = 0;
+
+    while (off < heap_len && iter_limit--) {
+        uint32_t node = base + off;
+        if (!arm_ext_addr_range_mapped(m, node, 8u))
+            break;
+        uint32_t next_off = arm_ext_read_u32_or_zero_(m, node);
+        uint32_t len = arm_ext_read_u32_or_zero_(m, node + 4u);
+        if (len < 8u || len > end - node)
+            break;
+
+        uint32_t node_end = node + len;
+        uint32_t lo = node > protect_lo ? node : protect_lo;
+        uint32_t hi = node_end < protect_hi ? node_end : protect_hi;
+        if (lo >= hi) {
+            prev_slot = node;
+            off = next_off;
+            continue;
+        }
+
+        uint32_t left_len = lo > node ? lo - node : 0;
+        uint32_t right_start = hi;
+        uint32_t right_len = node_end > right_start ? node_end - right_start : 0;
+        int keep_left = left_len >= 8u;
+        int keep_right = right_len >= 8u;
+        uint32_t removed = len -
+            (keep_left ? left_len : 0u) -
+            (keep_right ? right_len : 0u);
+
+        if (keep_left && keep_right) {
+            uint32_t right_off = right_start - base;
+            arm_ext_guest_mem_write_u32(m, node + 4u, left_len);
+            arm_ext_guest_mem_write_u32(m, node, right_off);
+            arm_ext_guest_mem_write_u32(m, right_start, next_off);
+            arm_ext_guest_mem_write_u32(m, right_start + 4u, right_len);
+            prev_slot = right_start;
+            off = next_off;
+        } else if (keep_left) {
+            arm_ext_guest_mem_write_u32(m, node + 4u, left_len);
+            arm_ext_guest_mem_write_u32(m, node, next_off);
+            prev_slot = node;
+            off = next_off;
+        } else if (keep_right) {
+            uint32_t right_off = right_start - base;
+            arm_ext_guest_mem_write_u32(m, right_start, next_off);
+            arm_ext_guest_mem_write_u32(m, right_start + 4u, right_len);
+            arm_ext_guest_mem_write_u32(m, prev_slot, right_off);
+            prev_slot = right_start;
+            off = next_off;
+        } else {
+            arm_ext_guest_mem_write_u32(m, prev_slot, next_off);
+            off = next_off;
+        }
+
+        if (removed) {
+            uint32_t free_bytes = arm_ext_read_u32_or_zero_(m, ctrl + 0x0Cu);
+            free_bytes = removed < free_bytes ? free_bytes - removed : 0;
+            arm_ext_guest_mem_write_u32(m, ctrl + 0x0Cu, free_bytes);
+        }
+        changed = 1;
+    }
+    return changed;
+}
+
+static void arm_ext_sanitize_compact_heap_for_rw(ArmExtModule *m,
+                                                 uint32_t rw,
+                                                 const ArmExtBumpBlock *ranges,
+                                                 uint32_t count) {
+    if (!m || !rw || !m->wrapper_compact_heap_ctrl_off ||
+        !ranges || !count) {
+        return;
+    }
+    uint32_t ctrl_slot = rw + m->wrapper_compact_heap_ctrl_off;
+    if (!arm_ext_addr_range_mapped(m, ctrl_slot, 4u))
+        return;
+    uint32_t ctrl = arm_ext_read_u32_or_zero_(m, ctrl_slot);
+    if (!ctrl) return;
+
+    /*
+     * The compact heap control block is per-module RW state, but the allocator
+     * routine itself is shared wrapper code and reads it through R9.  Sanitize
+     * each discovered control block structurally; no application name or MRP
+     * path participates in the decision.
+     */
+    for (uint32_t i = 0; i < count; ++i) {
+        arm_ext_compact_heap_cut_range(m, ctrl, ranges[i].addr,
+                                       ranges[i].addr + ranges[i].len);
+    }
+}
+
+static void arm_ext_collect_protect_range_(ArmExtBumpBlock *ranges,
+                                           uint32_t *count,
+                                           uint32_t addr, uint32_t len) {
+    if (!addr || !len || *count >= ARM_EXT_COMPACT_TIMER_PROTECT_MAX)
+        return;
+    ranges[*count].addr = addr;
+    ranges[*count].len = len;
+    (*count)++;
+}
+
+/*
+ * 已注册 EXT 模块的存活存储(文件映像 + ER_RW 静态段)不允许出现在 compact
+ * free-list 里,否则后续 malloc 会把精灵/位图缓冲切进正在执行的代码或静态
+ * 变量区。gzwdzjs 删除 plugins/netpay.mrp 后的错误路径实测:
+ *   - 启动时 wrapper 把 gzip 代码段读进 RAM pack 缓冲 0x2314C0(len 72570,
+ *     尾部到 0x24303A),readFile('abc') 解压出 game.ext 到 0x226118+0x1C70C,
+ *     其映像与随后的 ER_RW(0x24282C+0x4DF4)都落在 RAM pack 区间内;
+ *   - RAM pack 其后被 free 进 compact free-list,free-list 便获得覆盖模块
+ *     存活存储的空闲段;
+ *   - 只保护文件映像时,精灵缓存仍会分配到 0x242828 附近,RGB565 像素
+ *     (0xF81F 等)覆写 ER_RW 头部,帧回调指针变成像素垃圾 0x9359B3BB,
+ *     事件回调 blx 到未映射地址崩溃一次后定时器泵瘫痪、画面冻结;
+ *   - 只保护代码前的版本则是像素覆写 0x231550 指令→SP=0x61/0x9 崩溃循环。
+ * 与 LG_mem 侧 arm_ext_find_first_registered_code_overlap 的保护语义一致,
+ * 这里把当前注册模块的文件映像和 ER_RW 区间一并加入 compact 堆保护集。
+ * ER_RW 基址/长度读自各模块 P 结构(start_of_ER_RW / ER_RW_Length)。模块被
+ * 替换/丢弃后不再注册,区间自然恢复可分配,不影响"先 free 再 readFile
+ * 复用"的行为。
+ */
+static void arm_ext_collect_registered_module_ranges(ArmExtModule *m,
+                                                     ArmExtBumpBlock *ranges,
+                                                     uint32_t *count) {
+    if (!m || !ranges || !count) return;
+    /* 每个模块条目:文件映像 {file_addr,file_len} + P 结构地址(取 ER_RW) */
+    struct { uint32_t addr, len, p_addr; } mod[2 + ARM_EXT_NESTED_MODULE_MAX];
+    uint32_t n = 0;
+    mod[n].addr = m->primary_file_addr;
+    mod[n].len = m->primary_file_len;
+    mod[n].p_addr = m->p_addr;
+    n++;
+    /* pending_internal 尚未 sync,还没有 P 结构,只保护文件映像 */
+    mod[n].addr = m->pending_internal_file_addr;
+    mod[n].len = m->pending_internal_file_len;
+    mod[n].p_addr = 0;
+    n++;
+    for (int i = 0; i < m->nested_module_count && n < 2 + ARM_EXT_NESTED_MODULE_MAX; ++i) {
+        mod[n].addr = m->nested_modules[i].file_addr;
+        mod[n].len = m->nested_modules[i].file_len;
+        mod[n].p_addr = m->nested_modules[i].p_addr;
+        n++;
+    }
+    for (uint32_t i = 0; i < n; ++i) {
+        if (!mod[i].addr || !mod[i].len)
+            continue;
+        arm_ext_collect_protect_range_(ranges, count, mod[i].addr, mod[i].len);
+        if (!mod[i].p_addr ||
+            !arm_ext_addr_range_mapped(m, mod[i].p_addr, 8u))
+            continue;
+        /* mr_c_function_P_t: +0=start_of_ER_RW,+4=ER_RW_Length */
+        uint32_t rw = arm_ext_read_u32_or_zero_(m, mod[i].p_addr);
+        uint32_t rw_len = arm_ext_read_u32_or_zero_(m, mod[i].p_addr + 4u);
+        if (!rw || !rw_len || !arm_ext_addr_range_mapped(m, rw, rw_len))
+            continue;
+        arm_ext_collect_protect_range_(ranges, count, rw, rw_len);
+    }
+}
+
+static void arm_ext_sanitize_compact_timer_heaps(ArmExtModule *m) {
+    if (!m || !m->wrapper_compact_heap_ctrl_off)
+        return;
+
+    ArmExtBumpBlock ranges[ARM_EXT_COMPACT_TIMER_PROTECT_MAX];
+    uint32_t count = 0;
+    arm_ext_collect_primary_compact_timer_nodes(m, ranges, &count);
+    arm_ext_collect_wrapper_compact_timer_nodes(m, ranges, &count);
+    arm_ext_collect_active_compact_timer_nodes(m, ranges, &count);
+    /* 注册模块的映像与 ER_RW 静态段与 live timer node 一样属于不可分配区间 */
+    arm_ext_collect_registered_module_ranges(m, ranges, &count);
+    if (!count) return;
+
+    arm_ext_sanitize_compact_heap_for_rw(m, arm_ext_primary_rw_base_(m),
+                                         ranges, count);
+    arm_ext_sanitize_compact_heap_for_rw(m, arm_ext_wrapper_rw_base_(m),
+                                         ranges, count);
+    arm_ext_sanitize_compact_heap_for_rw(m, arm_ext_active_rw_base(m),
+                                         ranges, count);
+    arm_ext_sanitize_compact_heap_for_rw(
+        m, reg_read32(m->uc, UC_ARM_REG_R9), ranges, count);
+    for (int i = 0; i < m->nested_module_count; ++i) {
+        uint32_t rw = arm_ext_read_u32_or_zero_(m,
+                                                m->nested_modules[i].p_addr);
+        arm_ext_sanitize_compact_heap_for_rw(m, rw, ranges, count);
+    }
+}
+
+static void hook_compact_heap_free_return(uc_engine *uc, uint64_t address,
+                                          uint32_t size, void *user_data) {
+    (void)uc;
+    (void)address;
+    (void)size;
+    ArmExtModule *m = (ArmExtModule *)user_data;
+    /*
+     * The hook is installed only on the discovered compact mr_free() return
+     * instruction.  At this point the ARM allocator has finished inserting or
+     * merging the free block, so removing live timer allocations preserves the
+     * allocator's own ordering instead of masking the callback that caused it.
+     */
+    arm_ext_sanitize_compact_timer_heaps(m);
 }
 
 static void arm_ext_free_row_spans(ArmExtRowSpans *spans) {
@@ -5607,6 +6063,224 @@ static int arm_ext_bitmap_source_uses_screen_stride(ArmExtModule *m,
     return 0;
 }
 
+enum {
+    ARM_EXT_BM_OR = 0,
+    ARM_EXT_BM_XOR = 1,
+    ARM_EXT_BM_COPY = 2,
+    ARM_EXT_BM_NOT = 3,
+    ARM_EXT_BM_MERGENOT = 4,
+    ARM_EXT_BM_ANDNOT = 5,
+    ARM_EXT_BM_TRANSPARENT = 6,
+    ARM_EXT_BM_AND = 7,
+    ARM_EXT_BM_GRAY = 8,
+    ARM_EXT_BM_REVERSE = 9,
+    ARM_EXT_SPRITE_INDEX_MASK = 0x03FF,
+    ARM_EXT_SPRITE_TRANSPARENT = 0x0400,
+    ARM_EXT_TILE_SHIFT = 11,
+    ARM_EXT_ROTATE_0 = 0,
+    ARM_EXT_ROTATE_90 = 1,
+    ARM_EXT_ROTATE_180 = 2,
+    ARM_EXT_ROTATE_270 = 3,
+};
+
+static int arm_ext_bitmap_source_bounds(ArmExtModule *m,
+                                        uint32_t p_addr,
+                                        uint32_t *lo,
+                                        uint32_t *hi) {
+    uint32_t bitmap_array =
+        arm_ext_read_u32_or_zero_(m, EXT_TABLE_ADDR + 95u * 4u);
+    if (lo) *lo = 0;
+    if (hi) *hi = 0;
+    if (!m || !p_addr) return 0;
+
+    if (bitmap_array) {
+        for (uint32_t i = 0; i < 31u; ++i) {
+            uint32_t desc = bitmap_array + i * 16u;
+            uint32_t len = arm_ext_read_u32_or_zero_(m, desc + 4u);
+            uint32_t base = arm_ext_read_u32_or_zero_(m, desc + 12u);
+            uint64_t end = (uint64_t)base + (uint64_t)len;
+            if (!base || !len || end > 0x100000000ull) continue;
+            if (p_addr >= base && (uint64_t)p_addr < end) {
+                if (lo) *lo = base;
+                if (hi) *hi = (uint32_t)end;
+                return 1;
+            }
+        }
+    }
+
+    for (uint32_t i = 0; i < m->app_live_count; ++i) {
+        uint32_t base = m->app_live_blocks[i].addr;
+        uint32_t len = m->app_live_blocks[i].len;
+        uint64_t end = (uint64_t)base + (uint64_t)len;
+        if (!base || !len || end > 0x100000000ull) continue;
+        if (p_addr >= base && (uint64_t)p_addr < end) {
+            if (lo) *lo = base;
+            if (hi) *hi = (uint32_t)end;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int arm_ext_bitmap_read_source_pixel(ArmExtModule *m,
+                                            uint64_t addr64,
+                                            int bounded,
+                                            uint32_t lo,
+                                            uint32_t hi,
+                                            uint16_t *color) {
+    if (color) *color = 0;
+    if (addr64 > 0xFFFFFFFEull) return 0;
+    uint32_t addr = (uint32_t)addr64;
+    if (bounded && (addr < lo || addr + sizeof(uint16_t) > hi)) return 0;
+    void *p = arm_ptr(m, addr);
+    if (!p || !arm_ptr(m, addr + 1u)) return 0;
+    memcpy(color, p, sizeof(uint16_t));
+    return 1;
+}
+
+static void arm_ext_bitmap_apply_rop(uint16_t *dst,
+                                     uint16_t src,
+                                     uint16_t rop,
+                                     uint16_t transcoler) {
+    if (!dst) return;
+    switch (rop) {
+        case ARM_EXT_BM_TRANSPARENT:
+            if (src != transcoler) *dst = src;
+            break;
+        case ARM_EXT_BM_COPY:
+            *dst = src;
+            break;
+        case ARM_EXT_BM_GRAY:
+            if (src != transcoler) {
+                uint32_t r = (src & 0xF800u) >> 11;
+                uint32_t g = (src & 0x07E0u) >> 6;
+                uint32_t b = src & 0x001Fu;
+                uint32_t gray = (r * 60u + g * 118u + b * 22u) / 25u;
+                *dst = MAKERGB565(gray, gray, gray);
+            }
+            break;
+        case ARM_EXT_BM_REVERSE:
+            if (src != transcoler) *dst = (uint16_t)~src;
+            break;
+        case ARM_EXT_BM_OR:
+            *dst = (uint16_t)(src | *dst);
+            break;
+        case ARM_EXT_BM_XOR:
+            *dst = (uint16_t)(src ^ *dst);
+            break;
+        case ARM_EXT_BM_NOT:
+            *dst = (uint16_t)~src;
+            break;
+        case ARM_EXT_BM_MERGENOT:
+            *dst = (uint16_t)((uint16_t)~src | *dst);
+            break;
+        case ARM_EXT_BM_ANDNOT:
+            *dst = (uint16_t)((uint16_t)~src & *dst);
+            break;
+        case ARM_EXT_BM_AND:
+            *dst = (uint16_t)(src & *dst);
+            break;
+        default:
+            break;
+    }
+}
+
+static void arm_ext_draw_bitmap_from_guest(ArmExtModule *m,
+                                           uint32_t p_addr,
+                                           int16_t x,
+                                           int16_t y,
+                                           uint16_t w,
+                                           uint16_t h,
+                                           uint16_t rop,
+                                           uint16_t transcoler,
+                                           int16_t sx,
+                                           int16_t sy,
+                                           int16_t mw) {
+    if (!m || !p_addr || !mr_screenBuf || mr_screen_w <= 0 ||
+        mr_screen_h <= 0) {
+        return;
+    }
+
+    int32_t min_x = x < 0 ? 0 : x;
+    int32_t min_y = y < 0 ? 0 : y;
+    int32_t max_x = (int32_t)x + (int32_t)w;
+    int32_t max_y = (int32_t)y + (int32_t)h;
+    if (max_x > mr_screen_w) max_x = mr_screen_w;
+    if (max_y > mr_screen_h) max_y = mr_screen_h;
+    if (min_x >= max_x || min_y >= max_y) return;
+
+    uint32_t src_lo = 0;
+    uint32_t src_hi = 0;
+    int bounded = arm_ext_bitmap_source_bounds(m, p_addr, &src_lo, &src_hi);
+
+    /*
+     * table[120] passes guest bitmap pointers into host C. The native helper
+     * indexes from that pointer without a byte length, but the emulator can see
+     * table[95] bitmap descriptors and live app allocations. Keep source reads
+     * inside that owner so a bad source rectangle cannot turn unrelated guest
+     * heap/code bytes into pixels; pixels outside the owner are not drawn.
+     */
+    for (int32_t dy = min_y; dy < max_y; ++dy) {
+        for (int32_t dx = min_x; dx < max_x; ++dx) {
+            int64_t src_offset = -1;
+            uint16_t src = 0;
+            uint16_t draw_rop = rop;
+            uint16_t *dst =
+                mr_screenBuf + (size_t)dy * (size_t)mr_screen_w + (size_t)dx;
+
+            if (rop > ARM_EXT_SPRITE_TRANSPARENT) {
+                uint16_t bitmap_rop = rop & ARM_EXT_SPRITE_INDEX_MASK;
+                uint16_t mode = (rop >> ARM_EXT_TILE_SHIFT) & 0x3u;
+                uint16_t flip = (rop >> ARM_EXT_TILE_SHIFT) & 0x4u;
+                int64_t rel_x = (int64_t)dx - (int64_t)x;
+                int64_t rel_y = (int64_t)dy - (int64_t)y;
+                int64_t row = 0;
+                int64_t col = 0;
+                if (bitmap_rop != ARM_EXT_BM_TRANSPARENT &&
+                    bitmap_rop != ARM_EXT_BM_COPY) {
+                    continue;
+                }
+                switch (mode) {
+                    case ARM_EXT_ROTATE_0:
+                        row = flip ? (int64_t)h - 1 - rel_y : rel_y;
+                        col = rel_x;
+                        break;
+                    case ARM_EXT_ROTATE_90:
+                        row = flip ? (int64_t)h - 1 - rel_x : rel_x;
+                        col = (int64_t)w - 1 - rel_y;
+                        break;
+                    case ARM_EXT_ROTATE_180:
+                        row = flip ? rel_y : (int64_t)h - 1 - rel_y;
+                        col = (int64_t)w - 1 - rel_x;
+                        break;
+                    case ARM_EXT_ROTATE_270:
+                        row = flip ? rel_x : (int64_t)h - 1 - rel_x;
+                        col = rel_y;
+                        break;
+                    default:
+                        continue;
+                }
+                src_offset = row * (int64_t)w + col;
+                draw_rop = bitmap_rop;
+            } else {
+                src_offset =
+                    ((int64_t)dy - (int64_t)y + (int64_t)sy) *
+                        (int64_t)mw +
+                    ((int64_t)dx - (int64_t)x + (int64_t)sx);
+            }
+
+            if (src_offset < 0) continue;
+            uint64_t src_addr =
+                (uint64_t)p_addr + (uint64_t)src_offset * sizeof(uint16_t);
+            if (!arm_ext_bitmap_read_source_pixel(m, src_addr, bounded,
+                                                  src_lo, src_hi, &src)) {
+                continue;
+            }
+            arm_ext_bitmap_apply_rop(dst, src, draw_rop, transcoler);
+        }
+    }
+}
+
 static void capture_timer_dispatches(ArmExtModule *m) {
     if (!m || !m->primary_helper_addr) return;
     uint32_t t31a = EXT_TABLE_ADDR + 31 * 4;
@@ -5647,9 +6321,178 @@ static void capture_timer_dispatches(ArmExtModule *m) {
     }
 }
 
+static unsigned arm_ext_popcount8(uint32_t v) {
+    v &= 0xffu;
+    unsigned n = 0;
+    while (v) {
+        n += v & 1u;
+        v >>= 1;
+    }
+    return n;
+}
+
+static int arm_ext_read_thumb16(ArmExtModule *m, uint32_t addr,
+                                uint16_t *value) {
+    if (value) *value = 0;
+    if (!m || !value || !arm_ptr(m, addr) || !arm_ptr(m, addr + 1u))
+        return 0;
+    uint8_t *p = (uint8_t *)arm_ptr(m, addr);
+    *value = (uint16_t)(p[0] | ((uint16_t)p[1] << 8));
+    return 1;
+}
+
+static int arm_ext_thumb_is_blx_reg(uint16_t hw) {
+    return (hw & 0xff87u) == 0x4780u;
+}
+
+static int arm_ext_thumb_is_pop_pc(uint16_t hw) {
+    return (hw & 0xfe00u) == 0xbc00u && (hw & 0x0100u) != 0;
+}
+
+static int arm_ext_table_return_site_is_guarded(ArmExtModule *m,
+                                                uint32_t pc) {
+    uint16_t prev = 0;
+    uint16_t cur = 0;
+    if (pc < 2u) return 0;
+    if (!arm_ext_read_thumb16(m, pc - 2u, &prev) ||
+        !arm_ext_read_thumb16(m, pc, &cur)) {
+        return 0;
+    }
+    return arm_ext_thumb_is_blx_reg(prev) && arm_ext_thumb_is_pop_pc(cur);
+}
+
+static int arm_ext_pop_pc_target(ArmExtModule *m, uint32_t pc, uint32_t sp,
+                                 uint32_t *target) {
+    uint16_t hw = 0;
+    if (target) *target = 0;
+    if (!arm_ext_read_thumb16(m, pc, &hw) || !arm_ext_thumb_is_pop_pc(hw))
+        return 0;
+
+    uint32_t target_slot = sp + arm_ext_popcount8(hw & 0xffu) * 4u;
+    if (target_slot < sp || !arm_ptr(m, target_slot) ||
+        !arm_ptr(m, target_slot + 3u)) {
+        return 0;
+    }
+    if (target) memcpy(target, arm_ptr(m, target_slot), 4);
+    return 1;
+}
+
+static int arm_ext_pop_pc_stack_bytes(ArmExtModule *m, uint32_t pc,
+                                      uint32_t *bytes) {
+    uint16_t hw = 0;
+    if (bytes) *bytes = 0;
+    if (!arm_ext_read_thumb16(m, pc, &hw) || !arm_ext_thumb_is_pop_pc(hw))
+        return 0;
+    uint32_t count = arm_ext_popcount8(hw & 0xffu) + 1u;
+    if (bytes) *bytes = count * 4u;
+    return 1;
+}
+
+static int arm_ext_table_return_guard_index(ArmExtModule *m, uint32_t pc) {
+    if (!m || !pc) return -1;
+    for (uint32_t i = 0; i < ARM_EXT_TABLE_RETURN_GUARD_MAX; ++i) {
+        if (m->table_return_guard_pc[i] == pc) return (int)i;
+    }
+    return -1;
+}
+
+static void arm_ext_note_table_return_guard(ArmExtModule *m, uint32_t lr,
+                                            uint32_t sp) {
+    if (!m || !(lr & 1u)) return;
+    uint32_t pc = lr & ~1u;
+    if (!arm_ext_table_return_site_is_guarded(m, pc)) return;
+
+    for (uint32_t i = 0; i < ARM_EXT_TABLE_RETURN_GUARD_MAX; ++i) {
+        if (m->table_return_guard_pending[i] &&
+            m->table_return_guard_pc[i] == pc &&
+            m->table_return_guard_sp[i] == sp) {
+            return;
+        }
+    }
+    for (uint32_t i = 0; i < ARM_EXT_TABLE_RETURN_GUARD_MAX; ++i) {
+        if (!m->table_return_guard_pending[i] &&
+            (!m->table_return_guard_pc[i] ||
+             m->table_return_guard_pc[i] == pc)) {
+            m->table_return_guard_pc[i] = pc;
+            m->table_return_guard_sp[i] = sp;
+            m->table_return_guard_pending[i] = 1;
+            return;
+        }
+    }
+
+    uint32_t i = m->table_return_guard_next++ %
+                 ARM_EXT_TABLE_RETURN_GUARD_MAX;
+    m->table_return_guard_pc[i] = pc;
+    m->table_return_guard_sp[i] = sp;
+    m->table_return_guard_pending[i] = 1;
+}
+
+static int arm_ext_consume_table_return_guard(ArmExtModule *m, uint32_t pc,
+                                              uint32_t sp) {
+    if (!m || !pc) return 0;
+    for (uint32_t i = 0; i < ARM_EXT_TABLE_RETURN_GUARD_MAX; ++i) {
+        if (m->table_return_guard_pending[i] &&
+            m->table_return_guard_pc[i] == pc &&
+            m->table_return_guard_sp[i] == sp) {
+            uint32_t pop_bytes = 0;
+            if (!arm_ext_pop_pc_stack_bytes(m, pc, &pop_bytes) ||
+                sp + pop_bytes < sp) {
+                return 0;
+            }
+            /*
+             * This first hit is the real return from a native table bridge.
+             * Remember the SP after the epilogue's pop so a duplicate entry into
+             * the same epilogue can be identified structurally, without blocking
+             * a later legitimate call that reuses the same return site.
+             */
+            m->table_return_guard_sp[i] = sp + pop_bytes;
+            m->table_return_guard_pending[i] = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int arm_ext_table_return_guard_is_stale(ArmExtModule *m, uint32_t pc,
+                                               uint32_t sp) {
+    int idx = arm_ext_table_return_guard_index(m, pc);
+    return idx >= 0 &&
+           !m->table_return_guard_pending[idx] &&
+           m->table_return_guard_sp[idx] == sp;
+}
+
+static int arm_ext_guard_table_return_block(uc_engine *uc, ArmExtModule *m,
+                                            uint32_t address) {
+    if (!m) return 0;
+    uint32_t pc = address & ~1u;
+    if (arm_ext_table_return_guard_index(m, pc) < 0) return 0;
+
+    uint32_t sp = reg_read32(uc, UC_ARM_REG_SP);
+    if (arm_ext_consume_table_return_guard(m, pc, sp)) return 0;
+
+    uint32_t lr = reg_read32(uc, UC_ARM_REG_LR);
+    if ((lr & ~1u) != pc || !(lr & 1u) ||
+        !arm_ext_table_return_guard_is_stale(m, pc, sp) ||
+        !arm_ext_table_return_site_is_guarded(m, pc)) {
+        return 0;
+    }
+
+    if (getenv("VMRP_ARM_EXT_TRACE")) {
+        uint32_t target = 0;
+        int have_target = arm_ext_pop_pc_target(m, pc, sp, &target);
+        printf("arm_ext_executor: stopped stale table return epilogue pc=0x%X sp=0x%X lr=0x%X pop_pc=0x%X\n",
+               pc, sp, lr, have_target ? target : 0);
+    }
+    reg_write32(uc, UC_ARM_REG_PC, EXT_STOP_ADDR);
+    uc_emu_stop(uc);
+    return 1;
+}
+
 static void cb_ret(ArmExtModule *m, uint32_t ret) {
     reg_write32(m->uc, UC_ARM_REG_R0, ret);
     uint32_t lr = reg_read32(m->uc, UC_ARM_REG_LR);
+    uint32_t sp = reg_read32(m->uc, UC_ARM_REG_SP);
+    arm_ext_note_table_return_guard(m, lr, sp);
     set_arm_mode_for_addr(m, lr);
     reg_write32(m->uc, UC_ARM_REG_PC, lr);
 }
@@ -6705,8 +7548,9 @@ static void hook_table(uc_engine *uc, uint64_t address, uint32_t size, void *use
                 ArmExtScreenContext screen_ctx;
                 if (arm_ext_push_draw_screen_context(m, &screen_ctx)) {
                     uint16_t *before = arm_ext_snapshot_screen(m);
-                    _DrawBitmap(arm_ptr(m, r0), (int16)r1, (int16)r2,
-                                (uint16)r3, h, rop, trans, sx, sy, mw);
+                    arm_ext_draw_bitmap_from_guest(
+                        m, r0, (int16)r1, (int16)r2,
+                        (uint16)r3, h, rop, trans, sx, sy, mw);
                     arm_ext_pop_draw_screen_context(&screen_ctx);
                     arm_ext_note_screen_damage_diff(m, before);
                     arm_ext_claim_foreground_screen_diff(m, claim_p,
@@ -6723,6 +7567,13 @@ static void hook_table(uc_engine *uc, uint64_t address, uint32_t size, void *use
         case 122:
             {
                 uint32_t claim_p = 0, claim_helper = 0;
+                int16_t x = (int16)r0;
+                int16_t y = (int16)r1;
+                int16_t w = (int16)r2;
+                int16_t h = (int16)r3;
+                uint8_t cr = (uint8)arg_read(m, 4);
+                uint8_t cg = (uint8)arg_read(m, 5);
+                uint8_t cb = (uint8)arg_read(m, 6);
                 if (!arm_ext_should_accept_screen_write(m, &claim_p,
                                                         &claim_helper)) {
                     claim_p = 0;
@@ -6730,24 +7581,29 @@ static void hook_table(uc_engine *uc, uint64_t address, uint32_t size, void *use
                 }
                 ArmExtScreenContext screen_ctx;
                 if (arm_ext_push_draw_screen_context(m, &screen_ctx)) {
-                    DrawRect((int16)r0, (int16)r1, (int16)r2, (int16)r3,
-                             (uint8)arg_read(m, 4),
-                             (uint8)arg_read(m, 5),
-                             (uint8)arg_read(m, 6));
+                    int full_black_clear =
+                        arm_ext_screen_context_targets_primary(m, &screen_ctx) &&
+                        x <= 0 && y <= 0 &&
+                        (int32_t)x + (int32_t)w >= m->screen_w &&
+                        (int32_t)y + (int32_t)h >= m->screen_h &&
+                        cr == 0 && cg == 0 && cb == 0;
+                    DrawRect(x, y, w, h, cr, cg, cb);
                     arm_ext_pop_draw_screen_context(&screen_ctx);
-                    arm_ext_note_screen_damage_rect(m, (int16)r0,
-                                                    (int16)r1,
-                                                    (int16)r2,
-                                                    (int16)r3);
-                    arm_ext_claim_foreground_screen_rect(m, claim_p,
-                                                         claim_helper,
-                                                         (int16)r0,
-                                                         (int16)r1,
-                                                         (int16)r2,
-                                                         (int16)r3);
-                    arm_ext_finish_screen_cache_write(m, &screen_ctx,
-                                                      claim_p,
-                                                      claim_helper);
+                    /*
+                     * A primary full-screen black DrawRect is commonly a cache
+                     * reset before partial repaint/present.  Treat it as a
+                     * backing write only so callback-exit damage synthesis does
+                     * not expose pixels the app never explicitly presented.
+                     */
+                    if (!full_black_clear) {
+                        arm_ext_note_screen_damage_rect(m, x, y, w, h);
+                        arm_ext_claim_foreground_screen_rect(m, claim_p,
+                                                             claim_helper,
+                                                             x, y, w, h);
+                        arm_ext_finish_screen_cache_write(m, &screen_ctx,
+                                                          claim_p,
+                                                          claim_helper);
+                    }
                 }
             }
             ret = 0;
@@ -7560,6 +8416,7 @@ static void arm_ext_watch_sentinel_check(ArmExtModule *m, uint32_t idx,
     w->last_lr = reg_read32(m->uc, UC_ARM_REG_LR);
     w->last_pc = reg_read32(m->uc, UC_ARM_REG_PC);
 }
+
 /* ---- 临时诊断结束 ---- */
 
 static void hook_got_write(uc_engine *uc, uc_mem_type type, uint64_t address, int size, int64_t value, void *user_data) {
@@ -7636,6 +8493,9 @@ static void hook_screen_write(uc_engine *uc, uc_mem_type type, uint64_t address,
 static void hook_restore_r9(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {
     (void)size;
     ArmExtModule *m = (ArmExtModule *)user_data;
+    if (arm_ext_guard_table_return_block(uc, m, (uint32_t)address)) {
+        return;
+    }
     if (m->outer_r9 && m->nested_return_addr && (uint32_t)address == (m->nested_return_addr & ~1u)) {
         uc_reg_write(uc, UC_ARM_REG_R9, &m->outer_r9);
         if (getenv("VMRP_ARM_EXT_TRACE")) {
@@ -8075,10 +8935,15 @@ int arm_ext_load(ArmExtModule **out, const uint8 *code, uint32 len, int32 load_c
     m->wrapper_timer_dispatch_addr = find_wrapper_timer_dispatch(
         code, len, &m->chain_walker_thunk_addr,
         &m->wrapper_compact_timer_scheduler_off);
+    m->wrapper_compact_free_return_addr =
+        find_wrapper_compact_heap_free_return(
+            code, len, &m->wrapper_compact_heap_ctrl_off);
     if (getenv("VMRP_ARM_EXT_TRACE")) {
-        printf("arm_ext_executor: wrapper_timer_dispatch=0x%X wrapper_compact_sched=0x%X chain_walker_thunk=0x%X\n",
+        printf("arm_ext_executor: wrapper_timer_dispatch=0x%X wrapper_compact_sched=0x%X compact_heap_ctrl=0x%X compact_free_ret=0x%X chain_walker_thunk=0x%X\n",
                m->wrapper_timer_dispatch_addr,
                m->wrapper_compact_timer_scheduler_off,
+               m->wrapper_compact_heap_ctrl_off,
+               m->wrapper_compact_free_return_addr,
                m->chain_walker_thunk_addr);
     }
     patch_wrapper_stack_size(m);
@@ -8086,6 +8951,15 @@ int arm_ext_load(ArmExtModule **out, const uint8 *code, uint32 len, int32 load_c
     memcpy(arm_ptr(m, EXT_CODE_ADDR), &table, 4);
     err = uc_hook_add(m->uc, &m->hook, UC_HOOK_CODE, hook_table, m, EXT_TABLE_ADDR, EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4);
     if (err != UC_ERR_OK) goto fail;
+    if (m->wrapper_compact_free_return_addr &&
+        m->wrapper_compact_heap_ctrl_off) {
+        uc_hook compact_free_hook;
+        err = uc_hook_add(m->uc, &compact_free_hook, UC_HOOK_CODE,
+                          hook_compact_heap_free_return, m,
+                          m->wrapper_compact_free_return_addr,
+                          m->wrapper_compact_free_return_addr);
+        if (err != UC_ERR_OK) goto fail;
+    }
     uc_hook low_zero_hook;
     err = uc_hook_add(m->uc, &low_zero_hook, UC_HOOK_CODE, hook_low_zero, m, 0, EXT_LOW_TABLE_SIZE - 1);
     if (err != UC_ERR_OK) goto fail;
@@ -8474,6 +9348,9 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
     uint32_t present_depth_before = 0;
     enter_screen_context(m, &saved_screenBuf, &present_depth_before);
     sync_internal_state_to_arm(m);
+    if (code == 2) {
+        arm_ext_sanitize_compact_timer_heaps(m);
+    }
     int was_host_timer_pending = m->host_timer_pending;
     if (code == 2) {
         m->host_timer_pending = 0;
@@ -8503,6 +9380,9 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
     }
     leave_screen_context(m, saved_screenBuf, present_depth_before);
     capture_timer_dispatches(m);
+    if (code == 2) {
+        arm_ext_sanitize_compact_timer_heaps(m);
+    }
     arm_ext_diag_dump_layer_state(m, "call-post");
     if (getenv("VMRP_ARM_EXT_DIAG") && code == 2 &&
         suspended_foreground_child) {
@@ -9069,6 +9949,7 @@ int arm_ext_call_dispatch(ArmExtModule *m, int is_stop, uint32_t timer_interval)
     if (compact_wrapper_timer_owner) {
         arm_ext_diag_dump_wrapper_compact_timer_nodes(m, "dispatch_pre");
     }
+    arm_ext_sanitize_compact_timer_heaps(m);
     /* 19KB cfunction.ext 的 timer dispatcher 是 chain walker；它从
      * wrapper_rw+0x190 取节点并调用节点回调 0xE83590。该回调会读取
      * extChunk[8] 调 game helper(code=5)，所以这里只修复可能被 wrapper
@@ -9114,6 +9995,7 @@ int arm_ext_call_dispatch(ArmExtModule *m, int is_stop, uint32_t timer_interval)
     if (compact_wrapper_timer_owner) {
         arm_ext_diag_dump_wrapper_compact_timer_nodes(m, "dispatch_post");
     }
+    arm_ext_sanitize_compact_timer_heaps(m);
     /* 旧版 queue consumer 兼容路径可能会临时修改 suspend depth；
      * 当前 19KB chain walker 不需要该 patch，正常保持 no-op。 */
     if (depth_patched && arm_ptr(m, ext_chunk + 0x34)) {
@@ -9357,6 +10239,7 @@ void arm_ext_unload(ArmExtModule *m) {
     free(m->short_pack_aliases);
     free(m->bump_live);
     free(m->bump_free_blocks);
+    free(m->app_live_blocks);
     arm_ext_free_row_spans(&m->screen_damage);
     arm_ext_free_row_spans(&m->screen_present);
     arm_ext_free_row_spans(&m->foreground_cover);

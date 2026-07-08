@@ -99,7 +99,13 @@ enum {
     MR_SMS_OP_EVENT,
     MR_SMS_GET_SC,
     MR_DATA_ACCOUNT_EVENT,
-    MR_MOTION_EVENT
+    MR_MOTION_EVENT,
+};
+
+/* 动感芯片事件子类型（mr_event p2 / mr_plat 4004/4005 mode） */
+enum {
+    MR_MOTION_EVENT_SHAKE = 0,
+    MR_MOTION_EVENT_TILT  = 1,
 };
 
 enum {

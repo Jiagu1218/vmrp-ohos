@@ -122,4 +122,14 @@ typedef struct start_t {
 int32 dsm_init(DSM_REQUIRE_FUNCS *inFuncs);
 int32 mr_restart_old_app(void);
 
+/* 重力感应：宿主写入加速度(mG)，仅缓存不投递（避免 Unicorn 并发）。
+ * 投递由 worker 线程调 dsm_dispatch_motion_event() 完成。 */
+void dsm_set_motion_acc(int32 x, int32 y, int32 z);
+/* 获取已缓存的加速度数据，供 mythroad.c 写入 Unicorn ARM 内存。 */
+void dsm_get_motion_acc(int32 *x, int32 *y, int32 *z);
+/* 将缓存加速度写入 Unicorn ARM 内存并投递 MR_MOTION_EVENT。
+ * 返回 ARM 可见 32 位地址（0 表示无 native_ext 或分配失败）。 */
+uint32 dsm_write_motion_acc_to_arm(void);
+void dsm_dispatch_motion_event(void);
+
 #endif

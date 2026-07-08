@@ -47,6 +47,7 @@
  * 与既有应用完全一致(不平移任何其它分配)。1MB 覆盖 480x800x2 及以下。 */
 #define EXT_SCREEN_RESERVE (1024u * 1024u)
 #define EXT_TRACE_PC_RING 64u
+#define ARM_EXT_TABLE_RETURN_GUARD_MAX 64u
 /* game 的定时器链表头在 game_rw 中的偏移；不同版本的 game.ext SDK 使用
  * 不同偏移（0x8C 和 0x88 均有实例）。编译期常量用于初始尝试，运行时通过
  * auto-detect 修正。 */
@@ -189,6 +190,12 @@ struct ArmExtModule {
     struct ArmExtBumpBlock *bump_free_blocks;
     uint32_t bump_free_count;
     uint32_t bump_free_cap;
+    /* table[0]/[2]/[125] app allocations, including both origin_mem pool and
+     * bump fallback blocks.  Host-side graphics bridges use these bounds to keep
+     * raw guest bitmap pointers from reading across unrelated allocations. */
+    struct ArmExtBumpBlock *app_live_blocks;
+    uint32_t app_live_count;
+    uint32_t app_live_cap;
     /* ARM 侧 origin_mem 统计 slot 地址，用于在宿主 table[0]/table[1]
      * 处理后同步 ARM 可见的剩余内存值，避免 ext 读到过期统计。 */
     uint32_t origin_mem_left_slot;
@@ -199,6 +206,13 @@ struct ArmExtModule {
      * must keep the allocation inside Unicorn's mapped address space. */
     uint32_t exram_addr;
     uint32_t exram_len;
+    /* OHOS_MEM_EXT: platEx(1001) 第二屏幕缓冲(platEx(1002)释放时清零)，
+     * platEx(1012) 内部RAM/cache(platEx(1013)释放时清零)。
+     * 与 exram 一样从 ARM 堆分配，guest 代码用 ARM 地址访问。 */
+    uint32_t screen_buf_addr;
+    uint32_t screen_buf_len;
+    uint32_t iram_addr;
+    uint32_t iram_len;
     uint32_t internal_table_addr;
     uint32_t port_table_addr;
     uint32_t mr_m0_files_addr;
@@ -240,6 +254,12 @@ struct ArmExtModule {
     /* R9-relative scheduler header used by compact wrapper timer walkers.
      * Zero means the wrapper uses another/unknown timer layout. */
     uint32_t wrapper_compact_timer_scheduler_off;
+    /* R9-relative compact heap control pointer used by the same SDK allocator
+     * family as the compact timer walkers.  The value is discovered from the
+     * wrapper mr_free() instruction shape, then applied to whichever module RW
+     * is in R9 while that allocator runs. */
+    uint32_t wrapper_compact_heap_ctrl_off;
+    uint32_t wrapper_compact_free_return_addr;
     /* 19KB cfunction.ext 的 chain walker thunk 地址（0xE83B50 格式：
      * push{r3,lr}; bl chain_walker; movs r0,#0; pop{r3,pc}）。
      * find_wrapper_timer_dispatch 匹配到该 thunk 时不将其作为宿主 timer
@@ -263,6 +283,13 @@ struct ArmExtModule {
     uint32_t pc_ring[EXT_TRACE_PC_RING];
     uint32_t cpsr_ring[EXT_TRACE_PC_RING];
     uint32_t pc_ring_pos;
+    /* Native table bridges return by writing PC=LR; guard callsites where the
+     * next guest instruction is a Thumb pop-{...,pc} epilogue so it cannot be
+     * re-entered after that pop has already consumed the stack frame. */
+    uint32_t table_return_guard_pc[ARM_EXT_TABLE_RETURN_GUARD_MAX];
+    uint32_t table_return_guard_sp[ARM_EXT_TABLE_RETURN_GUARD_MAX];
+    uint8_t table_return_guard_pending[ARM_EXT_TABLE_RETURN_GUARD_MAX];
+    uint32_t table_return_guard_next;
     uint32_t busy_wait_count;
     uint32_t busy_wait_start_ms;
     int nested_loading;
@@ -310,12 +337,27 @@ struct ArmExtModule {
     MrpVirtualFd mrp_vfds[MRP_VFD_MAX];
     ArmExtDiagFd diag_fds[ARM_EXT_DIAG_FD_MAX];
 
+    /* T_MOTION_ACC 缓冲区的 ARM 可见地址（12 字节: 3×int32 x/y/z）。
+     * mr_event(MR_MOTION_EVENT) 的 param2 传此地址给 ARM 代码，
+     * ARM 代码从该地址读取三轴加速度（mG）。
+     * 在 Unicorn 模拟环境中，ARM 代码只能访问虚拟 32 位地址空间，
+     * 不能直接解引用宿主 &motion_acc（64 位主机地址截断后无效）。 */
+    uint32_t motion_acc_addr;
     const AppCompatProfile *profile;
     void *app_state;
 };
 
 static inline void *arm_ptr(ArmExtModule *m, uint32_t addr) {
     if (!m) return NULL;
+    /* 低地址表 [0, 0x10000)：Unicorn 映射了该区域供 ARM 代码访问，
+     * 但宿主侧不应通过 arm_ptr 解析给 _DrawBitmap 等需要大量数据访问的函数。
+     * low_table 中只有跳桥代码（EXT_TABLE_COUNT 个 4 字节条目），
+     * 不是位图像素数据。在 32 位 ARM 真机上地址 0 附近不可访问，
+     * 所以 arm_ptr 返回 NULL 与真机行为一致。
+     * 若未来有合法场景需要宿主侧访问 low_table，在此处添加：
+     *   if (addr < EXT_LOW_TABLE_SIZE && m->low_table)
+     *       return m->low_table + addr;
+     */
     if (addr >= EXT_BASE_ADDR && addr - EXT_BASE_ADDR < EXT_MEM_SIZE)
         return m->mem + (addr - EXT_BASE_ADDR);
     if (m->platform_mem &&

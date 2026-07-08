@@ -1,0 +1,4 @@
+# Force LF line endings for C source files patched by OHOS CMake scripts.
+# CMake string(REPLACE) patterns use \n; CRLF files break multi-line patches.
+*.c text eol=lf
+*.h text eol=lf
