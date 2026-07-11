@@ -267,6 +267,11 @@ static napi_value StartEngine(napi_env env, napi_callback_info info) {
     napi_get_value_string_utf8(env, args[1], ext, sizeof(ext), &l);
     napi_get_value_string_utf8(env, args[2], entry, sizeof(entry), &l);
 
+    // 注册音频暂停回调：dsm.c media_pause_cb 可通过此函数暂停/恢复 OHAudio renderer。
+    VmrpEngine::Instance().SetAudioPauseFn([](bool pause) {
+        if (pause) g_audio.Pause(); else g_audio.Resume();
+    });
+
     int r = VmrpEngine::Instance().Start(mrp, ext, entry);
     if (r == 0 && VmrpEngine::Instance().IsRunning()) {
         g_engine_running.store(true);
@@ -344,6 +349,50 @@ static napi_value SetShakeIntensity(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// startDsmB(entry: string) — 外部移植接口 mr_start_dsmB
+static napi_value StartDsmB(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char entry[512] = "*A";
+    size_t l = 0;
+    if (argc > 0) napi_get_value_string_utf8(env, args[0], entry, sizeof(entry), &l);
+    int r = VmrpEngine::Instance().StartDsmB(entry);
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
+// startDsmC(entry: string) — 外部移植接口 mr_start_dsmC
+static napi_value StartDsmC(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char entry[512] = "*A";
+    size_t l = 0;
+    if (argc > 0) napi_get_value_string_utf8(env, args[0], entry, sizeof(entry), &l);
+    int r = VmrpEngine::Instance().StartDsmC(entry);
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
+// startDsmEx(path: string, entry?: string) — 外部移植接口 mr_start_dsm_ex
+static napi_value StartDsmEx(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char path[512] = "";
+    char entry[512] = "";
+    size_t l = 0;
+    napi_get_value_string_utf8(env, args[0], path, sizeof(path), &l);
+    if (argc > 1 && args[1]) napi_get_value_string_utf8(env, args[1], entry, sizeof(entry), &l);
+    int r = VmrpEngine::Instance().StartDsmEx(path, entry);
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
 // submitEdit(text) / cancelEdit()
 static napi_value SubmitEdit(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -374,6 +423,24 @@ static napi_value IsRunning(napi_env env, napi_callback_info info) {
     napi_value result;
     napi_get_boolean(env, VmrpEngine::Instance().IsRunning(), &result);
     return result;
+}
+
+// mediaPause(): 暂停音频渲染(不清 PCM,可恢复)
+// 同时暂停 OHAudio renderer 停止拉流回调,避免空转。
+static napi_value MediaPause(napi_env env, napi_callback_info info) {
+    (void)env; (void)info;
+    VmrpEngine::Instance().MediaPause();
+    g_audio.Pause();
+    return nullptr;
+}
+
+// mediaResume(): 恢复音频渲染
+// 同时恢复 OHAudio renderer 拉流回调。
+static napi_value MediaResume(napi_env env, napi_callback_info info) {
+    (void)env; (void)info;
+    VmrpEngine::Instance().MediaResume();
+    g_audio.Resume();
+    return nullptr;
 }
 
 // ---- 编辑回调 threadsafe function ----
@@ -531,9 +598,14 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"sendMotion", nullptr, SendMotion, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setMotionSensitivity", nullptr, SetMotionSensitivity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setShakeIntensity", nullptr, SetShakeIntensity, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"startDsmB", nullptr, StartDsmB, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"startDsmC", nullptr, StartDsmC, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"startDsmEx", nullptr, StartDsmEx, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"submitEdit", nullptr, SubmitEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cancelEdit", nullptr, CancelEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isRunning", nullptr, IsRunning, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"mediaPause", nullptr, MediaPause, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"mediaResume", nullptr, MediaResume, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setEditCallback", nullptr, SetEditCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"createSurfaceNode", nullptr, CreateSurfaceNode, nullptr, nullptr, nullptr, napi_default, nullptr},
     };

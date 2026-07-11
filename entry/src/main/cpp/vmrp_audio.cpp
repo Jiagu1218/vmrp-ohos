@@ -26,13 +26,16 @@ static OH_AudioData_Callback_Result OnWriteDataCb(OH_AudioRenderer *renderer, vo
 
 void VmrpAudio::OnWriteData(OH_AudioRenderer *renderer, void *audioData, int32_t audioDataSize) {
     (void)renderer;
-    // 仅在模拟器运行且有音频时填充真实 PCM，否则静音（避免噪音）。
-    if (VmrpEngine::Instance().IsRunning() && VmrpEngine::Instance().AudioActive()) {
-        int channels = channels_;
-        int frame_bytes = channels * static_cast<int>(sizeof(int16_t));
-        int frames = audioDataSize / frame_bytes;
-        VmrpEngine::Instance().PullAudio(audioData, frames);
-    } else {
+    auto &eng = VmrpEngine::Instance();
+    if (!eng.IsRunning() || eng.IsMediaPaused() || !eng.AudioActive()) {
+        memset(audioData, 0, static_cast<size_t>(audioDataSize));
+        return;
+    }
+    int channels = channels_;
+    int frame_bytes = channels * static_cast<int>(sizeof(int16_t));
+    int frames = audioDataSize / frame_bytes;
+    int written = eng.PullAudio(audioData, frames);
+    if (written <= 0) {
         memset(audioData, 0, static_cast<size_t>(audioDataSize));
     }
 }
@@ -63,6 +66,7 @@ int VmrpAudio::Start(int sample_rate, int channels) {
 }
 
 void VmrpAudio::Stop() {
+    std::lock_guard<std::mutex> lk(mtx_);
     if (renderer_) {
         OH_AudioRenderer_Stop(renderer_);
         OH_AudioRenderer_Release(renderer_);
@@ -71,6 +75,28 @@ void VmrpAudio::Stop() {
     if (builder_) {
         OH_AudioStreamBuilder_Destroy(builder_);
         builder_ = nullptr;
+    }
+}
+
+void VmrpAudio::Pause() {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (renderer_) {
+        OH_AudioStream_Result r = OH_AudioRenderer_Pause(renderer_);
+        LOGI("audio renderer pause: result=%d", r);
+    }
+}
+
+void VmrpAudio::Resume() {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (renderer_) {
+        OH_AudioStream_State state = AUDIOSTREAM_STATE_INVALID;
+        OH_AudioRenderer_GetCurrentState(renderer_, &state);
+        if (state == AUDIOSTREAM_STATE_PAUSED) {
+            OH_AudioStream_Result r = OH_AudioRenderer_Start(renderer_);
+            LOGI("audio renderer resume: state=%d start=%d", state, r);
+        } else {
+            LOGI("audio renderer skip resume: state=%d (not paused)", state);
+        }
     }
 }
 

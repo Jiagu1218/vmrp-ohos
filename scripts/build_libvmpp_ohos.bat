@@ -181,6 +181,8 @@ git checkout -- src\mythroad\mythroad.c           >nul 2>&1
 git checkout -- src\mythroad\dsm.c                >nul 2>&1
 git checkout -- src\arm_ext_executor.c            >nul 2>&1
 git checkout -- src\vmrp_api.c                    >nul 2>&1
+git checkout -- src\include\vmrp_api.h              >nul 2>&1
+git checkout -- src\include\native_dsm_funcs.h      >nul 2>&1
 git checkout -- src\network.c                     >nul 2>&1
 git checkout -- src\arm_ext\aex_exec.c            >nul 2>&1
 git checkout -- src\arm_ext\aex_table.c           >nul 2>&1

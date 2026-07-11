@@ -283,8 +283,13 @@ if(EXISTS "${_VMRP_API_MOTION}")
             "VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}"
             "VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}\n\n/* OHOS_SHAKE: 震动回调。native_dsm_funcs.c 的 native_startShake/stopShake\n * 通过 extern 调用这两个函数,内部调宿主注册的回调驱动真机振动马达。\n * 未注册时为空操作,不影响非 OHOS 构建。 */\nstatic void (*shake_start_cb)(int ms) = NULL;\nstatic void (*shake_stop_cb)(void) = NULL;\nVMRP_EXPORT void vmrp_api_start_shake(int ms) {\n    if (shake_start_cb) shake_start_cb(ms);\n}\nVMRP_EXPORT void vmrp_api_stop_shake(void) {\n    if (shake_stop_cb) shake_stop_cb();\n}\nVMRP_EXPORT void vmrp_api_set_shake_cb(void (*start)(int ms), void (*stop)(void)) {\n    shake_start_cb = start;\n    shake_stop_cb = stop;\n}"
             _api_m "${_api_m}")
+        # 子补丁4: OHOS_DSM_BC_EX — vmrp_api_start_dsmB/C/ex 导出
+        string(REPLACE
+            "VMRP_EXPORT void vmrp_api_set_shake_cb(void (*start)(int ms), void (*stop)(void)) {\n    shake_start_cb = start;\n    shake_stop_cb = stop;\n}"
+            "VMRP_EXPORT void vmrp_api_set_shake_cb(void (*start)(int ms), void (*stop)(void)) {\n    shake_start_cb = start;\n    shake_stop_cb = stop;\n}\n\n/* OHOS_DSM_BC_EX: 外部移植接口 vmrp_api_start_dsmB/C/ex。\n * 宿主通过这些函数以简化参数启动 MRP 应用:\n *   vmrp_api_start_dsmB(entry)   — entry 含 *A/%QQ.mrp 前缀\n *   vmrp_api_start_dsmC(entry)   — 同 dsmB(引擎已初始化)\n *   vmrp_api_start_dsm_ex(path, entry) — 显式 path+entry\n * 内部调 mythroad 层实现,需在引擎运行中调用(热切换)。\n */\nVMRP_EXPORT int vmrp_api_start_dsmB(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmB(const char *entry);\n    return mr_start_dsmB(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsmC(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmC(const char *entry);\n    return mr_start_dsmC(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsm_ex(const char *path, const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsm_ex(const char *path, const char *entry);\n    return mr_start_dsm_ex(path, entry);\n}"
+            _api_m "${_api_m}")
         file(WRITE "${_VMRP_API_MOTION}" "${_api_m}")
-        message(STATUS "[OHOS] Patched vmrp_api motion + shake functions (OHOS_MOTION_POWER/EVENT/SENSITIVITY/SHAKE)")
+        message(STATUS "[OHOS] Patched vmrp_api motion + shake + dsmB/C/ex functions (OHOS_MOTION_POWER/EVENT/SENSITIVITY/SHAKE/DSM_BC_EX)")
     endif()
 endif()
 
@@ -351,6 +356,133 @@ if(EXISTS "${_VMRP_DSM}")
     if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
         message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_SHAKE)")
+    endif()
+    # 子补丁3: OHOS_MEDIA_CTRL — NativeAudioState 扩展 + pause/resume/seek/position/duration
+    if(NOT _dsm_text MATCHES "OHOS_MEDIA_CTRL")
+        # 3a) NativeAudioState 加 pcm_total_len/paused/midi_total_samples/midi_rendered_samples
+        string(REPLACE
+            "    uint8 *pcm;\n    uint32 pcm_len;\n    uint32 pcm_pos;\n    int loop;\n    MidiEvent midi_events"
+            "    uint8 *pcm;\n    uint32 pcm_len;\n    uint32 pcm_total_len;  /* OHOS_MEDIA_CTRL: PCM 总字节长度,loop 时 pcm_len==pcm_total_len,非 loop 播完后 pcm_len=0 */\n    uint32 pcm_pos;\n    int loop;\n    int paused;               /* OHOS_MEDIA_CTRL: 暂停标记,render 时跳过输出 */\n    uint32 midi_total_samples;   /* OHOS_MEDIA_CTRL: MIDI 总采样数=loop_ticks*samples_per_tick */\n    uint32 midi_rendered_samples;/* OHOS_MEDIA_CTRL: MIDI 已渲染采样数 */\n    MidiEvent midi_events"
+            _dsm_text "${_dsm_text}")
+        # 3b) native_audio_clear_locked 重置新字段
+        string(REPLACE
+            "    s->pcm_len = 0;\n    s->pcm_pos = 0;\n    s->midi_event_count"
+            "    s->pcm_len = 0;\n    s->pcm_total_len = 0;  /* OHOS_MEDIA_CTRL */\n    s->pcm_pos = 0;\n    s->paused = 0;               /* OHOS_MEDIA_CTRL */\n    s->midi_total_samples = 0;   /* OHOS_MEDIA_CTRL */\n    s->midi_rendered_samples = 0;/* OHOS_MEDIA_CTRL */\n    s->midi_event_count"
+            _dsm_text "${_dsm_text}")
+        # 3c) native_audio_render_bytes: paused 时跳过渲染 + MIDI 计 rendered_samples
+        string(REPLACE
+            "    if (!stream || len <= 0) return 0;\n    memset(stream, 0, (size_t)len);\n\n    int frames"
+            "    if (!stream || len <= 0) return 0;\n    memset(stream, 0, (size_t)len);\n\n    if (s->paused) return 0;  /* OHOS_MEDIA_CTRL: 暂停时不渲染,保持静音 */\n\n    int frames"
+            _dsm_text "${_dsm_text}")
+        string(REPLACE
+            "        midi_render(s, (int16_t *)stream, frames);\n    }\n\n    return source"
+            "        midi_render(s, (int16_t *)stream, frames);\n        s->midi_rendered_samples += (uint32)frames;  /* OHOS_MEDIA_CTRL */\n    }\n\n    return source"
+            _dsm_text "${_dsm_text}")
+        # 3d) native_audio_take_pcm: 设置 pcm_total_len
+        string(REPLACE
+            "    native_audio.pcm = pcm;\n    native_audio.pcm_len = pcm_len;\n    native_audio.pcm_pos = 0;"
+            "    native_audio.pcm = pcm;\n    native_audio.pcm_len = pcm_len;\n    native_audio.pcm_total_len = pcm_len;  /* OHOS_MEDIA_CTRL */\n    native_audio.pcm_pos = 0;"
+            _dsm_text "${_dsm_text}")
+        # 3e) native_audio_play_midi: 计算 midi_total_samples + 重置 rendered
+        string(REPLACE
+            "        native_audio.loop = loop ? 1 : 0;\n        midi_reset_playback(&native_audio);\n        native_audio.source = AUDIO_SOURCE_MIDI;"
+            "        native_audio.loop = loop ? 1 : 0;\n        native_audio.midi_total_samples = native_audio.midi_loop_ticks * native_audio.midi_samples_per_tick;  /* OHOS_MEDIA_CTRL */\n        native_audio.midi_rendered_samples = 0;  /* OHOS_MEDIA_CTRL */\n        midi_reset_playback(&native_audio);\n        native_audio.source = AUDIO_SOURCE_MIDI;"
+            _dsm_text "${_dsm_text}")
+        # 3f) 在 native_audio_stop 后插入 pause/resume/seek/position/duration
+        string(REPLACE
+            "void native_audio_stop(void) {\n    native_audio_lock();\n    native_audio_clear_locked(&native_audio);\n    native_audio_unlock();\n}"
+            "void native_audio_stop(void) {\n    native_audio_lock();\n    native_audio_clear_locked(&native_audio);\n    native_audio_unlock();\n}\n\n/* OHOS_MEDIA_CTRL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION) */\nvoid native_audio_pause(void) {\n    native_audio_lock();\n    if (native_audio.source != AUDIO_SOURCE_NONE) {\n        native_audio.paused = 1;\n    }\n    native_audio_unlock();\n}\nvoid native_audio_resume(void) {\n    native_audio_lock();\n    native_audio.paused = 0;\n    native_audio_unlock();\n}\nint native_audio_seek(int ms) {\n    native_audio_lock();\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        uint32 byte_pos = (uint32)((int64_t)ms * AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t) / 1000);\n        if (byte_pos > native_audio.pcm_total_len) byte_pos = native_audio.pcm_total_len;\n        native_audio.pcm_pos = byte_pos;\n        native_audio_unlock();\n        return MR_SUCCESS;\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        uint32 target_sample = (uint32)((int64_t)ms * AUDIO_SAMPLE_RATE / 1000);\n        if (target_sample > native_audio.midi_total_samples) target_sample = native_audio.midi_total_samples;\n        uint32 target_tick = target_sample / (native_audio.midi_samples_per_tick > 0 ? native_audio.midi_samples_per_tick : 1);\n        native_audio.midi_tick = target_tick;\n        native_audio.midi_sample_in_tick = target_sample % (native_audio.midi_samples_per_tick > 0 ? native_audio.midi_samples_per_tick : 1);\n        native_audio.midi_event_pos = 0;\n        while (native_audio.midi_event_pos < native_audio.midi_event_count &&\n               native_audio.midi_events[native_audio.midi_event_pos].tick <= native_audio.midi_tick) {\n            midi_apply_event(&native_audio, &native_audio.midi_events[native_audio.midi_event_pos]);\n            native_audio.midi_event_pos++;\n        }\n        native_audio.midi_rendered_samples = target_sample;\n        native_audio_unlock();\n        return MR_SUCCESS;\n    }\n    native_audio_unlock();\n    return MR_FAILED;\n}\nint native_audio_position(void) {\n    native_audio_lock();\n    int pos_ms = 0;\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        pos_ms = (int)((int64_t)native_audio.pcm_pos * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_samples_per_tick > 0) {\n        pos_ms = (int)((int64_t)native_audio.midi_rendered_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    native_audio_unlock();\n    return pos_ms;\n}\nint native_audio_duration(void) {\n    native_audio_lock();\n    int dur_ms = 0;\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        dur_ms = (int)((int64_t)native_audio.pcm_total_len * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        dur_ms = (int)((int64_t)native_audio.midi_total_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    native_audio_unlock();\n    return dur_ms;\n}"
+            _dsm_text "${_dsm_text}")
+        set(_dsm_patched TRUE)
+    endif()
+    if(_dsm_patched)
+        file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
+        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_SHAKE + OHOS_MEDIA_CTRL)")
+    endif()
+endif()
+
+# --- Patch vmrp_api.c: 导出 vmrp_api_media_pause/resume/seek/position/duration ---
+# vmrp_api.c 属于 :restore_patched,用 CMake patch 保证幂等。
+# 宿主(OHOS vmrp_engine.cpp)通过 dlsym 解析这些符号实现媒体控制。
+# pause/resume 带回调: dsm.c 调 vmrp_api_media_pause 时通知宿主暂停 OHAudio renderer,
+# 调 vmrp_api_media_resume 时通知宿主恢复,避免 renderer 空转拉流。
+set(_VMRP_API "${VMRP_SRC_DIR}/src/vmrp_api.c")
+if(EXISTS "${_VMRP_API}")
+    file(READ "${_VMRP_API}" _api_text)
+    if(NOT _api_text MATCHES "OHOS_MEDIA_API")
+        string(REPLACE
+            "VMRP_EXPORT void vmrp_api_audio_stop(void) {\n    native_audio_stop();\n}"
+            "VMRP_EXPORT void vmrp_api_audio_stop(void) {\n    native_audio_stop();\n}\n\n/* OHOS_MEDIA_API: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * 宿主通过这些符号实现 MRP 音频的暂停/恢复/跳转/进度/总时长查询。\n * pause/resume 通知宿主停启 OHAudio renderer,避免拉流空转。 */\nstatic void (*media_pause_cb)(void) = NULL;\nstatic void (*media_resume_cb)(void) = NULL;\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void)) {\n    media_pause_cb = pause_cb;\n    media_resume_cb = resume_cb;\n}\nVMRP_EXPORT void vmrp_api_media_pause(void) {\n    native_audio_pause();\n    if (media_pause_cb) media_pause_cb();\n}\nVMRP_EXPORT void vmrp_api_media_resume(void) {\n    native_audio_resume();\n    if (media_resume_cb) media_resume_cb();\n}\nVMRP_EXPORT int vmrp_api_media_seek(int ms) {\n    return native_audio_seek(ms);\n}\nVMRP_EXPORT int vmrp_api_media_position(void) {\n    return native_audio_position();\n}\nVMRP_EXPORT int vmrp_api_media_duration(void) {\n    return native_audio_duration();\n}"
+            _api_text "${_api_text}")
+        file(WRITE "${_VMRP_API}" "${_api_text}")
+        message(STATUS "[OHOS] Patched vmrp_api.c (OHOS_MEDIA_API)")
+    endif()
+endif()
+
+# --- Patch vmrp_api.h + native_dsm_funcs.h: 声明 media 控制函数 ---
+# 两个头文件都属于 :restore_patched,用 CMake patch 保证幂等。
+set(_VMRP_API_H "${VMRP_SRC_DIR}/src/include/vmrp_api.h")
+if(EXISTS "${_VMRP_API_H}")
+    file(READ "${_VMRP_API_H}" _api_h_text)
+    if(NOT _api_h_text MATCHES "OHOS_MEDIA_DECL")
+        string(REPLACE
+            "VMRP_EXPORT void vmrp_api_audio_stop(void);"
+            "VMRP_EXPORT void vmrp_api_audio_stop(void);\n\n/* OHOS_MEDIA_DECL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * vmrp_api_media_seek: 跳转到 ms 位置,返回 MR_SUCCESS/MR_FAILED。\n * vmrp_api_media_position: 当前播放位置(ms)。\n * vmrp_api_media_duration: 总时长(ms),未知返回0。\n * vmrp_api_set_media_cb: 注册暂停/恢复回调,宿主收到回调时停启 OHAudio renderer。 */\nVMRP_EXPORT void vmrp_api_media_pause(void);\nVMRP_EXPORT void vmrp_api_media_resume(void);\nVMRP_EXPORT int vmrp_api_media_seek(int ms);\nVMRP_EXPORT int vmrp_api_media_position(void);\nVMRP_EXPORT int vmrp_api_media_duration(void);\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void));"
+            _api_h_text "${_api_h_text}")
+        file(WRITE "${_VMRP_API_H}" "${_api_h_text}")
+        message(STATUS "[OHOS] Patched vmrp_api.h (OHOS_MEDIA_DECL)")
+    endif()
+endif()
+set(_VMRP_NDF_H "${VMRP_SRC_DIR}/src/include/native_dsm_funcs.h")
+if(EXISTS "${_VMRP_NDF_H}")
+    file(READ "${_VMRP_NDF_H}" _ndf_h_text)
+    if(NOT _ndf_h_text MATCHES "OHOS_MEDIA_DECL")
+        string(REPLACE
+            "void native_audio_stop(void);"
+            "void native_audio_stop(void);\n/* OHOS_MEDIA_DECL */\nvoid native_audio_pause(void);\nvoid native_audio_resume(void);\nint native_audio_seek(int ms);\nint native_audio_position(void);\nint native_audio_duration(void);"
+            _ndf_h_text "${_ndf_h_text}")
+        file(WRITE "${_VMRP_NDF_H}" "${_ndf_h_text}")
+        message(STATUS "[OHOS] Patched native_dsm_funcs.h (OHOS_MEDIA_DECL)")
+    endif()
+endif()
+
+# --- Patch dsm.c: OHOS_DSM_MEDIA — 修复 PAUSE/STOP/RESUME + 实现 SETPOS/GET_TOTAL_TIME/GET_CURTIME ---
+# 上游 PAUSE 和 STOP 实现相同(都调 mr_stopSound 清空 PCM),导致 PAUSE 后无法 RESUME。
+# 修复:
+# - DsmMediaDevice 加 duration_ms/pause_pos_ms 跟踪媒体位置
+# - PAUSE: 记当前位置→pause_pos_ms, 调 vmrp_api_media_pause 暂停渲染(不清 PCM)
+# - STOP: 调 mr_stopSound 清 PCM + 重置位置
+# - RESUME: 从 pause_pos_ms 恢复, 调 vmrp_api_media_resume
+# - 210 SETPOS: vmrp_api_media_seek(ms)
+# - 212 GET_TOTAL_TIME: vmrp_api_media_duration()
+# - 213 GET_CURTIME(s): vmrp_api_media_position() / 1000
+# - 215 GET_CURTIME(ms): vmrp_api_media_position()
+set(_VMRP_DSM_MEDIA "${VMRP_SRC_DIR}/src/mythroad/dsm.c")
+if(EXISTS "${_VMRP_DSM_MEDIA}")
+    file(READ "${_VMRP_DSM_MEDIA}" _dsm_media)
+    if(NOT _dsm_media MATCHES "OHOS_DSM_MEDIA")
+        # 1) DsmMediaDevice 加 duration_ms + pause_pos_ms
+        string(REPLACE
+            "    int owns_data;\n} DsmMediaDevice;"
+            "    int owns_data;\n    int32 duration_ms;     /* OHOS_DSM_MEDIA: 总时长(ms) */\n    int32 pause_pos_ms;   /* OHOS_DSM_MEDIA: PAUSE 时保存的位置(ms) */\n} DsmMediaDevice;"
+            _dsm_media "${_dsm_media}")
+        # 2) dsm_media_play: 播放时记录 duration_ms
+        string(REPLACE
+            "    if (ret == MR_SUCCESS) {\n        media->status = MR_MEDIA_PLAYING;\n    }\n    return ret;\n}"
+            "    if (ret == MR_SUCCESS) {\n        media->status = MR_MEDIA_PLAYING;\n        /* OHOS_DSM_MEDIA: 播放成功后查询总时长缓存到 duration_ms */\n        extern int vmrp_api_media_duration(void);\n        media->duration_ms = vmrp_api_media_duration();\n        media->pause_pos_ms = 0;\n    }\n    return ret;\n}"
+            _dsm_media "${_dsm_media}")
+        # 3) PAUSE: 记位置+暂停渲染(不清 PCM)
+        string(REPLACE
+            "        case MR_MEDIA_PAUSE_REQ:\n        case MR_MEDIA_STOP_REQ:\n            mr_stopSound(dsm_media_to_sound_type(device));\n            media->status = MR_MEDIA_LOADED;\n            return MR_SUCCESS;\n        case MR_MEDIA_RESUME_REQ:\n            return dsm_media_play(media, input, input_len);"
+            "        case MR_MEDIA_PAUSE_REQ: {  /* OHOS_DSM_MEDIA: PAUSE 保存位置,暂停渲染,不清 PCM */\n            extern int vmrp_api_media_position(void);\n            extern void vmrp_api_media_pause(void);\n            media->pause_pos_ms = vmrp_api_media_position();\n            vmrp_api_media_pause();\n            media->status = MR_MEDIA_PAUSED;\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_STOP_REQ:  /* OHOS_DSM_MEDIA: STOP 清 PCM+重置位置 */\n            mr_stopSound(dsm_media_to_sound_type(device));\n            media->pause_pos_ms = 0;\n            media->duration_ms = 0;\n            media->status = MR_MEDIA_LOADED;\n            return MR_SUCCESS;\n        case MR_MEDIA_RESUME_REQ: {  /* OHOS_DSM_MEDIA: RESUME 从暂停位置恢复 */\n            extern void vmrp_api_media_resume(void);\n            extern int vmrp_api_media_seek(int ms);\n            if (media->status == MR_MEDIA_PAUSED && media->pause_pos_ms > 0) {\n                vmrp_api_media_resume();\n                vmrp_api_media_seek(media->pause_pos_ms);\n            } else {\n                vmrp_api_media_resume();\n            }\n            media->status = MR_MEDIA_PLAYING;\n            return MR_SUCCESS;\n        }"
+            _dsm_media "${_dsm_media}")
+        # 4) 实现 210/212/213/215 (替换整块桩代码)
+        string(REPLACE
+            "        case MR_MEDIA_SETPOS:\n        case MR_MEDIA_GETTIME:\n        case MR_MEDIA_GET_TOTAL_TIME:\n        case MR_MEDIA_GET_CURTIME:\n        case MR_MEDIA_GET_CURTIME_MSEC: {\n            static T_MEDIA_TIME media_time;\n            media_time.pos = 0;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }"
+            "        case MR_MEDIA_SETPOS: {  /* OHOS_DSM_MEDIA: 210 seek 到指定 ms 位置 */\n            extern int vmrp_api_media_seek(int ms);\n            int32 pos_ms = 0;\n            if (input && input_len >= 4) memcpy2(&pos_ms, input, 4);\n            vmrp_api_media_seek(pos_ms);\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GETTIME: {  /* OHOS_DSM_MEDIA: 211 兼容,返回秒 */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_position(void);\n            media_time.pos = vmrp_api_media_position() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_TOTAL_TIME: {  /* OHOS_DSM_MEDIA: 212 返回总时长(秒) */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_duration(void);\n            media_time.pos = vmrp_api_media_duration() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_CURTIME: {  /* OHOS_DSM_MEDIA: 213 返回当前播放位置(秒) */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_position(void);\n            media_time.pos = vmrp_api_media_position() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_CURTIME_MSEC: {  /* OHOS_DSM_MEDIA: 215 返回当前播放位置(毫秒) */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_position(void);\n            media_time.pos = vmrp_api_media_position();\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }"
+            _dsm_media "${_dsm_media}")
+        file(WRITE "${_VMRP_DSM_MEDIA}" "${_dsm_media}")
+        message(STATUS "[OHOS] Patched dsm.c media control (OHOS_DSM_MEDIA)")
     endif()
 endif()
 
@@ -671,6 +803,24 @@ if(EXISTS "${_VMRP_GIFTICK}")
             _gt "${_gt}")
         file(WRITE "${_VMRP_GIFTICK}" "${_gt}")
         message(STATUS "[OHOS] Patched mr_timer ohos_gif_tick (OHOS_GIF_TICK)")
+    endif()
+endif()
+
+# --- Patch mythroad.c: mr_start_dsmB / mr_start_dsmC / mr_start_dsm_ex ---
+# 三个外部移植接口: mr_start_dsmB(entry) 以 entry 为 filename 启动,
+# mr_start_dsmC(entry) 同 dsmB 但冷启动时先 dsm_init,
+# mr_start_dsm_ex(path, entry) 显式 path+entry。
+# 均为 mr_start_dsm 的薄封装,解析 entry 中的 */% 前缀后调 _mr_intra_start。
+set(_VMRP_DSMBC "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+if(EXISTS "${_VMRP_DSMBC}")
+    file(READ "${_VMRP_DSMBC}" _dsm_bc)
+    if(NOT _dsm_bc MATCHES "OHOS_DSM_BC_EX")
+        string(REPLACE
+            "int32 mr_stop_ex(int16 freemem) {"
+            "/* OHOS_DSM_BC_EX: 外部移植接口 mr_start_dsmB/C/ex\n * (SkyEngine API 参考手册 / 外部移植接口)\n *\n * mr_start_dsmB(const char *entry):\n *   直接启动 mrp 文件,entry 含启动标志(*A=固化应用,%QQ.mrp=根目录mrp)。\n *   等价 mr_start_dsm(entry, NULL, NULL),ext 默认 MR_START_FILE。\n *\n * mr_start_dsmC(const char *entry):\n *   同 dsmB,但冷启动时先 dsm_init 初始化引擎再启动。\n *   用于宿主首次启动虚拟机的场景。\n *\n * mr_start_dsm_ex(const char *path, const char *entry):\n *   显式 path(=filename) + entry 入口标志。\n *   等价 mr_start_dsm(path, NULL, entry)。\n */\nint32 mr_start_dsmB(const char *entry) {\n    if (!entry) entry = \"*A\";\n    return mr_start_dsm((char *)entry, NULL, NULL);\n}\n\nint32 mr_start_dsmC(const char *entry) {\n    /* dsmC 与 dsmB 等效,因为 OHOS 宿主总是先调 vmrp_api_init\n     * (内部 dsm_init)再调 start。dsm_init 重复调用是安全的\n     * (dsm.c: 仅赋值 dsmInFuncs + 重置状态)。 */\n    return mr_start_dsmB(entry);\n}\n\nint32 mr_start_dsm_ex(const char *path, const char *entry) {\n    return mr_start_dsm((char *)path, NULL, (char *)entry);\n}\n\nint32 mr_stop_ex(int16 freemem) {"
+            _dsm_bc "${_dsm_bc}")
+        file(WRITE "${_VMRP_DSMBC}" "${_dsm_bc}")
+        message(STATUS "[OHOS] Patched mr_start_dsmB/C/ex in mythroad.c (OHOS_DSM_BC_EX)")
     endif()
 endif()
 

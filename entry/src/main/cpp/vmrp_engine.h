@@ -14,6 +14,7 @@
 #ifndef VMRP_ENGINE_H
 #define VMRP_ENGINE_H
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -44,6 +45,12 @@ struct VmrpApi {
     int (*audio_render_s16le)(void *buffer, int frames);
     void (*audio_stop)(void);
 
+    void (*media_pause)(void);
+    void (*media_resume)(void);
+    int (*media_seek)(int ms);
+    int (*media_position)(void);
+    int (*media_duration)(void);
+
     int (*is_edit_active)(void);
     const char *(*get_edit_text)(void);
     int (*set_edit_text)(const char *text);
@@ -53,6 +60,12 @@ struct VmrpApi {
     void (*set_motion_sensitivity)(float sensitivity);
 
     void (*set_shake_cb)(void (*start)(int ms), void (*stop)(void));
+
+    void (*set_media_cb)(void (*pause_cb)(void), void (*resume_cb)(void));
+
+    int (*start_dsmB)(const char *entry);
+    int (*start_dsmC)(const char *entry);
+    int (*start_dsm_ex)(const char *path, const char *entry);
 };
 
 // 单例引擎。所有方法都应在引擎线程（EngineThread）上调用；
@@ -72,6 +85,9 @@ public:
     int Init(int w, int h);
     int SetWorkDir(const std::string &dir);
     int Start(const std::string &mrp, const std::string &ext, const std::string &entry);
+    int StartDsmB(const std::string &entry);
+    int StartDsmC(const std::string &entry);
+    int StartDsmEx(const std::string &path, const std::string &entry);
     void Destroy();
 
     // 输入事件（MRP 事件码）。code 见 vmrp_api.h 的 VMRP_* 常量。
@@ -97,6 +113,20 @@ public:
     bool AudioActive();
     int PullAudio(void *buffer, int frames); // 返回写入的帧数
     void AudioStop();
+
+    // 媒体播放控制
+    void MediaPause();
+    void MediaResume();
+    int MediaSeek(int ms);
+    int MediaPosition();
+    int MediaDuration();
+
+    // 音频暂停状态：OnWriteData 回调用此判断是否需要停止填充 PCM。
+    bool IsMediaPaused() const { return media_paused_.load(std::memory_order_acquire); }
+    void SetMediaPaused(bool paused) { media_paused_.store(paused, std::memory_order_release); }
+
+    using AudioPauseFn = void (*)(bool);
+    void SetAudioPauseFn(AudioPauseFn fn) { audio_pause_fn_ = fn; }
 
     // 文本编辑。
     bool EditActive();
@@ -133,6 +163,8 @@ private:
     //（translate-all.c g_assert_not_reached，UC_ERR_EXCEPTION），表现为运行中闪退。
     // 用此锁串行化所有驱动 Unicorn 的 vmrp_api 调用。
     std::mutex engine_mtx_;
+    std::atomic<bool> media_paused_{false};
+    AudioPauseFn audio_pause_fn_ = nullptr;
 };
 
 #endif // VMRP_ENGINE_H

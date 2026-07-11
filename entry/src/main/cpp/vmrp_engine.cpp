@@ -143,6 +143,12 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_audio_render_s16le", audio_render_s16le, int (*)(void *, int));
     RESOLVE_SYM(so_handle_, "vmrp_api_audio_stop", audio_stop, void (*)(void));
 
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_pause", media_pause, void (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_resume", media_resume, void (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_seek", media_seek, int (*)(int));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_position", media_position, int (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_duration", media_duration, int (*)(void));
+
     RESOLVE_SYM(so_handle_, "vmrp_api_is_edit_active", is_edit_active, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_get_edit_text", get_edit_text, const char *(*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_edit_text", set_edit_text, int (*)(const char *));
@@ -150,6 +156,10 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_power_cb", set_motion_power_cb, void (*)(void (*)(int)));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_sensitivity", set_motion_sensitivity, void (*)(float));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_shake_cb", set_shake_cb, void (*)(void (*)(int), void (*)(void)));
+    RESOLVE_SYM(so_handle_, "vmrp_api_set_media_cb", set_media_cb, void (*)(void (*)(void), void (*)(void)));
+    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmB", start_dsmB, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmC", start_dsmC, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsm_ex", start_dsm_ex, int (*)(const char *, const char *));
 
     loaded_ = true;
     LOGI("vmrp API resolved, loaded=true");
@@ -199,6 +209,29 @@ bool VmrpEngine::Load(const std::string &so_path) {
         );
         LOGI("shake callback registered (OH_Vibrator C API)");
     }
+
+    // 注册媒体暂停/恢复回调：dsm.c PAUSE/RESUME 调 vmrp_api_media_pause/resume
+    // 时通知宿主停启 OHAudio renderer,避免 renderer 空转拉流。
+    if (api_.set_media_cb) {
+        api_.set_media_cb(
+            []() {
+                LOGI("media_pause_cb: active=%d paused=%d running=%d",
+                     Instance().AudioActive(), Instance().IsMediaPaused(), Instance().IsRunning());
+                VmrpEngine::Instance().SetMediaPaused(true);
+                if (VmrpEngine::Instance().audio_pause_fn_)
+                    VmrpEngine::Instance().audio_pause_fn_(true);
+            },
+            []() {
+                LOGI("media_resume_cb: active=%d paused=%d running=%d",
+                     Instance().AudioActive(), Instance().IsMediaPaused(), Instance().IsRunning());
+                VmrpEngine::Instance().SetMediaPaused(false);
+                if (VmrpEngine::Instance().audio_pause_fn_)
+                    VmrpEngine::Instance().audio_pause_fn_(false);
+            }
+        );
+        LOGI("media pause/resume callback registered");
+    }
+
     return true;
 }
 
@@ -221,6 +254,24 @@ int VmrpEngine::Start(const std::string &mrp, const std::string &ext, const std:
     std::lock_guard<std::mutex> lk(engine_mtx_);
     return api_.start(mrp.c_str(), ext.empty() ? nullptr : ext.c_str(),
                       entry.empty() ? nullptr : entry.c_str());
+}
+
+int VmrpEngine::StartDsmB(const std::string &entry) {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    if (!api_.start_dsmB) return -1;
+    return api_.start_dsmB(entry.empty() ? "*A" : entry.c_str());
+}
+
+int VmrpEngine::StartDsmC(const std::string &entry) {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    if (!api_.start_dsmC) return -1;
+    return api_.start_dsmC(entry.empty() ? "*A" : entry.c_str());
+}
+
+int VmrpEngine::StartDsmEx(const std::string &path, const std::string &entry) {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    if (!api_.start_dsm_ex) return -1;
+    return api_.start_dsm_ex(path.c_str(), entry.empty() ? nullptr : entry.c_str());
 }
 
 void VmrpEngine::Destroy() {
@@ -269,6 +320,12 @@ int VmrpEngine::PullAudio(void *buffer, int frames) {
     return api_.audio_render_s16le(buffer, frames);
 }
 void VmrpEngine::AudioStop() { if (api_.audio_stop) api_.audio_stop(); }
+
+void VmrpEngine::MediaPause() { media_paused_.store(true, std::memory_order_release); if (api_.media_pause) api_.media_pause(); }
+void VmrpEngine::MediaResume() { media_paused_.store(false, std::memory_order_release); if (api_.media_resume) api_.media_resume(); }
+int VmrpEngine::MediaSeek(int ms) { return api_.media_seek ? api_.media_seek(ms) : -1; }
+int VmrpEngine::MediaPosition() { return api_.media_position ? api_.media_position() : 0; }
+int VmrpEngine::MediaDuration() { return api_.media_duration ? api_.media_duration() : 0; }
 
 bool VmrpEngine::EditActive() { return api_.is_edit_active && api_.is_edit_active() != 0; }
 std::string VmrpEngine::GetEditText() {
