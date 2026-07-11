@@ -175,9 +175,15 @@ REM ===========================================================================
 pushd "%VMRP_SRC%" >nul 2>&1
 if errorlevel 1 exit /b 0
 git checkout -- third_party\unicorn\CMakeLists.txt >nul 2>&1
+git checkout -- src\include\arm_ext_internal.h          >nul 2>&1
 git checkout -- src\native_dsm_funcs.c            >nul 2>&1
 git checkout -- src\mythroad\mythroad.c           >nul 2>&1
+git checkout -- src\mythroad\dsm.c                >nul 2>&1
 git checkout -- src\arm_ext_executor.c            >nul 2>&1
+git checkout -- src\vmrp_api.c                    >nul 2>&1
 git checkout -- src\network.c                     >nul 2>&1
+git checkout -- src\arm_ext\aex_exec.c            >nul 2>&1
+git checkout -- src\arm_ext\aex_table.c           >nul 2>&1
+git checkout -- src\arm_ext\aex_mem.c             >nul 2>&1
 popd
 exit /b 0

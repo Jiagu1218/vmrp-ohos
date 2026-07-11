@@ -29,9 +29,5 @@ uint32 arm_ext_read_timer_queue(ArmExtModule *m);
 void arm_ext_reset_child_modules(ArmExtModule *m);
 void arm_ext_unload(ArmExtModule *m);
 void arm_ext_host_cache_sync(ArmExtModule *m, const void *host_data, uint32 len);
-/* 将三轴加速度(mG)写入 Unicorn 虚拟内存中的 T_MOTION_ACC 缓冲区，
- * 返回 ARM 可见的 32 位地址；MRP 代码通过 mr_event param2 读取该地址。
- * 必须在 worker 线程（与 Unicorn 串行）调用。 */
-uint32_t arm_ext_write_motion_acc(ArmExtModule *m, int32 x, int32 y, int32 z);
 
 #endif

@@ -62,6 +62,53 @@
 #define ARM_EXT_SHORT_PACK_ALIAS_MAX 32u
 #define ARM_EXT_DIAG_FD_MAX 32u
 
+/*
+ * ── wrapper ABI 偏移常量(P1-C 常量化,布局与证据来源见 docs/arm-ext-abi.md)──
+ * extChunk(mrc_extChunk)字段偏移。此前 0x34(suspend 深度)等裸写十余处,
+ * 修改 ABI 认知时极易漏改;统一经命名宏访问。
+ */
+#define AEX_CHUNK_INIT_OFF       0x04u /* 模块 init 入口 */
+#define AEX_CHUNK_HELPER_OFF     0x08u /* helper 入口(code=2 回调链读取) */
+#define AEX_CHUNK_FILE_BASE_OFF  0x0Cu /* 文件映像基址 */
+#define AEX_CHUNK_FILE_LEN_OFF   0x10u /* 文件映像长度 */
+#define AEX_CHUNK_RW_BASE_OFF    0x14u /* ER_RW 基址 */
+#define AEX_CHUNK_RW_LEN_OFF     0x18u /* ER_RW 长度 */
+#define AEX_CHUNK_P_ADDR_OFF     0x1Cu /* P 结构地址 */
+#define AEX_CHUNK_P_LEN_OFF      0x20u /* P 结构长度 */
+#define AEX_CHUNK_EVENT_DATA_OFF 0x24u /* code=2 参数 */
+#define AEX_CHUNK_EVENT_FUNC_OFF 0x28u /* code=2 目标函数 */
+#define AEX_CHUNK_RECORD_OFF     0x2Cu /* 私有 loader record 缓冲 */
+#define AEX_CHUNK_SUSPEND_OFF    0x34u /* 暂停/挂起深度(不是退出标志) */
+#define AEX_CHUNK_HEAP_TOP_OFF   0x38u /* 模块堆顶界 */
+/* mr_c_function_P_t 字段偏移(结构定义见下方,guest 侧按偏移访问) */
+#define AEX_P_ER_RW_OFF     0x00u
+#define AEX_P_ER_RW_LEN_OFF 0x04u
+#define AEX_P_EXT_TYPE_OFF  0x08u
+#define AEX_P_EXT_CHUNK_OFF 0x0Cu
+/* wrapper compact 堆控制块字段偏移(ctrl 定位方式见 abi 文档第 4 节) */
+#define AEX_COMPACT_CTRL_BASE_OFF 0x08u /* 堆基址 */
+#define AEX_COMPACT_CTRL_FREE_OFF 0x0Cu /* 当前空闲字节 */
+#define AEX_COMPACT_CTRL_END_OFF  0x10u /* 堆末地址 */
+#define AEX_COMPACT_CTRL_HEAD_OFF 0x18u /* free-list 头(节点 {next_off,len}) */
+/*
+ * 定时器节点结构 magic(P4.2 常量化,分级清单 #11/#17)。两种节点 ABI:
+ *  - compact/frame 节点:magic 在 node+0x00(next/链字段在 +0x18/+0x1C);
+ *  - 旧式 wrapper 节点(optwar cfunction.ext 0xE84920):next/prev 在
+ *    node+0/+4,magic 在 node+0x08,到期时间 +0x0C,回调/数据 +0x14..+0x1C。
+ * 校验时须按布局选偏移,不能只看常量值。
+ */
+#define ARM_EXT_COMPACT_TIMER_MAGIC 0x79ABBCCFu
+/* frame.ext 定时器调度头(R9 相对,DOTA 0x2C96A0 消费):头+0x08 为排队链,
+ * 头+0x0C 为活跃链(分级清单 #13) */
+#define AEX_FRAME_TIMER_SCHED_OFF 0x94u
+/* compact 子模块调度头的两种已观测 SDK 布局(R9+0xC0 / R9+0x248) */
+#define AEX_COMPACT_SCHED_OFF_A 0x0C0u
+#define AEX_COMPACT_SCHED_OFF_B 0x248u
+/* 旧式(非 compact)wrapper 定时器队列固定偏移(分级清单 #20):
+ * wrapper_rw+0x3C8 排队链,+0x3D8 活跃链;节点用 magic@+8 布局校验 */
+#define AEX_WRAPPER_LEGACY_TIMER_QUEUED_OFF  0x3C8u
+#define AEX_WRAPPER_LEGACY_TIMER_CURRENT_OFF 0x3D8u
+
 typedef struct mr_c_function_P_t {
     uint32 start_of_ER_RW;
     uint32 ER_RW_Length;
@@ -132,6 +179,21 @@ typedef struct ArmExtReadAlias {
     uint32_t decoded_addr;
     uint32_t decoded_len;
 } ArmExtReadAlias;
+
+/* P5.2:pack↔staged 子模块归属判定的正向结果缓存。
+ * arm_ext_current_pack_matches_staged_file 每次要整包读入+逐条目解压比对
+ * (大 MRP 下模块注册路径秒级卡顿,issues doc M5)。命中键包含 staged
+ * 内容 FNV、包路径、包长与包头 FNV:包被重新下载/替换(dota/talkcat 流程)
+ * 时包长或包头必变,不会拿旧包的归属结论冒充新包。只缓存"匹配成功"。 */
+#define ARM_EXT_PACK_MATCH_CACHE_MAX 8u
+typedef struct ArmExtPackMatchCache {
+    uint32_t file_addr;
+    uint32_t file_len;
+    uint32_t staged_fnv;
+    uint32_t pack_len;
+    uint32_t pack_head_fnv;
+    char pack[PATH_MAX];
+} ArmExtPackMatchCache;
 
 struct ArmExtModule {
     uc_engine *uc;
@@ -206,13 +268,6 @@ struct ArmExtModule {
      * must keep the allocation inside Unicorn's mapped address space. */
     uint32_t exram_addr;
     uint32_t exram_len;
-    /* OHOS_MEM_EXT: platEx(1001) 第二屏幕缓冲(platEx(1002)释放时清零)，
-     * platEx(1012) 内部RAM/cache(platEx(1013)释放时清零)。
-     * 与 exram 一样从 ARM 堆分配，guest 代码用 ARM 地址访问。 */
-    uint32_t screen_buf_addr;
-    uint32_t screen_buf_len;
-    uint32_t iram_addr;
-    uint32_t iram_len;
     uint32_t internal_table_addr;
     uint32_t port_table_addr;
     uint32_t mr_m0_files_addr;
@@ -336,28 +391,16 @@ struct ArmExtModule {
     int mrp_cache_capacity;
     MrpVirtualFd mrp_vfds[MRP_VFD_MAX];
     ArmExtDiagFd diag_fds[ARM_EXT_DIAG_FD_MAX];
+    /* P5.2 pack 归属正向缓存(环形写入) */
+    ArmExtPackMatchCache pack_match_cache[ARM_EXT_PACK_MATCH_CACHE_MAX];
+    uint32_t pack_match_cache_next;
 
-    /* T_MOTION_ACC 缓冲区的 ARM 可见地址（12 字节: 3×int32 x/y/z）。
-     * mr_event(MR_MOTION_EVENT) 的 param2 传此地址给 ARM 代码，
-     * ARM 代码从该地址读取三轴加速度（mG）。
-     * 在 Unicorn 模拟环境中，ARM 代码只能访问虚拟 32 位地址空间，
-     * 不能直接解引用宿主 &motion_acc（64 位主机地址截断后无效）。 */
-    uint32_t motion_acc_addr;
     const AppCompatProfile *profile;
     void *app_state;
 };
 
 static inline void *arm_ptr(ArmExtModule *m, uint32_t addr) {
     if (!m) return NULL;
-    /* 低地址表 [0, 0x10000)：Unicorn 映射了该区域供 ARM 代码访问，
-     * 但宿主侧不应通过 arm_ptr 解析给 _DrawBitmap 等需要大量数据访问的函数。
-     * low_table 中只有跳桥代码（EXT_TABLE_COUNT 个 4 字节条目），
-     * 不是位图像素数据。在 32 位 ARM 真机上地址 0 附近不可访问，
-     * 所以 arm_ptr 返回 NULL 与真机行为一致。
-     * 若未来有合法场景需要宿主侧访问 low_table，在此处添加：
-     *   if (addr < EXT_LOW_TABLE_SIZE && m->low_table)
-     *       return m->low_table + addr;
-     */
     if (addr >= EXT_BASE_ADDR && addr - EXT_BASE_ADDR < EXT_MEM_SIZE)
         return m->mem + (addr - EXT_BASE_ADDR);
     if (m->platform_mem &&
@@ -377,6 +420,21 @@ static inline void *arm_ptr(ArmExtModule *m, uint32_t addr) {
         addr - EXT_EXECUTOR_META_ADDR < EXT_EXECUTOR_META_SIZE)
         return m->executor_meta_mem + (addr - EXT_EXECUTOR_META_ADDR);
     return NULL;
+}
+
+/* B2:带长度校验的 arm_ptr。返回能容纳 [addr, addr+need) 的宿主指针;
+ * 区间任一端未映射、跨越不同映射区(宿主指针不连续)或回绕时返回 NULL。
+ * 用于替换"裸 arm_ptr + memcpy/strcpy"模式:guest 状态损坏时宿主必须
+ * 拒绝操作而不是段错误。 */
+static inline void *arm_ptr_span(ArmExtModule *m, uint32_t addr, uint32_t need) {
+    uint8_t *lo = (uint8_t *)arm_ptr(m, addr);
+    if (!lo || !need) return NULL;
+    if (need > 1u) {
+        if (need - 1u > UINT32_MAX - addr) return NULL;
+        uint8_t *hi = (uint8_t *)arm_ptr(m, addr + need - 1u);
+        if (!hi || (size_t)(hi - lo) != (size_t)(need - 1u)) return NULL;
+    }
+    return lo;
 }
 
 static inline uint32_t arm_ext_read_u32_or_zero_(ArmExtModule *m, uint32_t addr) {

@@ -216,11 +216,102 @@ function(ohos_crlf_to_lf FILEPATH)
         endif()
     endif()
 endfunction()
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/include/arm_ext_internal.h")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/arm_ext_executor.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/arm_ext/aex_exec.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/arm_ext/aex_mem.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/dsm.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/vmrp_api.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/network.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/native_dsm_funcs.c")
+
+# --- Patch arm_ext_internal.h: 添加 OHOS 需要的额外字段 ---
+# 上游重构后的 ArmExtModule 缺少 OHOS 特有字段:
+# - motion_acc_addr: T_MOTION_ACC 缓冲区 ARM 地址(12字节三轴加速度)
+# - screen_buf_addr/len: platEx(1001) 分配的离屏渲染缓冲(第二内存)
+# - iram_addr/len: platEx(1012) 分配的内部 cache
+set(_VMRP_INT_H "${VMRP_SRC_DIR}/src/include/arm_ext_internal.h")
+if(EXISTS "${_VMRP_INT_H}")
+    file(READ "${_VMRP_INT_H}" _inth)
+    if(NOT _inth MATCHES "OHOS_MOTION_ACC_FIELD")
+        # motion_acc_addr: 插在 screen_h_slot 之后
+        string(REPLACE
+            "    uint32_t screen_h_slot;\n    uint32_t char_bitmap_addr;"
+            "    uint32_t screen_h_slot;\n    /* OHOS_MOTION_ACC_FIELD: T_MOTION_ACC 三轴加速度缓冲\n     * ARM 地址(12 字节: 3×int32 x/y/z)。mr_event(MR_MOTION_EVENT)\n     * 的 param2 携带此地址,ARM 代码通过 32 位虚拟地址读取。 */\n    uint32_t motion_acc_addr;\n    uint32_t char_bitmap_addr;"
+            _inth "${_inth}")
+        # screen_buf_addr/len: 插在 screen_cap 之后
+        string(REPLACE
+            "    uint32_t screen_cap;\n    /* ARM 可见 mr_screen_w/h"
+            "    uint32_t screen_cap;\n    /* OHOS_PLATEX_SCREEN_BUF: platEx(1001) 分配的离屏渲染缓冲。\n     * 与 screen_addr(主屏幕)不同,这是 guest 通过 platEx(1001) 申请的\n     * 第二内存,用于离屏绘制后再手动拷贝到主屏。 */\n    uint32_t screen_buf_addr;\n    uint32_t screen_buf_len;\n    /* ARM 可见 mr_screen_w/h"
+            _inth "${_inth}")
+        # iram_addr/len: 插在 exram_len 之后
+        string(REPLACE
+            "    uint32_t exram_len;\n    uint32_t internal_table_addr;"
+            "    uint32_t exram_len;\n    /* OHOS_PLATEX_IRAM: platEx(1012) 分配的内部 cache 缓冲。 */\n    uint32_t iram_addr;\n    uint32_t iram_len;\n    uint32_t internal_table_addr;"
+            _inth "${_inth}")
+        file(WRITE "${_VMRP_INT_H}" "${_inth}")
+        message(STATUS "[OHOS] Patched arm_ext_internal.h: added motion_acc_addr, screen_buf_addr/len, iram_addr/len")
+    endif()
+endif()
+
+# --- Patch vmrp_api.c: 添加 vmrp_api_motion_power 传感器电源控制 ---
+# dsm.c case 4002/4003 通过 extern 调用此函数通知宿主启停传感器。
+# vmrp_api.c 属于 :restore_patched,用 CMake patch 保证幂等。
+set(_VMRP_API_MOTION "${VMRP_SRC_DIR}/src/vmrp_api.c")
+if(EXISTS "${_VMRP_API_MOTION}")
+    file(READ "${_VMRP_API_MOTION}" _api_m)
+    if(NOT _api_m MATCHES "OHOS_MOTION_POWER")
+        string(REPLACE
+            "    return event(6, 1, 0);\n#endif\n}"
+            "    return event(6, 1, 0);\n#endif\n}\n\n/* OHOS_MOTION_POWER: 传感器电源控制。\n * dsm.c mr_plat(4002/4003) 调用此函数通知宿主启停重力感应传感器。\n * power_cb 由宿主在 vmrp_init 时注册。\n * 未注册时为空操作,不影响非 OHOS 构建。 */\nstatic int (*motion_power_cb)(int on) = NULL;\nVMRP_EXPORT void vmrp_api_motion_power(int on) {\n    if (motion_power_cb) {\n        motion_power_cb(on);\n    }\n}\nVMRP_EXPORT void vmrp_api_set_motion_power_cb(void (*cb)(int on)) {\n    motion_power_cb = (int (*)(int))cb;\n}\n\n/* OHOS_MOTION_EVENT: 投递加速度数据到 DSM 层缓存并\n * 入队 API_CMD_MOTION，由 worker 线程消费时调\n * dsm_dispatch_motion_event() 驱动 mr_event(MR_MOTION_EVENT,mode,arm_addr)。\n * 不依赖 mr_timer()（ARM ext 模式下 timer 不由宿主驱动）。\n * x/y/z 单位 mG,静止平放 z≈1000。 */\nstatic float motion_sensitivity = 1.0f;\nVMRP_EXPORT int vmrp_api_motion_event(int x, int y, int z) {\n    extern void dsm_set_motion_acc(int32 x, int32 y, int32 z);\n    dsm_set_motion_acc((int32)(x * motion_sensitivity),\n                       (int32)(y * motion_sensitivity),\n                       (int32)(z * motion_sensitivity));\n    ApiCommand cmd;\n    memset(&cmd, 0, sizeof(cmd));\n    cmd.type = API_CMD_MOTION;\n    return api_queue_command(cmd);\n}\nVMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}"
+            _api_m "${_api_m}")
+        # 子补丁1: ApiCommandType enum 加 API_CMD_MOTION
+        string(REPLACE
+            "    API_CMD_CANCEL_EDIT\n} ApiCommandType;"
+            "    API_CMD_CANCEL_EDIT,\n    API_CMD_MOTION  /* OHOS: 动感芯片事件投递 */\n} ApiCommandType;"
+            _api_m "${_api_m}")
+        # 子补丁2: worker switch 加 API_CMD_MOTION 分支
+        string(REPLACE
+            "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;"
+            "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;\n                case API_CMD_MOTION: /* OHOS: 投递动感芯片事件 */\n                    { extern void dsm_dispatch_motion_event(void); dsm_dispatch_motion_event(); }\n                    break;"
+            _api_m "${_api_m}")
+        file(WRITE "${_VMRP_API_MOTION}" "${_api_m}")
+        message(STATUS "[OHOS] Patched vmrp_api motion functions + API_CMD_MOTION (OHOS_MOTION_POWER/EVENT/SENSITIVITY)")
+    endif()
+endif()
+
+# --- Patch dsm.c: 重力感应(Motion Chip)OHOS 适配 ---
+# 上游删除了所有 motion 支持,OHOS 本地功能需要保留:
+# - 静态变量: motion_enabled/motion_powered/motion_mode/加速度缓存
+# - dsm_set_motion_acc()/dsm_get_motion_acc(): 缓存读写
+# - dsm_dispatch_motion_event(): 投递 MR_MOTION_EVENT 到 mr_event
+# - mr_plat case 4001~4006: 停止/上电/断电/晃动/倾斜/获取范围
+# dsm.c 属于 :restore_patched,用 CMake patch 保证幂等。
+set(_VMRP_DSM_MOTION "${VMRP_SRC_DIR}/src/mythroad/dsm.c")
+if(EXISTS "${_VMRP_DSM_MOTION}")
+    file(READ "${_VMRP_DSM_MOTION}" _dsm_m)
+    if(NOT _dsm_m MATCHES "OHOS_MOTION_CHIP")
+        # 1) 在 dsmInFuncs 后插入 motion 静态变量
+        string(REPLACE
+            "static DSM_REQUIRE_FUNCS *dsmInFuncs;\nstatic uint32 dsmStartTime;"
+            "static DSM_REQUIRE_FUNCS *dsmInFuncs;\nstatic uint32 dsmStartTime;\n/* OHOS_MOTION_CHIP: 重力感应状态与加速度缓存 */\nstatic int32 motion_enabled = 0;\nstatic int32 motion_powered = 0;\nstatic int32 motion_mode = 0;\nstatic int32 motion_acc_x = 0, motion_acc_y = 0, motion_acc_z = 0;"
+            _dsm_m "${_dsm_m}")
+        # 2) 在 mr_plat default case 前插入 motion cases
+        string(REPLACE
+            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        default:"
+            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        /* OHOS_MOTION_CHIP: 重力感应 mr_plat 命令 */\n        case 4001:  /* 停止监听 */\n            motion_enabled = 0;\n            return MR_SUCCESS;\n        case 4002:  /* 上电 */\n            motion_powered = 1;\n            { extern void vmrp_api_motion_power(int on); vmrp_api_motion_power(1); }\n            return MR_SUCCESS;\n        case 4003:  /* 断电 */\n            motion_powered = 0; motion_enabled = 0;\n            { extern void vmrp_api_motion_power(int on); vmrp_api_motion_power(0); }\n            return MR_SUCCESS;\n        case 4004:  /* 晃动模式: MR_MOTION_EVENT_SHAKE=0 */\n            motion_enabled = 1; motion_mode = 0;\n            return MR_SUCCESS;\n        case 4005:  /* 倾斜模式: MR_MOTION_EVENT_TILT=1 */\n            motion_enabled = 1; motion_mode = 1;\n            return MR_SUCCESS;\n        case 4006:  /* 获取范围 */\n            return MR_PLAT_VALUE_BASE + 3000;\n        default:"
+            _dsm_m "${_dsm_m}")
+        # 3) 在文件末尾(dsm_init 之前)插入 motion 函数
+        string(REPLACE
+            "int32 dsm_init(DSM_REQUIRE_FUNCS *inFuncs) {"
+            "/* OHOS_MOTION_CHIP: 加速度缓存读写与事件投递 */\nvoid dsm_set_motion_acc(int32 x, int32 y, int32 z) {\n    motion_acc_x = x; motion_acc_y = y; motion_acc_z = z;\n}\nvoid dsm_get_motion_acc(int32 *x, int32 *y, int32 *z) {\n    if (x) *x = motion_acc_x;\n    if (y) *y = motion_acc_y;\n    if (z) *z = motion_acc_z;\n}\nvoid dsm_dispatch_motion_event(void) {\n    if (!motion_enabled) return;\n    extern uint32 dsm_write_motion_acc_to_arm(void);\n    uint32 arm_addr = dsm_write_motion_acc_to_arm();\n    if (!arm_addr) return;\n    extern int32 mr_event(int16 type, int32 param1, int32 param2);\n    mr_event(MR_MOTION_EVENT, motion_mode, (int32)arm_addr);\n}\n\nint32 dsm_init(DSM_REQUIRE_FUNCS *inFuncs) {"
+            _dsm_m "${_dsm_m}")
+        file(WRITE "${_VMRP_DSM_MOTION}" "${_dsm_m}")
+        message(STATUS "[OHOS] Patched dsm.c motion chip support (OHOS_MOTION_CHIP)")
+    endif()
+endif()
 
 # --- Patch vmrp native_dsm_funcs.c: MAP_32BIT is x86-glibc only, musl lacks it ---
 # native_mem_get() uses mmap(... MAP_32BIT) on x86_64 to place the DSM memory in
@@ -422,186 +513,98 @@ if(EXISTS "${_VMRP_NET}")
     endif()
 endif()
 
-# --- Patch arm_ext_executor.c: arm_alloc 64 位边界检查 + case38 memset 越界守卫 ---
-# 崩溃现场(cppcrash SIGSEGV SEGV_ACCERR@0x5cf5052000):arm_alloc 返回 0xA45E38,
-# want=0xA27B9C(~10.6MB),m->mem 仅 16MB,memset 从 offset 0xA35E38 写 0xA27B9C
-# 字节,结尾 0x146D9D4 越过 16MB(0x1000000)踩出缓冲 → SIGSEGV。
-# arm_alloc 的 uint32 边界检查 heap_top+len>=mem_end 理论上应拦截,但崩溃
-# 显示 heap_top 被损坏(转储=0x00333638 而非预期值),导致检查通过并返回越界地址。
-# 修复:
-# 1) arm_alloc 改用 uint64 算术做边界检查,即使 heap_top 被篡改为异常小值,
-#    大额 len 也不会因 uint32 溢出而通过检查。
-# 2) case 38 memset 前加二次越界守卫:a-EXT_BASE_ADDR+want ≤ EXT_MEM_SIZE,
-#    即使 arm_alloc 逻辑被绕过(如 heap_top 损坏),也能阻止 memset 踩出缓冲。
-set(_VMRP_ARMEXT4 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_ARMEXT4}")
-    file(READ "${_VMRP_ARMEXT4}" _aet4)
-    if(NOT _aet4 MATCHES "OHOS_ARM_ALLOC_U64")
-        # Patch 1: arm_alloc 保留区跨越判断改用 64 位算术
-        string(REPLACE
-            "    if (m->heap_top < reserved_hi && m->heap_top + len > reserved_lo) {"
-            "    /* OHOS_ARM_ALLOC_U64: 用 64 位算术做保留区跨越判断,防止 uint32 溢出\n     * 导致 heap_top+len 回绕为小值误判为未跨越(崩溃转储 heap_top=0x00333638,\n     * want=0xA27B9C,加法溢出跳过保留区,arm_alloc 返回越界地址)。 */\n    if (m->heap_top < reserved_hi && (uint64_t)m->heap_top + (uint64_t)len > (uint64_t)reserved_lo) {"
-            _aet4 "${_aet4}")
-        # Patch 2: arm_alloc 边界检查改用 64 位算术
-        string(REPLACE
-            "    if (m->heap_top + len >= mem_end) return 0;"
-            "    /* OHOS_ARM_ALLOC_U64: 64 位算术边界检查,heap_top+len 溢出 uint32\n     * 时仍能正确判定越界(0x00333638+0xA27B9C=0xD5B1D4<mem_end 通过检查,\n     * 但分配地址 0xA45E38+0xA27B9C=0x146D9D4>16MB,memset 越界)。 */\n    if ((uint64_t)m->heap_top + (uint64_t)len >= (uint64_t)mem_end) return 0;"
-            _aet4 "${_aet4}")
-        file(WRITE "${_VMRP_ARMEXT4}" "${_aet4}")
-        message(STATUS "[OHOS] Patched arm_alloc 64-bit boundary checks (OHOS_ARM_ALLOC_U64)")
-    endif()
-    # Re-read for second patch (file was just written above, or already has OHOS_ARM_ALLOC_U64)
-    file(READ "${_VMRP_ARMEXT4}" _aet4b)
-    if(NOT _aet4b MATCHES "OHOS_MEMSET_BOUNDS_GUARD")
-        # Patch 3: case 38 memset 前加二次越界守卫
+# --- Patch aex_table.c: case 38 memset 越界守卫 (OHOS_MEMSET_BOUNDS_GUARD) ---
+# 上游重构: arm_ext_executor.c 的 case 38 拆分为 aex_table.c 的 aex_t038()。
+# arm_alloc 上游已加 if (len > EXT_MEM_SIZE) return 0 长度守卫,覆盖 uint32
+# 溢出路径(EXT 地址空间仅 16MB,heap_top+len <= 32MB 不溢出 uint32),
+# 因此 OHOS_ARM_ALLOC_U64 补丁不再需要,已删除。
+# case 14 上游已改用 arm_ptr_span + GOT 修复,OHOS_MEMSET_NULL_GUARD 已删除。
+# 本补丁仍需保留: arm_alloc 长度守卫不覆盖 heap_top 被踩为异常小值场景
+# (0x00333638 + 0xA27B9C = 0xD5B1D4 < mem_end,检查通过但分配越界)。
+set(_VMRP_AEX_TABLE1 "${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
+if(EXISTS "${_VMRP_AEX_TABLE1}")
+    file(READ "${_VMRP_AEX_TABLE1}" _at1)
+    if(NOT _at1 MATCHES "OHOS_MEMSET_BOUNDS_GUARD")
         string(REPLACE
             "                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);"
-            "                            void *ep = arm_ptr(m, a);\n                            /* OHOS_MEMSET_BOUNDS_GUARD: 二次越界守卫,即使 arm_alloc\n                             * 的 64 位检查被绕过(如 heap_top 损坏),也阻止 memset\n                             * 踩出 m->mem 16MB 缓冲。a-EXT_BASE_ADDR+want 必须\n                             * ≤ EXT_MEM_SIZE,否则跳过 memset(与 ep==NULL 同义)。 */\n                            if (ep && (uint64_t)(a - EXT_BASE_ADDR) + (uint64_t)want <= (uint64_t)EXT_MEM_SIZE) {\n                                memset(ep, 0, want);\n                            }"
-            _aet4b "${_aet4b}")
-        file(WRITE "${_VMRP_ARMEXT4}" "${_aet4b}")
-        message(STATUS "[OHOS] Patched case 38 memset bounds guard (OHOS_MEMSET_BOUNDS_GUARD)")
-    endif()
-    # Re-read for third patch (case 14 memset NULL guard)
-    file(READ "${_VMRP_ARMEXT4}" _aet4c)
-    if(NOT _aet4c MATCHES "OHOS_MEMSET_NULL_GUARD")
-        # Patch 4: case 14 memset/memcpy NULL 指针守卫
-        # cppcrash 转储: SIGSEGV(SEGV_MAPERR)@0x0, x0=NULL, x2=4
-        # 调用栈: memset+52 ← case 14 ← helper_uc_tracecode ← guest ARM
-        # 根因: guest 代码调用 table[14](memset2) 传入无效 ARM 地址,
-        # arm_ptr 返回 NULL, memset(0x0, 0, 4) 触发 NULL 解引用。
-        # GOT 修复中的 memcpy(arm_ptr(m, addr), ...) 也有同样风险。
-        # 修复: case 14 开头解析 arm_ptr(m, r0), 若为 NULL 则跳过 memset
-        # 和 GOT 修复,只设 ret=r0 (与真机行为一致:无效地址返回原值,不清零)。
-        string(REPLACE
-            "        case 14:
-            memset(arm_ptr(m, r0), (int)r1, r2);
-            /* memset 后修复 GOT 中的 bridge 指针 */
-            if (m->got_snapshot_base) {
-                uint32_t got_base = m->got_snapshot_base;
-                uint32_t set_end = r0 + r2;
-                for (uint32_t i = 0; i < EXT_TABLE_COUNT; i++) {
-                    uint32_t addr = got_base + i * 4;
-                    if (m->got_snapshot[i] >= EXT_TABLE_ADDR &&
-                        m->got_snapshot[i] < EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4 &&
-                        addr >= r0 && addr + 4 <= set_end &&
-                        !arm_ext_should_skip_got_snapshot_restore(m, addr) &&
-                        !app_should_protect_got_addr(m, addr)) {
-                        memcpy(arm_ptr(m, addr), &m->got_snapshot[i], 4);
-                    }
-                }
-            }
-            ret = r0; break;"
-            "        case 14: {
-            /* OHOS_MEMSET_NULL_GUARD: case 14 (table[14]=memset2) 的
-             * arm_ptr(m, r0) 可能返回 NULL(guest 传入无效 ARM 地址),
-             * 直接 memset(NULL,...) 触发 SIGSEGV。先解析指针,为 NULL
-             * 则跳过 memset 和 GOT 修复。cppcrash: x0=0, x2=4。 */
-            void *_c14_dst = arm_ptr(m, r0);
-            if (_c14_dst) {
-                memset(_c14_dst, (int)r1, r2);
-                /* memset 后修复 GOT 中的 bridge 指针 */
-                if (m->got_snapshot_base) {
-                    uint32_t got_base = m->got_snapshot_base;
-                    uint32_t set_end = r0 + r2;
-                    for (uint32_t i = 0; i < EXT_TABLE_COUNT; i++) {
-                        uint32_t addr = got_base + i * 4;
-                        if (m->got_snapshot[i] >= EXT_TABLE_ADDR &&
-                            m->got_snapshot[i] < EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4 &&
-                            addr >= r0 && addr + 4 <= set_end &&
-                            !arm_ext_should_skip_got_snapshot_restore(m, addr) &&
-                            !app_should_protect_got_addr(m, addr)) {
-                            void *_got_slot = arm_ptr(m, addr);
-                            if (_got_slot) memcpy(_got_slot, &m->got_snapshot[i], 4);
-                        }
-                    }
-                }
-            }
-            ret = r0; } break;"
-            _aet4c "${_aet4c}")
-        file(WRITE "${_VMRP_ARMEXT4}" "${_aet4c}")
-        message(STATUS "[OHOS] Patched case 14 memset NULL guard (OHOS_MEMSET_NULL_GUARD)")
+            "                            void *ep = arm_ptr(m, a);\n                            /* OHOS_MEMSET_BOUNDS_GUARD: 二次越界守卫,即使 arm_alloc\n                             * 的长度守卫被绕过(如 heap_top 损坏),也阻止 memset\n                             * 踩出 m->mem 16MB 缓冲。a-EXT_BASE_ADDR+want 必须\n                             * ≤ EXT_MEM_SIZE,否则跳过 memset(与 ep==NULL 同义)。 */\n                            if (ep && (uint64_t)(a - EXT_BASE_ADDR) + (uint64_t)want <= (uint64_t)EXT_MEM_SIZE) {\n                                memset(ep, 0, want);\n                            }"
+            _at1 "${_at1}")
+        file(WRITE "${_VMRP_AEX_TABLE1}" "${_at1}")
+        message(STATUS "[OHOS] Patched case 38 memset bounds guard in aex_table.c (OHOS_MEMSET_BOUNDS_GUARD)")
     endif()
 endif()
 
-# --- Patch arm_ext_executor.c: case 120 DrawBitmap NULL 指针防护 ---
-# 已被上游 17c152f 的 arm_ext_draw_bitmap_from_guest() 替代:
-# 上游对 case 120 改用 arm_ext_draw_bitmap_from_guest(m, r0, ...),内部逐像素
-# 校验源地址范围(含 app_live_blocks 边界),跳过越界像素,远超我们简单的 NULL guard。
-# 此 patch 块保留为注释,不做任何替换(锚点文本也已不存在)。
-# set(_VMRP_ARMEXT5 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-# if(EXISTS "${_VMRP_ARMEXT5}")
-#     file(READ "${_VMRP_ARMEXT5}" _aet5)
-#     if(NOT _aet5 MATCHES "OHOS_DRAWBITMAP_NULL_GUARD")
-#         ... (removed, superseded by upstream)
-#     endif()
-# endif()
-
-# --- Patch arm_ext_executor.c: UC_MEM_READ/WRITE_UNMAPPED 优雅恢复 ---
-# 花屏+卡死根因: guest ARM 代码用被位图像素覆写的 mr_bitmapSt 指针
-# (0xF81FF81F,RGB565 白色像素模式)做内存访问,触发 UC_MEM_READ_UNMAPPED。
-# hook_invalid 返回 false → uc_emu_start 报错 UC_ERR_READ_UNMAPPED →
-# run_arm_with_sp 无恢复路径 → 返回 MR_FAILED → timer 回调每次都失败 →
-# 游戏逻辑永久停摆 → 画面卡死。
-# 修复: hook_invalid 对 READ/WRITE_UNMAPPED 打印诊断后设 PC=EXT_STOP_ADDR
-# 并返回 true,让 uc_emu_start 正常结束;同时 run_arm_with_sp 把
-# UC_ERR_READ_UNMAPPED/WRITE_UNMAPPED 视为干净退出(MR_SUCCESS),因为
-# 损坏的 ARM 指针不应杀死整个模拟器,timer 下次触发时游戏可能已恢复。
-set(_VMRP_ARMEXT6 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_ARMEXT6}")
-    file(READ "${_VMRP_ARMEXT6}" _aet6)
-    if(NOT _aet6 MATCHES "OHOS_UNMAPPED_GRACEFUL_EXIT")
-        # Patch 1: hook_invalid — READ/WRITE_UNMAPPED 设 PC=STOP, 返回 true
+# --- Patch arm_ext_executor.c: hook_invalid WRITE_UNMAPPED 黑洞 + READ_UNMAPPED graceful exit ---
+# v2: WRITE_UNMAPPED 动态 uc_mem_map 64K 黑洞页让写操作真正完成,
+# guest 状态一致不会循环崩溃;READ_UNMAPPED 设 PC=STOP 跳过。
+# hook_invalid 仍在 arm_ext_executor.c(未拆分到 aex_*.c)。
+set(_VMRP_ARMEXT_EXEC "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
+if(EXISTS "${_VMRP_ARMEXT_EXEC}")
+    file(READ "${_VMRP_ARMEXT_EXEC}" _aee)
+    if(NOT _aee MATCHES "OHOS_UNMAPPED_GRACEFUL_EXIT")
         string(REPLACE
             "    dumpREG(uc);\n    return false;\n}"
-            "    dumpREG(uc);\n    /* OHOS_UNMAPPED_GRACEFUL_EXIT: READ/WRITE_UNMAPPED\n     * 时设 PC=EXT_STOP_ADDR 并返回 true,让 uc_emu_start 正常结束(until\n     * address 到达),而非返回 false 导致 uc_emu_start 报 UC_ERR_READ_UNMAPPED\n     * → run_arm_with_sp 返回 MR_FAILED → timer 循环永久死亡 → 画面卡死。\n     * FETCH_UNMAPPED@0 已有类似处理(设 PC/LR 后 return true)。\n     * 花屏场景: guest 用被像素覆写的位图指针(如 0xF81FF81F)做访问,\n     * 跳过本次操作让游戏继续运行,比彻底杀死模拟器更安全。 */\n    if (type == UC_MEM_READ_UNMAPPED || type == UC_MEM_WRITE_UNMAPPED) {\n        uint32_t _stop = EXT_STOP_ADDR;\n        uc_reg_write(uc, UC_ARM_REG_PC, &_stop);\n        return true;\n    }\n    return false;\n}"
-            _aet6 "${_aet6}")
-        # Patch 2: run_arm_with_sp — UC_ERR_READ/WRITE_UNMAPPED 视为干净退出
-        string(REPLACE
-            "        printf(\"arm_ext_executor: uc_emu_start(0x%X) failed: %u (%s)\\n\", start, err, uc_strerror(err));\n        uint8_t *pc_mem = arm_ptr(m, pc);\n        if (pc_mem) {\n            printf(\"arm_ext_executor: pc bytes @0x%X:\", pc);\n            for (uint32_t i = 0; i < 16; ++i) printf(\" %02X\", pc_mem[i]);\n            printf(\"\\n\");\n        }\n        dump_pc_ring(m);\n        dumpREG(m->uc);\n        return MR_FAILED;"
-            "        /* OHOS_UNMAPPED_GRACEFUL_EXIT: UC_ERR_READ/WRITE_UNMAPPED 时\n         * hook_invalid 已将 PC 设为 EXT_STOP_ADDR,但若 hook 返回 false\n         * (或其他路径)uc_emu_start 仍报错,这里作为兜底把其视为干净退出。\n         * 损坏的 ARM 位图指针不应杀死整个模拟器;timer 下次触发时\n         * 游戏逻辑可能已恢复。花屏是内存覆写的症状,跳过比卡死好。 */\n        if (err == UC_ERR_READ_UNMAPPED || err == UC_ERR_WRITE_UNMAPPED) {\n            if (getenv(\"VMRP_ARM_EXT_TRACE\")) {\n                printf(\"arm_ext_executor: unmapped access treated as clean exit (err=%u pc=0x%X sp=0x%X)\\n\", err, pc, cur_sp);\n            }\n            reg_write32(m->uc, UC_ARM_REG_PC, EXT_STOP_ADDR);\n            return MR_SUCCESS;\n        }\n        printf(\"arm_ext_executor: uc_emu_start(0x%X) failed: %u (%s)\\n\", start, err, uc_strerror(err));\n        uint8_t *pc_mem = arm_ptr(m, pc);\n        if (pc_mem) {\n            printf(\"arm_ext_executor: pc bytes @0x%X:\", pc);\n            for (uint32_t i = 0; i < 16; ++i) printf(\" %02X\", pc_mem[i]);\n            printf(\"\\n\");\n        }\n        dump_pc_ring(m);\n        dumpREG(m->uc);\n        return MR_FAILED;"
-            _aet6 "${_aet6}")
-        file(WRITE "${_VMRP_ARMEXT6}" "${_aet6}")
-        message(STATUS "[OHOS] Patched UC_MEM_READ/WRITE_UNMAPPED graceful exit (OHOS_UNMAPPED_GRACEFUL_EXIT)")
+            "    dumpREG(uc);\n    /* OHOS_UNMAPPED_GRACEFUL_EXIT v2:\n     * WRITE_UNMAPPED: 动态 uc_mem_map 一个 64K 对齐的黑洞页,让写操作真正完成。\n     * 写入黑洞的数据丢弃但 guest 状态一致,不会循环崩溃。\n     * v1 设 PC=STOP 跳过写操作导致状态不一致,下次 timer tick 重试同一崩溃点。\n     * READ_UNMAPPED: 设 PC=STOP + TB flush,读不到数据只能跳过(graceful exit)。\n     * FETCH_UNMAPPED@0 已有类似处理(设 PC/LR 后 return true)。\n     * TB FLUSH: READ_UNMAPPED 后旧 TB 可能引用失效宿主代码,必须刷新。\n     * 黑洞页大小 64K (unicorn 要求 4K 对齐但实际实现需要更大),\n     * 地址对齐到 64K 边界,覆盖同页内后续访问。 */\n    if (type == UC_MEM_WRITE_UNMAPPED) {\n        uint64_t page = address & ~0xFFFFULL;\n        uc_err map_err = uc_mem_map(uc, page, 0x10000, UC_PROT_ALL);\n        if (map_err == UC_ERR_OK) {\n            return true;\n        }\n        uc_ctl_flush_tb(uc);\n        uint32_t _stop = EXT_STOP_ADDR;\n        uc_reg_write(uc, UC_ARM_REG_PC, &_stop);\n        return true;\n    }\n    if (type == UC_MEM_READ_UNMAPPED) {\n        uint32_t _stop = EXT_STOP_ADDR;\n        uc_reg_write(uc, UC_ARM_REG_PC, &_stop);\n        uc_ctl_flush_tb(uc);\n        return true;\n    }\n    return false;\n}"
+            _aee "${_aee}")
+        file(WRITE "${_VMRP_ARMEXT_EXEC}" "${_aee}")
+        message(STATUS "[OHOS] Patched hook_invalid WRITE blackhole + READ graceful exit (OHOS_UNMAPPED_GRACEFUL_EXIT)")
     endif()
 endif()
 
-# --- Patch arm_ext_executor.c: UC_ERR_EXCEPTION 堆数据恢复 ---
-# run_arm_with_sp 中的堆数据恢复路径(三个 if (err == UC_ERR_INSN_INVALID && pc >= ...))
-# 仅检查 INSN_INVALID,但 pending_intr_no 产生的 UC_ERR_EXCEPTION 同样可能
-# 导致 PC 落在堆上。例如: timer 回调中 guest 执行 SVC → pending_intr_no
-# 被设置 → err 被人为改为 UC_ERR_EXCEPTION → Thumb 重试因 PC 在堆区
-# (非代码段)跳过 → 三个堆数据恢复块因 err!=INSN_INVALID 全部跳过 →
-# sp_diff 也太远 → 打印错误日志返回 MR_FAILED → timer 死亡。
-# 修复: 将三个 err==UC_ERR_INSN_INVALID 条件扩展为同时覆盖 EXCEPTION。
-set(_VMRP_ARMEXT7 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_ARMEXT7}")
-    file(READ "${_VMRP_ARMEXT7}" _aet7)
-    if(NOT _aet7 MATCHES "OHOS_EXCEPTION_HEAP_RECOVERY")
+# --- Patch aex_exec.c: run_arm_with_sp UNMAPPED/INSN_INVALID/EXCEPTION 兜底 ---
+# 上游重构: run_arm_with_sp 从 arm_ext_executor.c 拆到 aex_exec.c。
+# 三类错误均视为干净退出(PC=STOP + TB flush + MR_SUCCESS):
+# - WRITE_UNMAPPED: hook_invalid 映射了黑洞页但若仍到此说明映射失败
+# - READ_UNMAPPED: hook_invalid 已设 PC=STOP,兜底
+# - INSN_INVALID: WRITE_UNMAPPED 后状态损坏可能触发无效指令
+# - EXCEPTION: TB cache 损坏,flush 后视为干净退出
+# 前置的三个堆数据恢复块(INSN_INVALID/EXCEPTION + pc>=HEAP)仍在 aex_exec.c
+# 中且不会被此补丁跳过——它们在错误块之前执行。
+set(_VMRP_AEX_EXEC1 "${VMRP_SRC_DIR}/src/arm_ext/aex_exec.c")
+if(EXISTS "${_VMRP_AEX_EXEC1}")
+    file(READ "${_VMRP_AEX_EXEC1}" _ae1)
+    if(NOT _ae1 MATCHES "OHOS_UNMAPPED_GRACEFUL_EXIT")
+        string(REPLACE
+            "        printf(\"arm_ext_executor: uc_emu_start(0x%X) failed: %u (%s)\\n\", start, err, uc_strerror(err));\n        uint8_t *pc_mem = arm_ptr(m, pc);\n        if (pc_mem) {\n            printf(\"arm_ext_executor: pc bytes @0x%X:\", pc);\n            for (uint32_t i = 0; i < 16; ++i) printf(\" %02X\", pc_mem[i]);\n            printf(\"\\n\");\n        }\n        dump_pc_ring(m);\n        dumpREG(m->uc);\n        return MR_FAILED;"
+            "        /* OHOS_UNMAPPED_GRACEFUL_EXIT: 兜底处理。\n         * WRITE_UNMAPPED: hook_invalid 已映射黑洞页,若仍到此说明映射失败,视为干净退出。\n         * READ_UNMAPPED: hook_invalid 已设 PC=STOP,若仍到此同样兜底。\n         * INSN_INVALID: WRITE_UNMAPPED 后 guest 状态损坏可能触发无效指令,同样跳过。\n         * EXCEPTION: TB cache 损坏,flush 后视为干净退出。\n         * 所有路径均设 PC=STOP + TB flush,返回 MR_SUCCESS 让模拟器继续。 */\n        if (err == UC_ERR_READ_UNMAPPED || err == UC_ERR_WRITE_UNMAPPED ||\n            err == UC_ERR_INSN_INVALID || err == UC_ERR_EXCEPTION) {\n            if (err != UC_ERR_INSN_INVALID) {\n                printf(\"arm_ext_executor: unmapped/exception treated as clean exit (err=%u pc=0x%X sp=0x%X)\\n\", err, pc, cur_sp);\n            } else {\n                printf(\"arm_ext_executor: invalid instruction treated as clean exit (pc=0x%X sp=0x%X)\\n\", pc, cur_sp);\n                uint8_t *pc_mem2 = arm_ptr(m, pc);\n                if (pc_mem2) {\n                    printf(\"arm_ext_executor: pc bytes @0x%X:\", pc);\n                    for (uint32_t i = 0; i < 16; ++i) printf(\" %02X\", pc_mem2[i]);\n                    printf(\"\\n\");\n                }\n            }\n            reg_write32(m->uc, UC_ARM_REG_PC, EXT_STOP_ADDR);\n            uc_ctl_flush_tb(m->uc);\n            return MR_SUCCESS;\n        }\n        printf(\"arm_ext_executor: uc_emu_start(0x%X) failed: %u (%s)\\n\", start, err, uc_strerror(err));\n        uint8_t *pc_mem = arm_ptr(m, pc);\n        if (pc_mem) {\n            printf(\"arm_ext_executor: pc bytes @0x%X:\", pc);\n            for (uint32_t i = 0; i < 16; ++i) printf(\" %02X\", pc_mem[i]);\n            printf(\"\\n\");\n        }\n        dump_pc_ring(m);\n        dumpREG(m->uc);\n        return MR_FAILED;"
+            _ae1 "${_ae1}")
+        file(WRITE "${_VMRP_AEX_EXEC1}" "${_ae1}")
+        message(STATUS "[OHOS] Patched run_arm_with_sp error fallback in aex_exec.c (OHOS_UNMAPPED_GRACEFUL_EXIT)")
+    endif()
+endif()
+
+# --- Patch aex_exec.c: UC_ERR_EXCEPTION 堆数据恢复 ---
+# 上游重构: run_arm_with_sp 的三个堆数据恢复路径从 arm_ext_executor.c
+# 拆到 aex_exec.c。仅检查 INSN_INVALID,但 EXCEPTION 同样可能导致 PC
+# 落在堆上。扩展条件覆盖 EXCEPTION。
+set(_VMRP_AEX_EXEC2 "${VMRP_SRC_DIR}/src/arm_ext/aex_exec.c")
+if(EXISTS "${_VMRP_AEX_EXEC2}")
+    file(READ "${_VMRP_AEX_EXEC2}" _ae2)
+    if(NOT _ae2 MATCHES "OHOS_EXCEPTION_HEAP_RECOVERY")
         string(REPLACE
             "err == UC_ERR_INSN_INVALID && pc >="
             "(err == UC_ERR_INSN_INVALID || err == UC_ERR_EXCEPTION) && pc >= /* OHOS_EXCEPTION_HEAP_RECOVERY */"
-            _aet7 "${_aet7}")
-        file(WRITE "${_VMRP_ARMEXT7}" "${_aet7}")
-        message(STATUS "[OHOS] Patched UC_ERR_EXCEPTION heap recovery (OHOS_EXCEPTION_HEAP_RECOVERY)")
+            _ae2 "${_ae2}")
+        file(WRITE "${_VMRP_AEX_EXEC2}" "${_ae2}")
+        message(STATUS "[OHOS] Patched UC_ERR_EXCEPTION heap recovery in aex_exec.c (OHOS_EXCEPTION_HEAP_RECOVERY)")
     endif()
 endif()
 
-# --- Patch arm_ext_executor.c: platEx(1001/1002/1012/1013) 内存扩展接口 ---
-# SkyEngine 内存扩展接口: 1001=获取屏幕缓冲 1002=释放屏幕缓冲
-# 1012=申请内部RAM 1013=释放内部RAM。1014/1015 已在源码中实现。
-# 1001/1002/1012/1013 需要从 ARM 堆分配,使 guest 代码能用 ARM 地址访问。
-# 不实现时 dsm.c 返回 MR_IGNORE,mythroad.c 走第一内存(mr_malloc)路径。
-# 实现后 MR_SECOND_BUF 路径可用,减少第一内存压力。
-set(_VMRP_ARMEXT8 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_ARMEXT8}")
-    file(READ "${_VMRP_ARMEXT8}" _aet8)
-    if(NOT _aet8 MATCHES "OHOS_PLATEX_MEM_EXT")
+# --- Patch aex_table.c: platEx(1001/1002/1012/1013) 内存扩展接口 ---
+# 上游重构: case 38 拆为 aex_t038() 在 aex_table.c,缩进从 switch-case
+# 的 12 spaces 变为函数内的 12 spaces(aex_t038 内部缩进与旧 switch 相同)。
+# 经核实: aex_table.c 中 MR_MALLOC_SCRRAM 注释块缩进仍为 12 spaces,
+# 与旧 arm_ext_executor.c 一致,needle 无需调整。
+set(_VMRP_AEX_TABLE2 "${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
+if(EXISTS "${_VMRP_AEX_TABLE2}")
+    file(READ "${_VMRP_AEX_TABLE2}" _at2)
+    if(NOT _at2 MATCHES "OHOS_PLATEX_MEM_EXT")
         string(REPLACE
             "            /*\n             * MR_MALLOC_SCRRAM/MR_FREE_SCRRAM provide scratch RAM that native"
-            "            /* OHOS_PLATEX_MEM_EXT: platEx(1001) 获取屏幕缓冲(第二内存),从 ARM 堆分配\n             * 屏幕大小(SCRW*SCRH*2)的缓冲,guest 代码用返回的 ARM 地址做离屏渲染。\n             * platEx(1002) 释放时清零 addr/len;platEx(1012) 申请内部 cache;\n             * platEx(1013) 释放内部 cache。均与 1014/1015 同模式——ARM 堆分配,\n             * guest 通过写回的 ARM 地址访问,无需 host 指针转换。\n             */\n            if (r0 == 1001) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = 0;\n                /* 屏幕缓冲大小: 从 table[92/93] 读 mr_screen_w/h,\n                 * 兜底用 240*320*2=153600 */\n                {\n                    uint32_t sw = 240, sh = 320;\n                    if (m->screen_w_slot) {\n                        void *sp = arm_ptr(m, m->screen_w_slot);\n                        if (sp) memcpy(&sw, sp, 4);\n                    }\n                    if (m->screen_h_slot) {\n                        void *sp = arm_ptr(m, m->screen_h_slot);\n                        if (sp) memcpy(&sh, sp, 4);\n                    }\n                    if (sw < 16 || sw > 1024) sw = 240;\n                    if (sh < 16 || sh > 1024) sh = 320;\n                    want = sw * sh * 2;\n                }\n                uint32_t a = 0;\n                if (want) {\n                    if (m->screen_buf_addr && want <= m->screen_buf_len) {\n                        a = m->screen_buf_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->screen_buf_addr = a;\n                            m->screen_buf_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_FAILED;\n                break;\n            }\n            if (r0 == 1002) {\n                m->screen_buf_addr = 0;\n                m->screen_buf_len = 0;\n                ret = MR_SUCCESS;\n                break;\n            }\n            if (r0 == 1012) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = (uint32_t)r2;\n                uint32_t a = 0;\n                if (want) {\n                    if (m->iram_addr && want <= m->iram_len) {\n                        a = m->iram_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->iram_addr = a;\n                            m->iram_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_IGNORE;\n                break;\n            }\n            if (r0 == 1013) {\n                m->iram_addr = 0;\n                m->iram_len = 0;\n                ret = MR_SUCCESS;\n                break;\n            }\n            /*\n             * MR_MALLOC_SCRRAM/MR_FREE_SCRRAM provide scratch RAM that native"
-            _aet8 "${_aet8}")
-        file(WRITE "${_VMRP_ARMEXT8}" "${_aet8}")
-        message(STATUS "[OHOS] Patched platEx(1001/1002/1012/1013) memory ext (OHOS_PLATEX_MEM_EXT)")
+            "            /* OHOS_PLATEX_MEM_EXT: platEx(1001) 获取屏幕缓冲(第二内存),从 ARM 堆分配\n             * 屏幕大小(SCRW*SCRH*2)的缓冲,guest 代码用返回的 ARM 地址做离屏渲染。\n             * platEx(1002) 释放时清零 addr/len;platEx(1012) 申请内部 cache;\n             * platEx(1013) 释放内部 cache。均与 1014/1015 同模式——ARM 堆分配,\n             * guest 通过写回的 ARM 地址访问,无需 host 指针转换。\n             */\n            if (r0 == 1001) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = 0;\n                /* 屏幕缓冲大小: 从 table[92/93] 读 mr_screen_w/h,\n                 * 兜底用 240*320*2=153600 */\n                {\n                    uint32_t sw = 240, sh = 320;\n                    if (m->screen_w_slot) {\n                        void *sp = arm_ptr(m, m->screen_w_slot);\n                        if (sp) memcpy(&sw, sp, 4);\n                    }\n                    if (m->screen_h_slot) {\n                        void *sp = arm_ptr(m, m->screen_h_slot);\n                        if (sp) memcpy(&sh, sp, 4);\n                    }\n                    if (sw < 16 || sw > 1024) sw = 240;\n                    if (sh < 16 || sh > 1024) sh = 320;\n                    want = sw * sh * 2;\n                }\n                uint32_t a = 0;\n                if (want) {\n                    if (m->screen_buf_addr && want <= m->screen_buf_len) {\n                        a = m->screen_buf_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->screen_buf_addr = a;\n                            m->screen_buf_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_FAILED;\n                goto aex_done;\n            }\n            if (r0 == 1002) {\n                m->screen_buf_addr = 0;\n                m->screen_buf_len = 0;\n                ret = MR_SUCCESS;\n                goto aex_done;\n            }\n            if (r0 == 1012) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = (uint32_t)r2;\n                uint32_t a = 0;\n                if (want) {\n                    if (m->iram_addr && want <= m->iram_len) {\n                        a = m->iram_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->iram_addr = a;\n                            m->iram_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_IGNORE;\n                goto aex_done;\n            }\n            if (r0 == 1013) {\n                m->iram_addr = 0;\n                m->iram_len = 0;\n                ret = MR_SUCCESS;\n                goto aex_done;\n            }\n            /*\n             * MR_MALLOC_SCRRAM/MR_FREE_SCRRAM provide scratch RAM that native"
+            _at2 "${_at2}")
+        file(WRITE "${_VMRP_AEX_TABLE2}" "${_at2}")
+        message(STATUS "[OHOS] Patched platEx(1001/1002/1012/1013) in aex_table.c (OHOS_PLATEX_MEM_EXT)")
     endif()
 endif()
 
@@ -644,7 +647,7 @@ if(EXISTS "${_VMRP_GIFTICK}")
     if(NOT _gt MATCHES "OHOS_GIF_TICK")
         string(REPLACE
             "    // mrp_setgcthreshold(vm_state, 0);\n    return MR_SUCCESS;\n}"
-            "    // mrp_setgcthreshold(vm_state, 0);\n    /* OHOS_GIF_TICK: 推进 GIF 动画帧，\n     * 由 ohos_image_decode.cpp 提供，在 mr_timer 末尾调用确保\n     * 与 mr_screenBuf 写入串行。仅 __OHOS__ 构建生效。 */\n    { extern void ohos_gif_tick(void); ohos_gif_tick(); }\n    return MR_SUCCESS;\n}"
+            "    // mrp_setgcthreshold(vm_state, 0);\n    /* OHOS_GIF_TICK: 推进 GIF 动画帧，\n     * 由 ohos_image_decode.cpp 提供，在 mr_timer 末尾调用确保\n     * 与 mr_screenBuf 写入串行。仅 __OHOS__ 构建生效。 */\n    { extern void ohos_gif_tick(void); ohos_gif_tick(); }\n    /* OHOS_MOTION_DISPATCH: 每个 timer tick 投递加速度数据到 ARM 侧。\n     * dsm_set_motion_acc() 仅写宿主缓存，mr_event(MR_MOTION_EVENT,mode,arm_addr) 才\n     * 触发 MRP 的 dealevent。必须在 worker/timer 线程调用（写 Unicorn 内存\n     * 和调 mr_event 都需要与 Unicorn 串行）。 */\n    { extern void dsm_dispatch_motion_event(void); dsm_dispatch_motion_event(); }\n    return MR_SUCCESS;\n}"
             _gt "${_gt}")
         file(WRITE "${_VMRP_GIFTICK}" "${_gt}")
         message(STATUS "[OHOS] Patched mr_timer ohos_gif_tick (OHOS_GIF_TICK)")

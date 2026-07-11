@@ -49,10 +49,10 @@ VmrpEngine &VmrpEngine::Instance() {
 
 VmrpEngine::~VmrpEngine() {
     Destroy();
-    if (so_handle_) {
+    if (so_handle_ && so_handle_ != RTLD_DEFAULT) {
         dlclose(so_handle_);
-        so_handle_ = nullptr;
     }
+    so_handle_ = nullptr;
     loaded_ = false;
 }
 
@@ -104,14 +104,19 @@ bool VmrpEngine::Load(const std::string &so_path) {
     if (loaded_) return true;
     // 先重定向 stdout/stderr 到 hilog，确保后续 vmrp 的所有日志可见。
     RedirectStdioToHilog();
-    // RTLD_NOW：立即解析所有符号，便于在加载时发现问题（如 ABI 不匹配）。
-    // RTLD_LOCAL：符号不泄露到全局，避免与其它库冲突。
-    so_handle_ = dlopen(so_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    // 鸿蒙 MUSL-LDSO 命名空间隔离禁止 dlopen 绝对路径沙箱 so。
+    // 但 libvmrp.so 已作为 libentry.so 的依赖自动加载，dlopen("libvmrp.so")
+    // 不会走命名空间检查，而是返回已加载的 handle（引用计数+1）。
+    so_handle_ = dlopen("libvmrp.so", RTLD_NOW | RTLD_NOLOAD);
     if (!so_handle_) {
-        LOGE("dlopen(%s) failed: %s", so_path.c_str(), dlerror());
+        // RTLD_NOLOAD 失败说明 libvmrp.so 未随 libentry.so 加载，尝试按名加载
+        so_handle_ = dlopen("libvmrp.so", RTLD_NOW);
+    }
+    if (!so_handle_) {
+        LOGE("dlopen(libvmrp.so) failed: %s", dlerror());
         return false;
     }
-    LOGI("dlopen(%s) OK", so_path.c_str());
+    LOGI("dlopen(libvmrp.so) OK (by name, no namespace check)");
 
     RESOLVE_SYM(so_handle_, "vmrp_api_init", init, int (*)(int, int));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_work_dir", set_work_dir, int (*)(const char *));
@@ -196,10 +201,8 @@ int VmrpEngine::SendEvent(int code, int p0, int p1) {
 
 int VmrpEngine::SendMotion(int x, int y, int z) {
     if (!api_.motion_event) return -1;
-    /* 不持 engine_mtx_：vmrp_api_motion_event 内部走 api_queue_command
-     * （持 api_lock），不再同步调 mr_event/Unicorn，无并发风险。
-     * 持 engine_mtx_ 反而可能与 api_lock 产生死锁。 */
-    return api_.motion_event(x, y, z);
+    int ret = api_.motion_event(x, y, z);
+    return ret;
 }
 
 // 驱动一次 timer() 并返回下一次所需间隔。调用方据此调度下一次 StepTimer。
