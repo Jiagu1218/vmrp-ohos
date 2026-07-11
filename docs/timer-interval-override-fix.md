@@ -44,10 +44,13 @@ if (code == 2 && !m->host_timer_pending && ...) {
 
 **CMake patch: OHOS_TIMER_NO_OVERRIDE**
 
-在 `arm_ext_call_dispatch` 的两处 `mr_timerStart` 调用前，检查 `sync_timer_state_from_arm` 后的 `m->host_timer_pending`：
+在 `arm_ext_call_dispatch`（`arm_ext_executor.c`，未拆分）的两处 `mr_timerStart` 调用前，检查 `sync_timer_state_from_arm` 后的 `m->host_timer_pending`：
 
 - `host_timer_pending == 1`：ARM 侧已通过 `table[31]` 设了自己的 timer interval，**不覆盖**
 - `host_timer_pending == 0`：ARM 侧未设 timer，补启 50ms tick 驱动 wrapper queue
+
+> **注意**: `arm_ext_call_dispatch` 仍留在 `arm_ext_executor.c`（line 2026），未随 Phase 0-5 重构拆分。
+> `run_arm_with_sp` 和堆数据恢复已拆到 `aex_exec.c`，但 dispatch 和 timer 逻辑仍在本文件。
 
 ### 第一处：wrapper_timer_owner + queue_live
 
@@ -99,7 +102,7 @@ if (tc_after) {
 
 ## host_timer_pending 状态分析
 
-`sync_timer_state_from_arm()` 在 `run_arm_with_sp()` 之后执行，可能修改 `host_timer_pending`：
+`sync_timer_state_from_arm()` 在 `run_arm_with_sp()`（`aex_exec.c`）之后执行，可能修改 `host_timer_pending`：
 
 | ARM 行为 | arm_timer_state | sync 后 host_timer_pending | _arm_set_timer | 补启? |
 |----------|----------------|---------------------------|----------------|-------|

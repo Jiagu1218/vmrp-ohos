@@ -31,7 +31,7 @@ dsm.c  dsm_dispatch_motion_event()
     ↓   dsm_get_motion_acc()         ← 读取缓存
     ↓   arm_ext_write_motion_acc()   ← 写入 Unicorn VM 内存
     ↓   返回 ARM 可见 32 位地址 (如 0x002259C0)
-    ↓ mr_event(MR_MOTION_EVENT, mode, arm_addr)
+    ↓ mr_event(MR_MOTION_EVENT=18, mode, arm_addr)
 mythroad.c  mr_event()
     ↓ native_ext_callback3(func, type, param1, arm_addr)
 ARM EXT 代码  dealevent(MR_MOTION_EVENT, mode, addr)
@@ -137,7 +137,31 @@ vmrp_engine.cpp  StopSensor()
 **解决方案**：`SendMotion()` 不持 `engine_mtx_`。因为 `vmrp_api_motion_event()`
 只做缓存+入队（持 `api_lock`），不同步调用 Unicorn，无并发风险。
 
-### 7. 灵敏度设置
+### 7. MR_MOTION_EVENT 事件类型值（已修复）
+
+早期实现中 `dsm_dispatch_motion_event()` 调用 `mr_event(42, mode, arm_addr)`，
+使用硬编码值 42 作为事件类型。但 MRP SDK 的事件枚举中 `MR_MOTION_EVENT = 18`
+（紧接 `MR_DATA_ACCOUNT_EVENT = 17`）。ARM EXT 代码的 `dealevent` 处理函数
+检查 `event.code == 18` 来识别动感事件，收到 42 时不会处理，直接返回 MR_SUCCESS，
+导致动感数据投递链路完整、mr_event 返回成功，但游戏画面不响应倾斜。
+
+**根因**：MR_MOTION_EVENT 在事件枚举中的数值为 18，而非 42。42 不属于任何
+已知事件类型，MRP 应用的 dealevent 默认路径对未知事件返回 MR_SUCCESS 但不处理。
+
+**修复**：使用 `mr_event(MR_MOTION_EVENT, mode, arm_addr)` 代替硬编码 42。
+`MR_MOTION_EVENT` 在 `mrporting.h` 中定义，dsm.c 通过 `dsm.h → mrporting.h`
+包含链可见此枚举。修复后 3D 滚球游戏倾斜控制恢复正常。
+
+**事件枚举对照**：
+```
+MR_KEY_PRESS=0, MR_KEY_RELEASE=1, MR_MOUSE_DOWN=2, MR_MOUSE_UP=3,
+MR_MENU_SELECT=4, MR_MENU_RETURN=5, MR_DIALOG_EVENT=6, MR_SMS_INDICATION=7,
+MR_EVENT_EXIT=8, MR_SMS_RESULT=9, MR_LOCALUI_EVENT=10, MR_OSD_EVENT=11,
+MR_MOUSE_MOVE=12, MR_ERROR_EVENT=13, MR_PHB_EVENT=14, MR_SMS_OP_EVENT=15,
+MR_SMS_GET_SC=16, MR_DATA_ACCOUNT_EVENT=17, MR_MOTION_EVENT=18
+```
+
+### 8. 灵敏度设置
 
 **实现**：
 - `vmrp_api_set_motion_sensitivity(float)` — 设置全局灵敏度倍率（默认 1.0）
@@ -201,13 +225,15 @@ void dsm_get_motion_acc(int32 *x, int32 *y, int32 *z);
 
 ```c
 void dsm_dispatch_motion_event(void) {
-    if (motion_enabled) {
-        uint32 arm_addr = dsm_write_motion_acc_to_arm();
-        if (!arm_addr) return;
-        mr_event(MR_MOTION_EVENT, motion_mode, (int32)arm_addr);
-    }
+    if (!motion_enabled) return;
+    uint32 arm_addr = dsm_write_motion_acc_to_arm();
+    if (!arm_addr) return;
+    mr_event(MR_MOTION_EVENT, motion_mode, (int32)arm_addr);
 }
 ```
+
+> **注意**：事件类型必须使用 `MR_MOTION_EVENT`（枚举值 18），不能使用硬编码 42。
+> 详见"关键设计决策 §7"。
 
 #### 2.5 mr_plat() 新增 case 4001~4006
 
@@ -651,6 +677,9 @@ this.engine.setMotionSensitivity(sensitivity);
 | `OH_Sensor_Unsubscribe OK (accelerometer)` | `vmrp_engine` | 传感器取消订阅（断电） |
 | `motion power callback registered` | `vmrp_engine` | 上电/断电回调注册成功 |
 
+> 开发调试时可设置环境变量 `VMRP_ARM_EXT_TRACE=1` 启用 ARM EXT table 调用追踪，
+> 该开关会产生大量日志，生产环境不应启用。
+
 ---
 
 ## 兼容性说明
@@ -701,6 +730,13 @@ struct T_MOTION_ACC {
 
 3. **灵敏度需重启游戏生效**：灵敏度倍率在 C 层作为全局变量生效，
    修改设置页后需重新启动 MRP 游戏才能应用新值。
+
+4. **部分游戏不调 mr_plat(4001-4006)**：少数 MRP 游戏（如某些 3D 滚球）
+   不通过标准 mr_plat 动感 API 初始化传感器，而是直接依赖 mr_event 回调
+   接收 MR_MOTION_EVENT 事件。这类游戏依赖前一个游戏遗留的 motion_enabled=1
+   状态和已启动的传感器。若直接启动此类游戏（无前置游戏调用 mr_plat 4002 上电），
+   传感器未启动，动感功能不可用。已确认的事件类型修复（42→MR_MOTION_EVENT=18）
+   对调用过 mr_plat 的游戏有效，但未调 mr_plat 上电的游戏仍受此限制影响。
 
 ---
 

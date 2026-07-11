@@ -17,8 +17,8 @@ vmrp_core: arm_ext_executor: pc bytes @0x226354: 1E FF 2F E1 21 01 00 00 26 00 0
 ### 调用链
 
 1. Timer 回调执行 → guest ARM 代码触发 SVC 软中断
-2. `arm_ext_executor.c:2982` 设置 `m->pending_intr_no = intno`
-3. `uc_emu_start` 本身返回 `UC_ERR_OK`，但第 3038-3039 行因 `pending_intr_no != 0` **人为将 err 改为 UC_ERR_EXCEPTION**：
+2. `aex_exec.c:51-57` `arm_ext_mark_unhandled_intr()` 设置 `m->pending_intr_no = intno`
+3. `uc_emu_start` 本身返回 `UC_ERR_OK`，但 `run_arm_with_sp()` (line 100) 内因 `pending_intr_no != 0` **人为将 err 改为 UC_ERR_EXCEPTION**（line 109/148）：
    ```c
    if (err == UC_ERR_OK && m->pending_intr_no) {
        err = UC_ERR_EXCEPTION;
@@ -29,7 +29,7 @@ vmrp_core: arm_ext_executor: pc bytes @0x226354: 1E FF 2F E1 21 01 00 00 26 00 0
 
 ### 为什么恢复失败
 
-`run_arm_with_sp` 中有三个堆数据恢复块（`arm_ext_executor.c:3093/3115/3144`），条件均为：
+`run_arm_with_sp` 中有三个堆数据恢复块（`aex_exec.c:164/186/215`），条件均为：
 
 ```c
 if (err == UC_ERR_INSN_INVALID && pc >= EXT_...)
@@ -37,11 +37,11 @@ if (err == UC_ERR_INSN_INVALID && pc >= EXT_...)
 
 但此时 `err == UC_ERR_EXCEPTION`（因 pending_intr_no 人为设置），**不匹配 UC_ERR_INSN_INVALID**：
 
-1. 第 3093 行 `err == UC_ERR_INSN_INVALID` — 不匹配 ❌
-2. 第 3115 行 `err == UC_ERR_INSN_INVALID` — 不匹配 ❌
-3. 第 3144 行 `err == UC_ERR_INSN_INVALID` — 不匹配 ❌
-4. 第 3178 行 `err == UC_ERR_EXCEPTION` — 匹配，但检查 `sp_diff < 0x4000`，PC=0x226354 与 SP 距离远 ❌
-5. 最终走到第 3189 行打印错误日志，返回 `MR_FAILED` → **timer 永久死亡**
+1. 第 164 行 `err == UC_ERR_INSN_INVALID` — 栈漂进代码段，不匹配 ❌
+2. 第 186 行 `err == UC_ERR_INSN_INVALID` — PC-2 是 Thumb-2 中点，不匹配 ❌
+3. 第 215 行 `err == UC_ERR_INSN_INVALID` — 堆数据/FF FF/lr_in_wrapper，不匹配 ❌
+4. 第 249 行 `err == UC_ERR_EXCEPTION` — 匹配，但检查 `sp_diff < 0x4000`，PC=0x226354 与 SP 距离远 ❌
+5. 最终走到第 260 行打印错误日志，返回 `MR_FAILED` → **timer 永久死亡**
 
 ## 修复方案
 
@@ -57,20 +57,20 @@ if (err == UC_ERR_INSN_INVALID && pc >= EXT_CODE_ADDR ...)
 if ((err == UC_ERR_INSN_INVALID || err == UC_ERR_EXCEPTION) && pc >= EXT_CODE_ADDR ... /* OHOS_EXCEPTION_HEAP_RECOVERY */)
 ```
 
-三个恢复块全部生效：
+三个恢复块全部生效（文件 `aex_exec.c`，上游重构从 `arm_ext_executor.c` 拆出）：
 | 行号 | PC 范围 | 恢复行为 |
 |------|---------|---------|
-| 3093 | `EXT_CODE_ADDR ~ EXT_CODE_ADDR+code_len` | 栈漂进代码段 → 干净退出 |
-| 3115 | `EXT_HEAP_ADDR ~ +2` | PC-2 是 Thumb-2 指令中点 → 干净退出 |
-| 3144 | `EXT_HEAP_ADDR ~ EXT_BASE_ADDR+EXT_MEM_SIZE` | 堆数据（0xFF/0x00/lr_in_wrapper）→ 干净退出 |
+| 164 | `EXT_CODE_ADDR ~ EXT_CODE_ADDR+code_len` | 栈漂进代码段 → 干净退出 |
+| 186 | `EXT_HEAP_ADDR ~ +2` | PC-2 是 Thumb-2 指令中点 → 干净退出 |
+| 215 | `EXT_HEAP_ADDR ~ EXT_BASE_ADDR+EXT_MEM_SIZE` | 堆数据（0xFF/0x00/lr_in_wrapper）→ 干净退出 |
 
 ## 实现细节
 
-- **文件**: `scripts/CMakeLists.txt`，独立 patch 块 `_VMRP_ARMEXT7`
+- **文件**: `scripts/CMakeLists.txt`，独立 patch 块，目标 `aex_exec.c`
 - **幂等标记**: `OHOS_EXCEPTION_HEAP_RECOVERY`
 - **替换方式**: `string(REPLACE)` 批量替换 `err == UC_ERR_INSN_INVALID && pc >=` 为带 EXCEPTION 扩展的版本
 - **替换次数**: 3 处（源码中有 3 个匹配点，`string(REPLACE)` 默认 replace all）
-- **不影响**: 第 3178 行的 `if (err == UC_ERR_EXCEPTION)` 栈近 SP 检查仍然独立保留
+- **不影响**: 第 249 行的 `if (err == UC_ERR_EXCEPTION)` 栈近 SP 检查仍然独立保留
 
 ## 影响分析
 
