@@ -29,6 +29,9 @@ public:
     void Pause();
     void Resume();
 
+    // 音量控制: level 0~10 映射到 OH_AudioRenderer_SetVolume [0.0,1.0]。
+    void SetVolume(int level);
+
     // OHAudio callback (audio thread): fill PCM data.
     void OnWriteData(OH_AudioRenderer *renderer, void *audioData, int32_t audioDataSize);
 

@@ -412,7 +412,7 @@ if(EXISTS "${_VMRP_API}")
     if(NOT _api_text MATCHES "OHOS_MEDIA_API")
         string(REPLACE
             "VMRP_EXPORT void vmrp_api_audio_stop(void) {\n    native_audio_stop();\n}"
-            "VMRP_EXPORT void vmrp_api_audio_stop(void) {\n    native_audio_stop();\n}\n\n/* OHOS_MEDIA_API: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * 宿主通过这些符号实现 MRP 音频的暂停/恢复/跳转/进度/总时长查询。\n * pause/resume 通知宿主停启 OHAudio renderer,避免拉流空转。 */\nstatic void (*media_pause_cb)(void) = NULL;\nstatic void (*media_resume_cb)(void) = NULL;\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void)) {\n    media_pause_cb = pause_cb;\n    media_resume_cb = resume_cb;\n}\nVMRP_EXPORT void vmrp_api_media_pause(void) {\n    native_audio_pause();\n    if (media_pause_cb) media_pause_cb();\n}\nVMRP_EXPORT void vmrp_api_media_resume(void) {\n    native_audio_resume();\n    if (media_resume_cb) media_resume_cb();\n}\nVMRP_EXPORT int vmrp_api_media_seek(int ms) {\n    return native_audio_seek(ms);\n}\nVMRP_EXPORT int vmrp_api_media_position(void) {\n    return native_audio_position();\n}\nVMRP_EXPORT int vmrp_api_media_duration(void) {\n    return native_audio_duration();\n}"
+            "VMRP_EXPORT void vmrp_api_audio_stop(void) {\n    native_audio_stop();\n}\n\n/* OHOS_MEDIA_API: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * 宿主通过这些符号实现 MRP 音频的暂停/恢复/跳转/进度/总时长查询。\n * pause/resume 通知宿主停启 OHAudio renderer,避免拉流空转。 */\nstatic void (*media_pause_cb)(void) = NULL;\nstatic void (*media_resume_cb)(void) = NULL;\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void)) {\n    media_pause_cb = pause_cb;\n    media_resume_cb = resume_cb;\n}\nVMRP_EXPORT void vmrp_api_media_pause(void) {\n    native_audio_pause();\n    if (media_pause_cb) media_pause_cb();\n}\nVMRP_EXPORT void vmrp_api_media_resume(void) {\n    native_audio_resume();\n    if (media_resume_cb) media_resume_cb();\n}\nVMRP_EXPORT int vmrp_api_media_seek(int ms) {\n    return native_audio_seek(ms);\n}\nVMRP_EXPORT int vmrp_api_media_position(void) {\n    return native_audio_position();\n}\nVMRP_EXPORT int vmrp_api_media_duration(void) {\n    return native_audio_duration();\n}\n\n/* OHOS_VOLUME_API: 音量控制。MRP 调 mr_plat(1302,level) 时触发,\n * 宿主通过回调调 OH_AudioRenderer_SetVolume。level 通常 0~10。 */\nstatic void (*volume_cb)(int) = NULL;\nVMRP_EXPORT void vmrp_api_set_volume_cb(void (*cb)(int)) {\n    volume_cb = cb;\n}\nVMRP_EXPORT void vmrp_api_set_volume(int level) {\n    if (volume_cb) volume_cb(level);\n}"
             _api_text "${_api_text}")
         file(WRITE "${_VMRP_API}" "${_api_text}")
         message(STATUS "[OHOS] Patched vmrp_api.c (OHOS_MEDIA_API)")
@@ -427,7 +427,7 @@ if(EXISTS "${_VMRP_API_H}")
     if(NOT _api_h_text MATCHES "OHOS_MEDIA_DECL")
         string(REPLACE
             "VMRP_EXPORT void vmrp_api_audio_stop(void);"
-            "VMRP_EXPORT void vmrp_api_audio_stop(void);\n\n/* OHOS_MEDIA_DECL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * vmrp_api_media_seek: 跳转到 ms 位置,返回 MR_SUCCESS/MR_FAILED。\n * vmrp_api_media_position: 当前播放位置(ms)。\n * vmrp_api_media_duration: 总时长(ms),未知返回0。\n * vmrp_api_set_media_cb: 注册暂停/恢复回调,宿主收到回调时停启 OHAudio renderer。 */\nVMRP_EXPORT void vmrp_api_media_pause(void);\nVMRP_EXPORT void vmrp_api_media_resume(void);\nVMRP_EXPORT int vmrp_api_media_seek(int ms);\nVMRP_EXPORT int vmrp_api_media_position(void);\nVMRP_EXPORT int vmrp_api_media_duration(void);\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void));"
+            "VMRP_EXPORT void vmrp_api_audio_stop(void);\n\n/* OHOS_MEDIA_DECL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * vmrp_api_media_seek: 跳转到 ms 位置,返回 MR_SUCCESS/MR_FAILED。\n * vmrp_api_media_position: 当前播放位置(ms)。\n * vmrp_api_media_duration: 总时长(ms),未知返回0。\n * vmrp_api_set_media_cb: 注册暂停/恢复回调,宿主收到回调时停启 OHAudio renderer。 */\nVMRP_EXPORT void vmrp_api_media_pause(void);\nVMRP_EXPORT void vmrp_api_media_resume(void);\nVMRP_EXPORT int vmrp_api_media_seek(int ms);\nVMRP_EXPORT int vmrp_api_media_position(void);\nVMRP_EXPORT int vmrp_api_media_duration(void);\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void));\n\n/* OHOS_VOLUME_DECL: 音量控制。vmrp_api_set_volume: MRP 调 mr_plat(1302,level)\n * 时触发,level 通常 0~10。宿主收到回调时调 OH_AudioRenderer_SetVolume。 */\nVMRP_EXPORT void vmrp_api_set_volume(int level);\nVMRP_EXPORT void vmrp_api_set_volume_cb(void (*cb)(int level));"
             _api_h_text "${_api_h_text}")
         file(WRITE "${_VMRP_API_H}" "${_api_h_text}")
         message(STATUS "[OHOS] Patched vmrp_api.h (OHOS_MEDIA_DECL)")
@@ -821,6 +821,23 @@ if(EXISTS "${_VMRP_DSMBC}")
             _dsm_bc "${_dsm_bc}")
         file(WRITE "${_VMRP_DSMBC}" "${_dsm_bc}")
         message(STATUS "[OHOS] Patched mr_start_dsmB/C/ex in mythroad.c (OHOS_DSM_BC_EX)")
+    endif()
+endif()
+
+# --- Patch dsm.c: OHOS_SET_VOL — mr_plat(MR_SET_VOL=1302) 音量控制 ---
+# MRP 应用调 mr_plat(1302, level) 设置音量,level 通常 0~10(0=静音,10=最大)。
+# 上游无实现(fall through → MR_IGNORE)。修复:存储 level 并通知宿主调
+# OH_AudioRenderer_SetVolume。不在此做软件缩放,避免与 OHAudio renderer 音量双算。
+set(_VMRP_DSM_VOL "${VMRP_SRC_DIR}/src/mythroad/dsm.c")
+if(EXISTS "${_VMRP_DSM_VOL}")
+    file(READ "${_VMRP_DSM_VOL}" _dsm_vol)
+    if(NOT _dsm_vol MATCHES "OHOS_SET_VOL")
+        string(REPLACE
+            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        default:"
+            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        case MR_SET_VOL: {  /* OHOS_SET_VOL: 1302 音量控制, param=0~10 */\n            extern void vmrp_api_set_volume(int level);\n            vmrp_api_set_volume(param);\n            return MR_SUCCESS;\n        }\n        default:"
+            _dsm_vol "${_dsm_vol}")
+        file(WRITE "${_VMRP_DSM_VOL}" "${_dsm_vol}")
+        message(STATUS "[OHOS] Patched dsm.c MR_SET_VOL (OHOS_SET_VOL)")
     endif()
 endif()
 

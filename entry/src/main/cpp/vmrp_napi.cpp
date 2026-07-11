@@ -272,6 +272,11 @@ static napi_value StartEngine(napi_env env, napi_callback_info info) {
         if (pause) g_audio.Pause(); else g_audio.Resume();
     });
 
+    // 注册音量回调：dsm.c mr_plat(1302,level) 通过 vmrp_api_set_volume 触发。
+    VmrpEngine::Instance().SetVolumeFn([](int level) {
+        g_audio.SetVolume(level);
+    });
+
     int r = VmrpEngine::Instance().Start(mrp, ext, entry);
     if (r == 0 && VmrpEngine::Instance().IsRunning()) {
         g_engine_running.store(true);

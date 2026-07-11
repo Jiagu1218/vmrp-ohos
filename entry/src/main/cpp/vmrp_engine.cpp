@@ -161,6 +161,14 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmC", start_dsmC, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "vmrp_api_start_dsm_ex", start_dsm_ex, int (*)(const char *, const char *));
 
+    // Volume API may not exist in older builds; optional resolve.
+    {
+        void *sym = dlsym(so_handle_, "vmrp_api_set_volume");
+        if (sym) api_.set_volume = reinterpret_cast<void (*)(int)>(sym);
+        sym = dlsym(so_handle_, "vmrp_api_set_volume_cb");
+        if (sym) api_.set_volume_cb = reinterpret_cast<void (*)(void (*)(int))>(sym);
+    }
+
     loaded_ = true;
     LOGI("vmrp API resolved, loaded=true");
 
@@ -230,6 +238,15 @@ bool VmrpEngine::Load(const std::string &so_path) {
             }
         );
         LOGI("media pause/resume callback registered");
+    }
+
+    // 注册音量回调：dsm.c mr_plat(1302,level) 调 vmrp_api_set_volume 时
+    // 通知宿主调 OH_AudioRenderer_SetVolume。
+    if (api_.set_volume_cb) {
+        api_.set_volume_cb([](int level) {
+            VmrpEngine::Instance().SetVolume(level);
+        });
+        LOGI("volume callback registered");
     }
 
     return true;
@@ -421,4 +438,8 @@ void VmrpEngine::SetShakeIntensity(int level) {
     if (level > 2) level = 2;
     shake_intensity_ = level;
     LOGI("shake intensity set to %{public}d (0=light,1=medium,2=strong)", level);
+}
+
+void VmrpEngine::SetVolume(int level) {
+    if (volume_fn_) volume_fn_(level);
 }

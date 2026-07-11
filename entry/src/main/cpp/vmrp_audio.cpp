@@ -100,4 +100,13 @@ void VmrpAudio::Resume() {
     }
 }
 
+void VmrpAudio::SetVolume(int level) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    if (renderer_) {
+        float vol = (level < 0) ? 0.0f : (level > 10) ? 1.0f : (static_cast<float>(level) / 10.0f);
+        OH_AudioStream_Result r = OH_AudioRenderer_SetVolume(renderer_, vol);
+        LOGI("audio renderer set volume: level=%d vol=%.2f result=%d", level, vol, r);
+    }
+}
+
 VmrpAudio::~VmrpAudio() { Stop(); }

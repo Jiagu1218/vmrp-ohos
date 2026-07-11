@@ -63,6 +63,9 @@ struct VmrpApi {
 
     void (*set_media_cb)(void (*pause_cb)(void), void (*resume_cb)(void));
 
+    void (*set_volume)(int level);
+    void (*set_volume_cb)(void (*cb)(int level));
+
     int (*start_dsmB)(const char *entry);
     int (*start_dsmC)(const char *entry);
     int (*start_dsm_ex)(const char *path, const char *entry);
@@ -128,6 +131,11 @@ public:
     using AudioPauseFn = void (*)(bool);
     void SetAudioPauseFn(AudioPauseFn fn) { audio_pause_fn_ = fn; }
 
+    // 音量控制: MRP 调 mr_plat(1302,level) 时回调触发。
+    using VolumeFn = void (*)(int level);
+    void SetVolumeFn(VolumeFn fn) { volume_fn_ = fn; }
+    void SetVolume(int level);
+
     // 文本编辑。
     bool EditActive();
     std::string GetEditText();
@@ -165,6 +173,7 @@ private:
     std::mutex engine_mtx_;
     std::atomic<bool> media_paused_{false};
     AudioPauseFn audio_pause_fn_ = nullptr;
+    VolumeFn volume_fn_ = nullptr;
 };
 
 #endif // VMRP_ENGINE_H
