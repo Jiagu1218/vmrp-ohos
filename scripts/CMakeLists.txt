@@ -632,7 +632,7 @@ if(EXISTS "${_VMRP_NET}")
 "    clientService.sin_family = AF_INET;\n"
 "    clientService.sin_port = htons(port);\n"
 "    clientService.sin_addr.s_addr = htonl(ip);\n"
-"    printf(\"my_connect('%s', %d)\\n\", inet_ntoa(clientService.sin_addr), port);\n"
+"    printf(\"my_connect(fd:%d, '%s', %d)\\n\", (int)s, inet_ntoa(clientService.sin_addr), port);\n"
 "#ifndef _MSC_VER\n"
 "    int flags = fcntl(s, F_GETFL, 0);\n"
 "    if (flags < 0) { printf(\"my_connect fcntl get fail\\n\"); return MR_FAILED; }\n"
