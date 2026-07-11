@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sensors/oh_sensor.h>
+#include <sensors/vibrator.h>
 
 #include <atomic>
 #include <chrono>
@@ -148,6 +149,7 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_cancel_edit", cancel_edit, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_power_cb", set_motion_power_cb, void (*)(void (*)(int)));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_sensitivity", set_motion_sensitivity, void (*)(float));
+    RESOLVE_SYM(so_handle_, "vmrp_api_set_shake_cb", set_shake_cb, void (*)(void (*)(int), void (*)(void)));
 
     loaded_ = true;
     LOGI("vmrp API resolved, loaded=true");
@@ -163,6 +165,39 @@ bool VmrpEngine::Load(const std::string &so_path) {
             }
         });
         LOGI("motion power callback registered");
+    }
+
+    // 注册震动回调：native_dsm_funcs.c 的 native_startShake/stopShake 通过
+    // vmrp_api_start_shake/stop_shake 调此回调驱动 OH_Vibrator C API。
+    // intensity: 0=轻(duration*0.3, touch), 1=中(duration*1.0, touch), 2=强(duration*2.0, alarm)
+    if (api_.set_shake_cb) {
+        api_.set_shake_cb(
+            [](int ms) {
+                int level = VmrpEngine::Instance().GetShakeIntensity();
+                int32_t duration = ms > 0 ? ms : 200;
+                Vibrator_Usage usage = VIBRATOR_USAGE_TOUCH;
+                if (level == 0) {
+                    duration = std::max(50, duration * 3 / 10);
+                } else if (level == 2) {
+                    duration = duration * 2;
+                    usage = VIBRATOR_USAGE_ALARM;
+                }
+                Vibrator_Attribute attr;
+                attr.vibratorId = 0;
+                attr.usage = usage;
+                int32_t ret = OH_Vibrator_PlayVibration(duration, attr);
+                if (ret != 0) {
+                    OH_LOG_INFO(LOG_APP, "OH_Vibrator_PlayVibration failed: %{public}d", ret);
+                }
+            },
+            []() {
+                int32_t ret = OH_Vibrator_Cancel();
+                if (ret != 0) {
+                    OH_LOG_INFO(LOG_APP, "OH_Vibrator_Cancel failed: %{public}d", ret);
+                }
+            }
+        );
+        LOGI("shake callback registered (OH_Vibrator C API)");
     }
     return true;
 }
@@ -316,4 +351,11 @@ void VmrpEngine::StopSensor() {
 void VmrpEngine::SetMotionSensitivity(float s) {
     motion_sensitivity_ = s;
     if (api_.set_motion_sensitivity) api_.set_motion_sensitivity(s);
+}
+
+void VmrpEngine::SetShakeIntensity(int level) {
+    if (level < 0) level = 0;
+    if (level > 2) level = 2;
+    shake_intensity_ = level;
+    LOGI("shake intensity set to %{public}d (0=light,1=medium,2=strong)", level);
 }

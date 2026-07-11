@@ -51,6 +51,8 @@ struct VmrpApi {
 
     void (*set_motion_power_cb)(void (*cb)(int on));
     void (*set_motion_sensitivity)(float sensitivity);
+
+    void (*set_shake_cb)(void (*start)(int ms), void (*stop)(void));
 };
 
 // 单例引擎。所有方法都应在引擎线程（EngineThread）上调用；
@@ -108,6 +110,10 @@ public:
     void SetMotionSensitivity(float s);
     float GetMotionSensitivity() const { return motion_sensitivity_; }
 
+    // 震动强度：0=轻, 1=中(默认), 2=强。影响 OH_Vibrator_PlayVibration 的 duration 和 usage。
+    void SetShakeIntensity(int level);
+    int GetShakeIntensity() const { return shake_intensity_; }
+
     const VmrpApi *Api() const { return &api_; }
 
 private:
@@ -121,6 +127,7 @@ private:
     VmrpApi api_ = {};
     bool sensor_subscribed_ = false;
     float motion_sensitivity_ = 1.0f;
+    int shake_intensity_ = 1;
     // Unicorn ARM 引擎不支持并发。触摸线程的 SendEvent 和 timer 线程的 StepTimer
     // 都会调 uc_emu_start 执行 ARM 代码，并发会导致 TCG 的 TB cache/链表损坏
     //（translate-all.c g_assert_not_reached，UC_ERR_EXCEPTION），表现为运行中闪退。

@@ -12,6 +12,7 @@ export const stop: () => void;
 export const sendKey: (type: number, key: number) => number;
 export const sendMotion: (x: number, y: number, z: number) => number;
 export const setMotionSensitivity: (sensitivity: number) => void;
+export const setShakeIntensity: (level: number) => void;
 export const submitEdit: (text: string) => number;
 export const cancelEdit: () => number;
 export const isRunning: () => boolean;

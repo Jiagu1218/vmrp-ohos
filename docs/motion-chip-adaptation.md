@@ -738,6 +738,10 @@ struct T_MOTION_ACC {
    传感器未启动，动感功能不可用。已确认的事件类型修复（42→MR_MOTION_EVENT=18）
    对调用过 mr_plat 的游戏有效，但未调 mr_plat 上电的游戏仍受此限制影响。
 
+5. **震动接口**：动感芯片的晃动模式（mr_plat 4004, MR_MOTION_EVENT_SHAKE=0）
+   是传感器数据上报，与 `mr_startShake(ms)` / `mr_stopShake()` 震动马达接口
+   是独立的两套 API。震动马达适配详见 `docs/vibration-adaptation.md`。
+
 ---
 
 ## 修改文件汇总

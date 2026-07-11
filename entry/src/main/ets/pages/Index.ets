@@ -490,6 +490,8 @@ struct Index {
         this.engine.setMemory(mem);
         const sensitivity = (await pref.get('motion_sensitivity', 1.0)) as number;
         this.engine.setMotionSensitivity(sensitivity);
+        const shakeIntensity = (await pref.get('shake_intensity', 1)) as number;
+        this.engine.setShakeIntensity(shakeIntensity);
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }

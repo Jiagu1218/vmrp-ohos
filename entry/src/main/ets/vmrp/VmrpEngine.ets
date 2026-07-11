@@ -16,6 +16,7 @@ import {
   start as nativeStart, stop as nativeStop, sendKey as nativeSendKey,
   sendMotion as nativeSendMotion,
   setMotionSensitivity as nativeSetMotionSensitivity,
+  setShakeIntensity as nativeSetShakeIntensity,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
   createSurfaceNode as nativeCreateSurfaceNode
@@ -91,6 +92,10 @@ export class VmrpEngineTs {
   // 设置动感灵敏度倍率（默认 1.0，大于 1 提高灵敏度）。
   setMotionSensitivity(sensitivity: number): void {
     nativeSetMotionSensitivity(sensitivity);
+  }
+
+  setShakeIntensity(level: number): void {
+    nativeSetShakeIntensity(level);
   }
 
   submitEdit(text: string): number {

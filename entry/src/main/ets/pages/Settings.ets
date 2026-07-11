@@ -6,6 +6,7 @@ import { HapticManager, HapticState, HapticStrength } from '../common/HapticMana
 const PREF_NAME = 'vmrp_settings';
 const KEY_MEMORY = 'memory_mb';
 const KEY_SENSITIVITY = 'motion_sensitivity';
+const KEY_SHAKE_INTENSITY = 'shake_intensity';
 const SENSITIVITY_MIN = 0.2;
 const SENSITIVITY_MAX = 3.0;
 const SENSITIVITY_STEP = 0.1;
@@ -20,6 +21,10 @@ const STRENGTH_OPTIONS: SelectOption[] = [
 ];
 const STRENGTH_VALUES: HapticStrength[] =
   [HapticStrength.LIGHT, HapticStrength.MEDIUM, HapticStrength.STRONG];
+const SHAKE_INTENSITY_OPTIONS: SelectOption[] = [
+  { value: '轻柔' }, { value: '适中' }, { value: '强烈' }
+];
+const SHAKE_INTENSITY_VALUES: number[] = [0, 1, 2];
 
 @ComponentV2
 export struct SettingsPage {
@@ -27,6 +32,7 @@ export struct SettingsPage {
   @Local selectedIndex: number = 0;
   @Local hapticEnabled: boolean = true;
   @Local strengthIndex: number = 1;
+  @Local shakeIntensityIndex: number = 1;
   @Local sensitivity: number = SENSITIVITY_DEFAULT;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
@@ -49,6 +55,9 @@ export struct SettingsPage {
       this.selectedIndex = MEMORY_VALUES.indexOf(this.memoryMb);
       if (this.selectedIndex < 0) this.selectedIndex = 0;
       this.sensitivity = (await this.pref.get(KEY_SENSITIVITY, SENSITIVITY_DEFAULT)) as number;
+      const shakeIntensity = (await this.pref.get(KEY_SHAKE_INTENSITY, 1)) as number;
+      this.shakeIntensityIndex = SHAKE_INTENSITY_VALUES.indexOf(shakeIntensity);
+      if (this.shakeIntensityIndex < 0) this.shakeIntensityIndex = 1;
     } catch (_e) {
     }
   }
@@ -93,6 +102,19 @@ export struct SettingsPage {
       if (ctx) {
         const pref = await preferences.getPreferences(ctx, PREF_NAME);
         await pref.put(KEY_SENSITIVITY, val);
+        await pref.flush();
+      }
+    } catch (_e) {
+    }
+  }
+
+  async saveShakeIntensity(index: number): Promise<void> {
+    this.shakeIntensityIndex = index;
+    try {
+      const ctx = this.getUIContext().getHostContext();
+      if (ctx) {
+        const pref = await preferences.getPreferences(ctx, PREF_NAME);
+        await pref.put(KEY_SHAKE_INTENSITY, SHAKE_INTENSITY_VALUES[index]);
         await pref.flush();
       }
     } catch (_e) {
@@ -251,6 +273,38 @@ export struct SettingsPage {
 
             ListItem() {
               Text('调节按键触控时的震动反馈力度，选择后即时体验。')
+                .fontSize(12)
+                .fontColor('#666688')
+                .width('100%')
+                .padding({ left: 16, right: 16, top: 4, bottom: 12 })
+            }
+          }
+          .divider({ strokeWidth: 0.5, color: '#2A2A4E', startMargin: 16, endMargin: 16 })
+          .backgroundColor('#1A1A2E')
+          .borderRadius(16)
+
+          ListItemGroup({ header: this.sectionHeader('游戏震动') }) {
+            ListItem() {
+              Row() {
+                Text('震动强度')
+                  .fontSize(16)
+                  .fontColor('#CCCCCC')
+                  .layoutWeight(1)
+
+                this.selectStyle(SHAKE_INTENSITY_OPTIONS, this.shakeIntensityIndex,
+                  SHAKE_INTENSITY_OPTIONS[this.shakeIntensityIndex].value as string,
+                  (index: number) => {
+                    this.saveShakeIntensity(index);
+                  })
+              }
+              .width('100%')
+              .height(56)
+              .alignItems(VerticalAlign.Center)
+              .padding({ left: 16, right: 16 })
+            }
+
+            ListItem() {
+              Text('调节游戏中 mr_startShake 触发的振动强度。轻柔=短振, 强烈=长振+闹钟模式。即时生效。')
                 .fontSize(12)
                 .fontColor('#666688')
                 .width('100%')

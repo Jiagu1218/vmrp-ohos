@@ -277,8 +277,14 @@ if(EXISTS "${_VMRP_API_MOTION}")
             "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;"
             "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;\n                case API_CMD_MOTION: /* OHOS: 投递动感芯片事件 */\n                    { extern void dsm_dispatch_motion_event(void); dsm_dispatch_motion_event(); }\n                    break;"
             _api_m "${_api_m}")
+        # 子补丁3: OHOS_SHAKE 震动回调。native_startShake/stopShake 通过 extern 调用
+        # vmrp_api_start_shake/stop_shake,内部调宿主注册的回调。
+        string(REPLACE
+            "VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}"
+            "VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}\n\n/* OHOS_SHAKE: 震动回调。native_dsm_funcs.c 的 native_startShake/stopShake\n * 通过 extern 调用这两个函数,内部调宿主注册的回调驱动真机振动马达。\n * 未注册时为空操作,不影响非 OHOS 构建。 */\nstatic void (*shake_start_cb)(int ms) = NULL;\nstatic void (*shake_stop_cb)(void) = NULL;\nVMRP_EXPORT void vmrp_api_start_shake(int ms) {\n    if (shake_start_cb) shake_start_cb(ms);\n}\nVMRP_EXPORT void vmrp_api_stop_shake(void) {\n    if (shake_stop_cb) shake_stop_cb();\n}\nVMRP_EXPORT void vmrp_api_set_shake_cb(void (*start)(int ms), void (*stop)(void)) {\n    shake_start_cb = start;\n    shake_stop_cb = stop;\n}"
+            _api_m "${_api_m}")
         file(WRITE "${_VMRP_API_MOTION}" "${_api_m}")
-        message(STATUS "[OHOS] Patched vmrp_api motion functions + API_CMD_MOTION (OHOS_MOTION_POWER/EVENT/SENSITIVITY)")
+        message(STATUS "[OHOS] Patched vmrp_api motion + shake functions (OHOS_MOTION_POWER/EVENT/SENSITIVITY/SHAKE)")
     endif()
 endif()
 
@@ -320,17 +326,31 @@ endif()
 # mmap); the function already has a malloc() fallback, so correctness is intact
 # and only the low-address hint is lost on x86_64. arm64 is unaffected (the
 # block is already guarded by #ifdef __x86_64__).
+#
+# Also patches native_startShake/stopShake to call vmrp_api_start_shake/stop_shake
+# so that MRP vibration requests reach the OHOS Vibrator C API.
 set(_VMRP_DSM "${VMRP_SRC_DIR}/src/native_dsm_funcs.c")
 if(EXISTS "${_VMRP_DSM}")
     file(READ "${_VMRP_DSM}" _dsm_text)
-    # 只匹配未 patch 的原始代码（MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT），
-    # 替换注释里不含 MAP_32BIT 字样，保证幂等。
+    set(_dsm_patched FALSE)
+    # 子补丁1: MAP_32BIT → 0
     if(_dsm_text MATCHES "MAP_ANONYMOUS \\| MAP_32BIT")
         string(REPLACE "MAP_ANONYMOUS | MAP_32BIT"
                        "MAP_ANONYMOUS /* x86-glibc only, musl lacks the 32bit flag */"
                        _dsm_text "${_dsm_text}")
+        set(_dsm_patched TRUE)
+    endif()
+    # 子补丁2: native_startShake → 调 vmrp_api_start_shake (OHOS_SHAKE)
+    if(NOT _dsm_text MATCHES "OHOS_SHAKE")
+        string(REPLACE
+            "static int32 native_startShake(int32 ms) {\n    (void)ms;\n    return MR_SUCCESS;\n}\n\nstatic int32 native_stopShake(void) {\n    return MR_SUCCESS;\n}"
+            "/* OHOS_SHAKE: 转发 MRP 震动请求到宿主(vmrp_api_start_shake),由宿主调 OH_Vibrator C API。 */\nstatic int32 native_startShake(int32 ms) {\n    extern void vmrp_api_start_shake(int ms);\n    vmrp_api_start_shake(ms);\n    return MR_SUCCESS;\n}\n\nstatic int32 native_stopShake(void) {\n    extern void vmrp_api_stop_shake(void);\n    vmrp_api_stop_shake();\n    return MR_SUCCESS;\n}"
+            _dsm_text "${_dsm_text}")
+        set(_dsm_patched TRUE)
+    endif()
+    if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
-        message(STATUS "[OHOS] Patched MAP_32BIT in native_dsm_funcs.c")
+        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_SHAKE)")
     endif()
 endif()
 

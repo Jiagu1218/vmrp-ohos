@@ -333,6 +333,17 @@ static napi_value SetMotionSensitivity(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// setShakeIntensity(level: number) — 0=轻, 1=中, 2=强
+static napi_value SetShakeIntensity(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t level = 1;
+    napi_get_value_int32(env, args[0], &level);
+    VmrpEngine::Instance().SetShakeIntensity(level);
+    return nullptr;
+}
+
 // submitEdit(text) / cancelEdit()
 static napi_value SubmitEdit(napi_env env, napi_callback_info info) {
     size_t argc = 1;
@@ -519,6 +530,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"sendKey", nullptr, SendKey, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"sendMotion", nullptr, SendMotion, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setMotionSensitivity", nullptr, SetMotionSensitivity, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setShakeIntensity", nullptr, SetShakeIntensity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"submitEdit", nullptr, SubmitEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cancelEdit", nullptr, CancelEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isRunning", nullptr, IsRunning, nullptr, nullptr, nullptr, napi_default, nullptr},
