@@ -193,6 +193,8 @@ void arm_ext_apply_short_pack_alias_for_private_child(ArmExtModule *m, uint32_t 
 void arm_ext_diag_fd_clear(ArmExtModule *m, int32_t handle);
 const char *arm_ext_diag_fd_name(ArmExtModule *m, int32_t handle);
 void arm_ext_diag_fd_set(ArmExtModule *m, int32_t handle, const char *name);
+/* VMRP_ARM_EXT_WATCH_PC: 模块相对文件偏移观察点,嵌套模块注册时安装(aex_diag.c) */
+void arm_ext_install_pc_watches(ArmExtModule *m, uint32_t base, uint32_t len);
 void arm_ext_drop_overlapping_stale_nested_modules(ArmExtModule *m, uint32_t file_addr, uint32_t file_len);
 int arm_ext_has_internal_loader_chunk(ArmExtModule *m, uint32_t file_addr, uint32_t file_len);
 const char *arm_ext_pack_to_host_path(ArmExtModule *m, const char *pack);
@@ -200,6 +202,8 @@ void arm_ext_record_nested_module(ArmExtModule *m, uint32_t file_addr, uint32_t 
 void arm_ext_record_timer_owner(ArmExtModule *m);
 void arm_ext_repair_private_child_record_bridges(ArmExtModule *m, uint32_t record, uint32_t file_addr, uint32_t file_len);
 ArmExtNestedModule *arm_ext_resource_owner_for_lr(ArmExtModule *m, uint32_t *owner_p, uint32_t *owner_helper);
+uint32_t arm_ext_read_file_table_context(ArmExtModule *m,
+                                         ArmExtNestedModule *owner);
 int arm_ext_sync_internal_nested_module(ArmExtModule *m, uint32_t file_addr, uint32_t file_len);
 void internal_slot_write(ArmExtModule *m, uint32_t slot, uint32_t value);
 void arm_ext_diag_owner_for_lr(ArmExtModule *m, uint32_t *owner_p, uint32_t *owner_h, uint32_t *owner_file, uint32_t *owner_len);
