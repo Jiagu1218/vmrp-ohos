@@ -242,7 +242,13 @@ bool VmrpEngine::IsRunning() const {
 
 int VmrpEngine::Init(int w, int h) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
-    return api_.init(w, h);
+    int ret = api_.init(w, h);
+    if (ret == 0 && api_.set_dns_map) {
+        api_.set_dns_map(
+            "proxy2.51mrp.com->159.75.119.124;help.proxy.51mrp.com->159.75.119.124");
+        LOGI("DNS map overridden: proxy2/help.proxy.51mrp.com -> 159.75.119.124");
+    }
+    return ret;
 }
 int VmrpEngine::SetWorkDir(const std::string &dir) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
