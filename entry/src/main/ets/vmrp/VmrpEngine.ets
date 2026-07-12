@@ -16,9 +16,13 @@ import {
   start as nativeStart, stop as nativeStop, sendKey as nativeSendKey,
   sendMotion as nativeSendMotion,
   setMotionSensitivity as nativeSetMotionSensitivity,
+  setShakeIntensity as nativeSetShakeIntensity,
+  startDsmB as nativeStartDsmB, startDsmC as nativeStartDsmC,
+  startDsmEx as nativeStartDsmEx,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
-  createSurfaceNode as nativeCreateSurfaceNode
+  createSurfaceNode as nativeCreateSurfaceNode,
+  mediaPause as nativeMediaPause, mediaResume as nativeMediaResume
 } from 'libentry.so';
 
 // MRP 事件码（与 vmrp_api.h 一致）。
@@ -93,6 +97,25 @@ export class VmrpEngineTs {
     nativeSetMotionSensitivity(sensitivity);
   }
 
+  setShakeIntensity(level: number): void {
+    nativeSetShakeIntensity(level);
+  }
+
+  // 外部移植接口: mr_start_dsmB — entry 含 *A(固化应用)/%QQ.mrp(根目录mrp)前缀
+  startDsmB(entry: string): number {
+    return nativeStartDsmB(entry);
+  }
+
+  // 外部移植接口: mr_start_dsmC — 同 dsmB (引擎已初始化)
+  startDsmC(entry: string): number {
+    return nativeStartDsmC(entry);
+  }
+
+  // 外部移植接口: mr_start_dsm_ex — 显式 path + entry
+  startDsmEx(path: string, entry?: string): number {
+    return nativeStartDsmEx(path, entry);
+  }
+
   submitEdit(text: string): number {
     return nativeSubmitEdit(text);
   }
@@ -103,6 +126,16 @@ export class VmrpEngineTs {
 
   isRunning(): boolean {
     return nativeIsRunning();
+  }
+
+  // 暂停音频渲染(不清 PCM，可恢复)。应用切后台时调用。
+  mediaPause(): void {
+    nativeMediaPause();
+  }
+
+  // 恢复音频渲染。应用切回前台时调用。
+  mediaResume(): void {
+    nativeMediaResume();
   }
 
   // 注册编辑回调：native 检测到 MRP 请求编辑时回调此处，并携带待编辑的原文本用于回显。

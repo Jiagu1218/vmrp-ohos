@@ -1,5 +1,13 @@
 # Wiki Log
 
+## [2026-07-10T16:40:00+08:00] update
+- **Pages:** wbrw-proxy2-web-page-rendering.md
+- **Summary:** Corrected WBRW link activation semantics from caption/href to href/caption/companion; recorded 320 real-device anchor samples, the first-link PPM proof, and the successful child-page request/cache evidence.
+
+## [2026-07-09T10:26:13+08:00] add
+- **Pages:** wbrw-proxy2-web-page-rendering.md
+- **Summary:** Recorded WBRW proxy2 /page2 web-page rendering fix, live packet/TLV evidence, Baidu cache and PPM proof, rejected tag33/.sky experiments, and full e2e compatibility result.
+
 ## [2026-07-06T22:59:48+08:00] add
 - **Pages:** gzwdzjs-primary-black-clear-damage-synthesis.md
 - **Summary:** Recorded gzwdzjs tutorial top black root cause: primary full-screen black DrawRect cache reset was marked as visible damage and callback-exit synthesis exposed unpresented rows; verification covered focused/full gzwdzjs plus opbzqe/dota/gxdzc regressions.
@@ -188,4 +196,43 @@
 ## [2026-07-06T15:01:06.245Z] lint
 - **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-input-paste-ucs2-table77-fix.md
 - **Summary:** Lint: 16 issues (15 orphan, 0 stale, 0 broken, 0 contradictions)
+## [2026-07-11T08:57:36.289Z] ingest
+- **Pages:** wbrw-proxy2-font-mrp-download.md
+- **Summary:** Created new page "WBRW proxy2 font MRP download"
+## [2026-07-11T09:13:36.888Z] ingest
+- **Pages:** wbrw-proxy2-font-mrp-download.md
+- **Summary:** Updated "WBRW proxy2 font MRP download" with new content
+## [2026-07-11T09:36:24.799Z] ingest
+- **Pages:** wbrw-proxy2-font-mrp-download.md
+- **Summary:** Updated "WBRW proxy2 font MRP download" with new content
+## [2026-07-11T11:28:02.844Z] ingest
+- **Pages:** wbrw-proxy2-font-mrp-download.md
+- **Summary:** Updated "WBRW proxy2 font MRP download" with new content
+## [2026-07-11T11:28:28.562Z] lint
+- **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
+- **Summary:** Lint: 18 issues (15 orphan, 0 stale, 1 broken, 0 contradictions)
+## [2026-07-12T01:14:44.827Z] ingest
+- **Pages:** wbrw-manual-clipboard-and-menu-exit-verification.md
+- **Summary:** Created new page "WBRW manual clipboard and menu exit verification"
 
+## [2026-07-12T01:14:44.831Z] add
+- **Pages:** wbrw-manual-clipboard-and-menu-exit-verification.md
+- **Summary:** Created wiki page wbrw-manual-clipboard-and-menu-exit-verification.md
+
+## [2026-07-12T01:19:32.846Z] lint
+- **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-manual-clipboard-and-menu-exit-verification.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
+- **Summary:** Lint: 19 issues (16 orphan, 0 stale, 1 broken, 0 contradictions)
+
+## [2026-07-12T01:21:38.745Z] lint
+- **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
+- **Summary:** Lint: 18 issues (15 orphan, 0 stale, 1 broken, 0 contradictions)
+
+## [2026-07-12T10:09:53+08:00] ingest
+- **Pages:** wbrw-manual-clipboard-and-menu-exit-verification.md
+- **Summary:** Corrected the premature zero-delay result; recorded the edit-mode one-shot timer loss, generic main-loop fix, no-SCREEN clean and persisted-state verification, PPM evidence, guest exit, and cross-application regressions.
+## [2026-07-12T04:04:54.545Z] ingest
+- **Pages:** gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md
+- **Summary:** Created new page "gzwdzjs play MR_UCS2GB caller-owned output pointer fix"
+## [2026-07-12T04:06:31.247Z] lint
+- **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
+- **Summary:** Lint: 19 issues (16 orphan, 0 stale, 1 broken, 0 contradictions)

@@ -319,7 +319,7 @@ A: 已通过 `EXCEPTION_HEAP_RECOVERY` 补丁修复——UC_ERR_EXCEPTION 后自
 A: SkyEngine 图片 API（3001-3012）已实现。若图片仍不显示，可能是 MRP 使用了 3014/3015（MTK 私有资源格式，暂未实现），或图片文件路径无法通过 `mr_open` 访问。
 
 ### Q: 重力感应不工作
-A: 需要设备支持加速度计，且应用需声明 `ohos.permission.ACCELEROMETER` 权限（已声明）。在设置页可调节灵敏度（0.2x-3.0x）和 Y 轴反转。
+A: 动感芯片已适配（事件类型 MR_MOTION_EVENT=18）。需设备支持加速度计且授权 `ohos.permission.ACCELEROMETER`（已声明）。设置页可调灵敏度（0.2x-3.0x）和 Y 轴反转。若游戏从未调 `mr_plat(4002)` 上电，传感器未启动则无数据。
 
 ### Q: vmrp/ 目录下显示有未提交的修改
 A: 这是正常的。CMake 补丁在构建时修改 vmrp 源码，部分文件不在 `:restore_patched` 恢复列表中。这些修改不影响远程仓库（已提交的文件内容是正确的），其他设备 clone 后构建时会自动应用补丁。

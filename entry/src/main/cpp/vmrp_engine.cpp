@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <sensors/oh_sensor.h>
+#include <sensors/vibrator.h>
 
 #include <atomic>
 #include <chrono>
@@ -49,10 +50,10 @@ VmrpEngine &VmrpEngine::Instance() {
 
 VmrpEngine::~VmrpEngine() {
     Destroy();
-    if (so_handle_) {
+    if (so_handle_ && so_handle_ != RTLD_DEFAULT) {
         dlclose(so_handle_);
-        so_handle_ = nullptr;
     }
+    so_handle_ = nullptr;
     loaded_ = false;
 }
 
@@ -104,14 +105,19 @@ bool VmrpEngine::Load(const std::string &so_path) {
     if (loaded_) return true;
     // 先重定向 stdout/stderr 到 hilog，确保后续 vmrp 的所有日志可见。
     RedirectStdioToHilog();
-    // RTLD_NOW：立即解析所有符号，便于在加载时发现问题（如 ABI 不匹配）。
-    // RTLD_LOCAL：符号不泄露到全局，避免与其它库冲突。
-    so_handle_ = dlopen(so_path.c_str(), RTLD_NOW | RTLD_LOCAL);
+    // 鸿蒙 MUSL-LDSO 命名空间隔离禁止 dlopen 绝对路径沙箱 so。
+    // 但 libvmrp.so 已作为 libentry.so 的依赖自动加载，dlopen("libvmrp.so")
+    // 不会走命名空间检查，而是返回已加载的 handle（引用计数+1）。
+    so_handle_ = dlopen("libvmrp.so", RTLD_NOW | RTLD_NOLOAD);
     if (!so_handle_) {
-        LOGE("dlopen(%s) failed: %s", so_path.c_str(), dlerror());
+        // RTLD_NOLOAD 失败说明 libvmrp.so 未随 libentry.so 加载，尝试按名加载
+        so_handle_ = dlopen("libvmrp.so", RTLD_NOW);
+    }
+    if (!so_handle_) {
+        LOGE("dlopen(libvmrp.so) failed: %s", dlerror());
         return false;
     }
-    LOGI("dlopen(%s) OK", so_path.c_str());
+    LOGI("dlopen(libvmrp.so) OK (by name, no namespace check)");
 
     RESOLVE_SYM(so_handle_, "vmrp_api_init", init, int (*)(int, int));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_work_dir", set_work_dir, int (*)(const char *));
@@ -137,12 +143,31 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_audio_render_s16le", audio_render_s16le, int (*)(void *, int));
     RESOLVE_SYM(so_handle_, "vmrp_api_audio_stop", audio_stop, void (*)(void));
 
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_pause", media_pause, void (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_resume", media_resume, void (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_seek", media_seek, int (*)(int));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_position", media_position, int (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_media_duration", media_duration, int (*)(void));
+
     RESOLVE_SYM(so_handle_, "vmrp_api_is_edit_active", is_edit_active, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_get_edit_text", get_edit_text, const char *(*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_edit_text", set_edit_text, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "vmrp_api_cancel_edit", cancel_edit, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_power_cb", set_motion_power_cb, void (*)(void (*)(int)));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_sensitivity", set_motion_sensitivity, void (*)(float));
+    RESOLVE_SYM(so_handle_, "vmrp_api_set_shake_cb", set_shake_cb, void (*)(void (*)(int), void (*)(void)));
+    RESOLVE_SYM(so_handle_, "vmrp_api_set_media_cb", set_media_cb, void (*)(void (*)(void), void (*)(void)));
+    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmB", start_dsmB, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmC", start_dsmC, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsm_ex", start_dsm_ex, int (*)(const char *, const char *));
+
+    // Volume API may not exist in older builds; optional resolve.
+    {
+        void *sym = dlsym(so_handle_, "vmrp_api_set_volume");
+        if (sym) api_.set_volume = reinterpret_cast<void (*)(int)>(sym);
+        sym = dlsym(so_handle_, "vmrp_api_set_volume_cb");
+        if (sym) api_.set_volume_cb = reinterpret_cast<void (*)(void (*)(int))>(sym);
+    }
 
     loaded_ = true;
     LOGI("vmrp API resolved, loaded=true");
@@ -159,6 +184,71 @@ bool VmrpEngine::Load(const std::string &so_path) {
         });
         LOGI("motion power callback registered");
     }
+
+    // 注册震动回调：native_dsm_funcs.c 的 native_startShake/stopShake 通过
+    // vmrp_api_start_shake/stop_shake 调此回调驱动 OH_Vibrator C API。
+    // intensity: 0=轻(duration*0.3, touch), 1=中(duration*1.0, touch), 2=强(duration*2.0, alarm)
+    if (api_.set_shake_cb) {
+        api_.set_shake_cb(
+            [](int ms) {
+                int level = VmrpEngine::Instance().GetShakeIntensity();
+                int32_t duration = ms > 0 ? ms : 200;
+                Vibrator_Usage usage = VIBRATOR_USAGE_TOUCH;
+                if (level == 0) {
+                    duration = std::max(50, duration * 3 / 10);
+                } else if (level == 2) {
+                    duration = duration * 2;
+                    usage = VIBRATOR_USAGE_ALARM;
+                }
+                Vibrator_Attribute attr;
+                attr.vibratorId = 0;
+                attr.usage = usage;
+                int32_t ret = OH_Vibrator_PlayVibration(duration, attr);
+                if (ret != 0) {
+                    OH_LOG_INFO(LOG_APP, "OH_Vibrator_PlayVibration failed: %{public}d", ret);
+                }
+            },
+            []() {
+                int32_t ret = OH_Vibrator_Cancel();
+                if (ret != 0) {
+                    OH_LOG_INFO(LOG_APP, "OH_Vibrator_Cancel failed: %{public}d", ret);
+                }
+            }
+        );
+        LOGI("shake callback registered (OH_Vibrator C API)");
+    }
+
+    // 注册媒体暂停/恢复回调：dsm.c PAUSE/RESUME 调 vmrp_api_media_pause/resume
+    // 时通知宿主停启 OHAudio renderer,避免 renderer 空转拉流。
+    if (api_.set_media_cb) {
+        api_.set_media_cb(
+            []() {
+                LOGI("media_pause_cb: active=%d paused=%d running=%d",
+                     Instance().AudioActive(), Instance().IsMediaPaused(), Instance().IsRunning());
+                VmrpEngine::Instance().SetMediaPaused(true);
+                if (VmrpEngine::Instance().audio_pause_fn_)
+                    VmrpEngine::Instance().audio_pause_fn_(true);
+            },
+            []() {
+                LOGI("media_resume_cb: active=%d paused=%d running=%d",
+                     Instance().AudioActive(), Instance().IsMediaPaused(), Instance().IsRunning());
+                VmrpEngine::Instance().SetMediaPaused(false);
+                if (VmrpEngine::Instance().audio_pause_fn_)
+                    VmrpEngine::Instance().audio_pause_fn_(false);
+            }
+        );
+        LOGI("media pause/resume callback registered");
+    }
+
+    // 注册音量回调：dsm.c mr_plat(1302,level) 调 vmrp_api_set_volume 时
+    // 通知宿主调 OH_AudioRenderer_SetVolume。
+    if (api_.set_volume_cb) {
+        api_.set_volume_cb([](int level) {
+            VmrpEngine::Instance().SetVolume(level);
+        });
+        LOGI("volume callback registered");
+    }
+
     return true;
 }
 
@@ -169,7 +259,13 @@ bool VmrpEngine::IsRunning() const {
 
 int VmrpEngine::Init(int w, int h) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
-    return api_.init(w, h);
+    int ret = api_.init(w, h);
+    if (ret == 0 && api_.set_dns_map) {
+        api_.set_dns_map(
+            "proxy2.51mrp.com->159.75.119.124;help.proxy.51mrp.com->159.75.119.124");
+        LOGI("DNS map overridden: proxy2/help.proxy.51mrp.com -> 159.75.119.124");
+    }
+    return ret;
 }
 int VmrpEngine::SetWorkDir(const std::string &dir) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
@@ -181,6 +277,24 @@ int VmrpEngine::Start(const std::string &mrp, const std::string &ext, const std:
     std::lock_guard<std::mutex> lk(engine_mtx_);
     return api_.start(mrp.c_str(), ext.empty() ? nullptr : ext.c_str(),
                       entry.empty() ? nullptr : entry.c_str());
+}
+
+int VmrpEngine::StartDsmB(const std::string &entry) {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    if (!api_.start_dsmB) return -1;
+    return api_.start_dsmB(entry.empty() ? "*A" : entry.c_str());
+}
+
+int VmrpEngine::StartDsmC(const std::string &entry) {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    if (!api_.start_dsmC) return -1;
+    return api_.start_dsmC(entry.empty() ? "*A" : entry.c_str());
+}
+
+int VmrpEngine::StartDsmEx(const std::string &path, const std::string &entry) {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    if (!api_.start_dsm_ex) return -1;
+    return api_.start_dsm_ex(path.c_str(), entry.empty() ? nullptr : entry.c_str());
 }
 
 void VmrpEngine::Destroy() {
@@ -196,10 +310,8 @@ int VmrpEngine::SendEvent(int code, int p0, int p1) {
 
 int VmrpEngine::SendMotion(int x, int y, int z) {
     if (!api_.motion_event) return -1;
-    /* 不持 engine_mtx_：vmrp_api_motion_event 内部走 api_queue_command
-     * （持 api_lock），不再同步调 mr_event/Unicorn，无并发风险。
-     * 持 engine_mtx_ 反而可能与 api_lock 产生死锁。 */
-    return api_.motion_event(x, y, z);
+    int ret = api_.motion_event(x, y, z);
+    return ret;
 }
 
 // 驱动一次 timer() 并返回下一次所需间隔。调用方据此调度下一次 StepTimer。
@@ -231,6 +343,12 @@ int VmrpEngine::PullAudio(void *buffer, int frames) {
     return api_.audio_render_s16le(buffer, frames);
 }
 void VmrpEngine::AudioStop() { if (api_.audio_stop) api_.audio_stop(); }
+
+void VmrpEngine::MediaPause() { media_paused_.store(true, std::memory_order_release); if (api_.media_pause) api_.media_pause(); }
+void VmrpEngine::MediaResume() { media_paused_.store(false, std::memory_order_release); if (api_.media_resume) api_.media_resume(); }
+int VmrpEngine::MediaSeek(int ms) { return api_.media_seek ? api_.media_seek(ms) : -1; }
+int VmrpEngine::MediaPosition() { return api_.media_position ? api_.media_position() : 0; }
+int VmrpEngine::MediaDuration() { return api_.media_duration ? api_.media_duration() : 0; }
 
 bool VmrpEngine::EditActive() { return api_.is_edit_active && api_.is_edit_active() != 0; }
 std::string VmrpEngine::GetEditText() {
@@ -313,4 +431,15 @@ void VmrpEngine::StopSensor() {
 void VmrpEngine::SetMotionSensitivity(float s) {
     motion_sensitivity_ = s;
     if (api_.set_motion_sensitivity) api_.set_motion_sensitivity(s);
+}
+
+void VmrpEngine::SetShakeIntensity(int level) {
+    if (level < 0) level = 0;
+    if (level > 2) level = 2;
+    shake_intensity_ = level;
+    LOGI("shake intensity set to %{public}d (0=light,1=medium,2=strong)", level);
+}
+
+void VmrpEngine::SetVolume(int level) {
+    if (volume_fn_) volume_fn_(level);
 }

@@ -36,6 +36,7 @@ set_target_properties(vmrp_prebuilt PROPERTIES
 #   libEGL.so/libGLESv3.so- 图形（sysroot 提供）
 #   libohaudio.so         - OHAudio（renderer/builder，pull 模型音频）
 #   libohsensor.so        - OH_Sensor（加速度传感器原生 C API）
+#   libohvibrator.z.so    - OH_Vibrator（振动马达原生 C API）
 target_link_libraries(vmrp_entry PUBLIC
     vmrp_prebuilt
     libace_napi.z.so
@@ -46,4 +47,5 @@ target_link_libraries(vmrp_entry PUBLIC
     libohaudio.so
     libnative_window.so
     libohsensor.so
+    libohvibrator.z.so
 )

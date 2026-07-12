@@ -17,6 +17,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want, common } from 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window, AppStorageV2 } from '@kit.ArkUI';
 import { AvoidData } from '../common/AvoidData';
+import { VmrpEngineTs } from '../vmrp/VmrpEngine';
 
 const DOMAIN = 0x0000;
 
@@ -84,10 +85,18 @@ export default class EntryAbility extends UIAbility {
   onForeground(): void {
     // Ability has brought to foreground
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    const engine = new VmrpEngineTs();
+    if (engine.isRunning()) {
+      engine.mediaResume();
+    }
   }
 
   onBackground(): void {
-    // Ability has back to background
+    // Ability has back to background — 暂停音频避免后台继续播放
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+    const engine = new VmrpEngineTs();
+    if (engine.isRunning()) {
+      engine.mediaPause();
+    }
   }
 }

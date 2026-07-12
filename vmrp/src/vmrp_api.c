@@ -4,8 +4,6 @@
 #include "./include/memory.h"
 #include "./include/native_dsm_funcs.h"
 
-#include "./mythroad/include/dsm.h"
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -36,6 +34,8 @@ static int screen_dirty = 0;
 static int pending_timer_ms = 0;
 static int api_running = 0;
 static int image_processing_mode = VMRP_IMAGE_PROCESSING_NATIVE;
+static char api_dns_map[VMRP_DNS_MAP_LIMIT];
+static int api_dns_map_set = 0;
 
 static int edit_active = 0;
 static int32_t edit_max_size = 0;
@@ -45,8 +45,7 @@ static char *edit_text_snapshot = NULL;
 typedef enum {
     API_CMD_EVENT,
     API_CMD_SET_EDIT_TEXT,
-    API_CMD_CANCEL_EDIT,
-    API_CMD_MOTION
+    API_CMD_CANCEL_EDIT
 } ApiCommandType;
 
 typedef struct {
@@ -489,9 +488,6 @@ static API_THREAD_RET api_worker_main(void *userdata) {
                 case API_CMD_CANCEL_EDIT:
                     api_apply_cancel_edit_command();
                     break;
-                case API_CMD_MOTION:
-                    dsm_dispatch_motion_event();
-                    break;
             }
             free(cmd.text);
         } else if (run_timer) {
@@ -571,6 +567,8 @@ VMRP_EXPORT int vmrp_api_init(int screen_w, int screen_h) {
     screen_dirty = 0;
     pending_timer_ms = 0;
     image_processing_mode = VMRP_IMAGE_PROCESSING_NATIVE;
+    api_dns_map[0] = '\0';
+    api_dns_map_set = 0;
     free_edit_text_snapshot();
     edit_active = 0;
     api_running = 0;
@@ -625,6 +623,9 @@ VMRP_EXPORT int vmrp_api_start(const char *mrp_path, const char *ext, const char
     snprintf(args.mrp_path, sizeof(args.mrp_path), "%s", mrp_path);
     snprintf(args.ext_name, sizeof(args.ext_name), "%s", ext);
     if (entry && *entry) snprintf(args.entry, sizeof(args.entry), "%s", entry);
+    if (api_dns_map_set) {
+        snprintf(args.dns_map, sizeof(args.dns_map), "%s", api_dns_map);
+    }
 
     VMRP_API_LOG("[vmrp_api] startVmrp...\n");
     int ret = startVmrp(&args);
@@ -650,13 +651,34 @@ VMRP_EXPORT void vmrp_api_destroy(void) {
     screen_dirty = 0;
     pending_timer_ms = 0;
     api_running = 0;
+    api_dns_map[0] = '\0';
+    api_dns_map_set = 0;
     free_hold_edit_text();
     free_edit_text_snapshot();
     edit_active = 0;
 }
 
 VMRP_EXPORT int vmrp_api_set_dns_map(const char *map) {
-    return configureVmrpDnsMap(map) == 0 ? 0 : -1;
+    char copy[VMRP_DNS_MAP_LIMIT];
+
+    if (!map || !*map) {
+        api_dns_map[0] = '\0';
+        api_dns_map_set = 0;
+        return configureVmrpDnsMap(map) == 0 ? 0 : -1;
+    }
+
+    int n = snprintf(copy, sizeof(copy), "%s", map);
+    if (n < 0 || (size_t)n >= sizeof(copy)) {
+        return -1;
+    }
+    if (configureVmrpDnsMap(copy) != 0) {
+        api_dns_map[0] = '\0';
+        api_dns_map_set = 0;
+        return -1;
+    }
+    snprintf(api_dns_map, sizeof(api_dns_map), "%s", copy);
+    api_dns_map_set = 1;
+    return 0;
 }
 
 VMRP_EXPORT int vmrp_api_event(int code, int p0, int p1) {
@@ -680,29 +702,6 @@ VMRP_EXPORT int vmrp_api_event(int code, int p0, int p1) {
         pending_timer_ms = 0;
     }
     return ret;
-#endif
-}
-
-VMRP_EXPORT int vmrp_api_motion_event(int x_mg, int y_mg, int z_mg) {
-    if (!api_running || vmrp_is_exited()) {
-        api_running = 0;
-        pending_timer_ms = 0;
-        return -1;
-    }
-#if VMRP_API_ASYNC_RUNNER
-    dsm_set_motion_acc(x_mg, y_mg, z_mg);
-    ApiCommand cmd;
-    memset(&cmd, 0, sizeof(cmd));
-    cmd.type = API_CMD_MOTION;
-    return api_queue_command(cmd);
-#else
-    dsm_set_motion_acc(x_mg, y_mg, z_mg);
-    dsm_dispatch_motion_event();
-    if (vmrp_is_exited()) {
-        api_running = 0;
-        pending_timer_ms = 0;
-    }
-    return 0;
 #endif
 }
 
@@ -935,23 +934,4 @@ VMRP_EXPORT int vmrp_api_cancel_edit(void) {
     /* MR_DIALOG_KEY_CANCEL = 1 */
     return event(6, 1, 0);
 #endif
-}
-
-static vmrp_motion_power_cb g_motion_power_cb = NULL;
-static float g_motion_sensitivity = 1.0f;
-
-VMRP_EXPORT void vmrp_api_set_motion_power_cb(vmrp_motion_power_cb cb) {
-    g_motion_power_cb = cb;
-}
-
-VMRP_EXPORT void vmrp_api_motion_power(int on) {
-    if (g_motion_power_cb) {
-        g_motion_power_cb(on);
-    }
-}
-
-VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float sensitivity) {
-    if (sensitivity > 0.0f) {
-        g_motion_sensitivity = sensitivity;
-    }
 }

@@ -14,6 +14,7 @@
 #ifndef VMRP_ENGINE_H
 #define VMRP_ENGINE_H
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -44,6 +45,12 @@ struct VmrpApi {
     int (*audio_render_s16le)(void *buffer, int frames);
     void (*audio_stop)(void);
 
+    void (*media_pause)(void);
+    void (*media_resume)(void);
+    int (*media_seek)(int ms);
+    int (*media_position)(void);
+    int (*media_duration)(void);
+
     int (*is_edit_active)(void);
     const char *(*get_edit_text)(void);
     int (*set_edit_text)(const char *text);
@@ -51,6 +58,17 @@ struct VmrpApi {
 
     void (*set_motion_power_cb)(void (*cb)(int on));
     void (*set_motion_sensitivity)(float sensitivity);
+
+    void (*set_shake_cb)(void (*start)(int ms), void (*stop)(void));
+
+    void (*set_media_cb)(void (*pause_cb)(void), void (*resume_cb)(void));
+
+    void (*set_volume)(int level);
+    void (*set_volume_cb)(void (*cb)(int level));
+
+    int (*start_dsmB)(const char *entry);
+    int (*start_dsmC)(const char *entry);
+    int (*start_dsm_ex)(const char *path, const char *entry);
 };
 
 // 单例引擎。所有方法都应在引擎线程（EngineThread）上调用；
@@ -70,6 +88,9 @@ public:
     int Init(int w, int h);
     int SetWorkDir(const std::string &dir);
     int Start(const std::string &mrp, const std::string &ext, const std::string &entry);
+    int StartDsmB(const std::string &entry);
+    int StartDsmC(const std::string &entry);
+    int StartDsmEx(const std::string &path, const std::string &entry);
     void Destroy();
 
     // 输入事件（MRP 事件码）。code 见 vmrp_api.h 的 VMRP_* 常量。
@@ -96,6 +117,25 @@ public:
     int PullAudio(void *buffer, int frames); // 返回写入的帧数
     void AudioStop();
 
+    // 媒体播放控制
+    void MediaPause();
+    void MediaResume();
+    int MediaSeek(int ms);
+    int MediaPosition();
+    int MediaDuration();
+
+    // 音频暂停状态：OnWriteData 回调用此判断是否需要停止填充 PCM。
+    bool IsMediaPaused() const { return media_paused_.load(std::memory_order_acquire); }
+    void SetMediaPaused(bool paused) { media_paused_.store(paused, std::memory_order_release); }
+
+    using AudioPauseFn = void (*)(bool);
+    void SetAudioPauseFn(AudioPauseFn fn) { audio_pause_fn_ = fn; }
+
+    // 音量控制: MRP 调 mr_plat(1302,level) 时回调触发。
+    using VolumeFn = void (*)(int level);
+    void SetVolumeFn(VolumeFn fn) { volume_fn_ = fn; }
+    void SetVolume(int level);
+
     // 文本编辑。
     bool EditActive();
     std::string GetEditText();
@@ -107,6 +147,10 @@ public:
     void StopSensor();
     void SetMotionSensitivity(float s);
     float GetMotionSensitivity() const { return motion_sensitivity_; }
+
+    // 震动强度：0=轻, 1=中(默认), 2=强。影响 OH_Vibrator_PlayVibration 的 duration 和 usage。
+    void SetShakeIntensity(int level);
+    int GetShakeIntensity() const { return shake_intensity_; }
 
     const VmrpApi *Api() const { return &api_; }
 
@@ -121,11 +165,15 @@ private:
     VmrpApi api_ = {};
     bool sensor_subscribed_ = false;
     float motion_sensitivity_ = 1.0f;
+    int shake_intensity_ = 1;
     // Unicorn ARM 引擎不支持并发。触摸线程的 SendEvent 和 timer 线程的 StepTimer
     // 都会调 uc_emu_start 执行 ARM 代码，并发会导致 TCG 的 TB cache/链表损坏
     //（translate-all.c g_assert_not_reached，UC_ERR_EXCEPTION），表现为运行中闪退。
     // 用此锁串行化所有驱动 Unicorn 的 vmrp_api 调用。
     std::mutex engine_mtx_;
+    std::atomic<bool> media_paused_{false};
+    AudioPauseFn audio_pause_fn_ = nullptr;
+    VolumeFn volume_fn_ = nullptr;
 };
 
 #endif // VMRP_ENGINE_H

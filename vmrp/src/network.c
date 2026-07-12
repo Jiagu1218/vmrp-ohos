@@ -267,7 +267,7 @@ static int32 my_connectSync(SOCKET_T s, int32 ip, uint16 port) {
     clientService.sin_port = htons(port);
     clientService.sin_addr.s_addr = htonl(ip);  //inet_addr("127.0.0.1");
 
-    printf("my_connect('%s', %d)\n", inet_ntoa(clientService.sin_addr), port);
+    printf("my_connect(fd:%d, '%s', %d)\n", (int)s, inet_ntoa(clientService.sin_addr), port);
 
     if (connect(s, (struct sockaddr*)&clientService, sizeof(clientService)) != 0) {
         printf("my_connect(0x%X) fail\n", ip);
@@ -393,6 +393,8 @@ int32 my_socket(int32 type, int32 protocol) {
     obj->key = socketCounter;
     obj->data = (void*)data;
     uIntMap_insert(&sockets, obj);
+    // 打印宿主 fd: 排查 fd 复用/串线问题时必须能把 guest socket id 对应到宿主 fd
+    printf("my_socket(): s=%d fd=%d\n", socketCounter, (int)sock);
     return socketCounter;
 #else
     return MR_FAILED;
@@ -409,6 +411,7 @@ int32 my_closeSocket(int32 s) {
     SOCKET_T sock = data->s;
     free(data);
     free(obj);
+    printf("my_closeSocket(s:%d): fd=%d\n", s, (int)sock);
     shutdown(sock, SHUTDOWN_BIDIRECTIONAL);
     if (CLOSE_SOCKET(sock) != 0) {
         return MR_FAILED;
@@ -444,7 +447,7 @@ typedef struct {
 } initNetworkAsyncData_t;
 #endif
 
-static int32 my_initNetworkSync() {
+static int32 my_initNetworkSync(void) {
 #ifdef WIN_PLAT
     WSADATA wsaData;
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
@@ -475,7 +478,10 @@ static void* my_initNetworkAsync(void* arg) {
     initNetworkAsyncData_t* data = (initNetworkAsyncData_t*)arg;
     int32 r = my_initNetworkSync();
     printf("my_initNetworkAsync(): %d\n", r);
-    bridge_dsm_network_cb(data->uc, (uint32_t)data->cb, r, (uint32_t)data->userData);
+    /* cb/userData 装的是 guest 32 位地址(经指针类型转运),显式经 uintptr_t
+     * 截断,语义与原先的直接窄化转换一致 */
+    bridge_dsm_network_cb(data->uc, (uint32_t)(uintptr_t)data->cb, r,
+                          (uint32_t)(uintptr_t)data->userData);
     free(data);
     return NULL;
 }
@@ -563,7 +569,9 @@ static void* my_getHostByNameAsync(void* arg) {
     getHostByNameAsyncData_t* data = (getHostByNameAsyncData_t*)arg;
     int32 r = my_getHostByNameSync(data->name);
     printf("my_getHostByNameAsync(): 0x%X\n", r);
-    bridge_dsm_network_cb(data->uc, (uint32_t)data->cb, r, (uint32_t)data->userData);
+    /* 同 my_initNetworkAsync:guest 32 位地址显式经 uintptr_t 截断 */
+    bridge_dsm_network_cb(data->uc, (uint32_t)(uintptr_t)data->cb, r,
+                          (uint32_t)(uintptr_t)data->userData);
     free(data->name);
     free(data);
     return NULL;
@@ -681,7 +689,10 @@ int32 my_send(int32 s, const char* buf, int len) {
                 }
                 data->realState = MR_SUCCESS;
             }
-            return 0;  // 还没连接上，因此返回0表示发送了0字节
+            /* The CMWAP bridge resolves the proxy target and connects with a
+             * blocking call above.  The socket is writable now, so send the
+             * original request in this mr_send call; returning zero would make
+             * one-shot HTTP downloaders wait for a retry that may never occur. */
         } else if (data->realState == MR_FAILED) {
             printf("[my_send] realState MR_FAILED\n");
             return MR_FAILED;
@@ -696,7 +707,7 @@ int32 my_send(int32 s, const char* buf, int len) {
         return 0;
     }
     ret = send(data->s, buf, len, 0);
-    printf("my_send(s:%d, len:%d): sent=%d, errno=%d\n", s, len, ret, errno);
+    printf("my_send(s:%d, fd:%d, len:%d): sent=%d, errno=%d\n", s, (int)data->s, len, ret, errno);
     printf("[my_send] data: %s\n", buf);
     if (ret == -1) {
         return MR_FAILED;
@@ -742,7 +753,7 @@ int32 my_recvfrom(int32 s, char* buf, int len, int32* ip, uint16* port) {
         return 0;
     }
     struct sockaddr_in from;
-    int fromLen = sizeof(from);
+    socklen_t fromLen = sizeof(from);
     ret = recvfrom(data->s, buf, len, 0, (struct sockaddr*)&from, &fromLen);
     if (ret == -1) {
         return MR_FAILED;
@@ -787,7 +798,7 @@ int32 my_recv(int32 s, char* buf, int len) {
     //     }
     // }
     int ret = checkReadable(data->s);
-    printf("my_recv(s:%d, len:%d): checkReadable=%d\n", s, len, ret);
+    printf("my_recv(s:%d, fd:%d, len:%d): checkReadable=%d\n", s, (int)data->s, len, ret);
     if (ret == -1) {
         return MR_FAILED;
     } else if (ret == 0) {

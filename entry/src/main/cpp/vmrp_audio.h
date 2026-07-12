@@ -11,6 +11,7 @@
 #ifndef VMRP_AUDIO_H
 #define VMRP_AUDIO_H
 
+#include <mutex>
 #include <ohaudio/native_audiorenderer.h>
 #include <ohaudio/native_audiostreambuilder.h>
 
@@ -23,7 +24,15 @@ public:
     int Start(int sample_rate, int channels);
     void Stop();
 
-    // OHAudio 回调（在音频线程）调用，填充 PCM。
+    // PAUSE: 暂停 OHAudio renderer(停止拉流回调),RESUME: 恢复。
+    // 配合 vmrp_api_media_pause/resume，暂停时 renderer 不再消耗 CPU。
+    void Pause();
+    void Resume();
+
+    // 音量控制: level 0~10 映射到 OH_AudioRenderer_SetVolume [0.0,1.0]。
+    void SetVolume(int level);
+
+    // OHAudio callback (audio thread): fill PCM data.
     void OnWriteData(OH_AudioRenderer *renderer, void *audioData, int32_t audioDataSize);
 
 private:
@@ -31,6 +40,7 @@ private:
     OH_AudioRenderer      *renderer_ = nullptr;
     int sample_rate_ = 44100;
     int channels_    = 2;
+    std::mutex mtx_;
 };
 
 #endif // VMRP_AUDIO_H

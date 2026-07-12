@@ -176,20 +176,31 @@ static void e2e_inject_click(int x, int y, int fd) {
     e2e_write_line(fd, resp);
 }
 
-static void e2e_inject_key(SDL_Keycode key, int fd) {
+/*
+ * hold_ms<=0 时使用全局默认（VMRP_E2E_HOLD_MS 或 500ms）。
+ * Mythroad 应用自身以定时器轮询按键状态实现长按/重复：按住时长直接决定
+ * 应用语义（短按=单步/激活，长按=按键重复或弹出长按菜单）。全局调大
+ * VMRP_E2E_HOLD_MS（如为剪贴板粘贴稳定性设 1500ms）会让所有按键都变成
+ * 长按，导致方向键连滚、确认键弹菜单。因此 KEY 命令支持按次覆盖时长。
+ */
+static void e2e_inject_key(SDL_Keycode key, int hold_ms, int fd) {
+    if (hold_ms <= 0) hold_ms = e2e_input_hold_ms();
     e2e_push_key(SDL_KEYDOWN, key, SDL_PRESSED);
-    SDL_Delay((Uint32)e2e_input_hold_ms());
+    SDL_Delay((Uint32)hold_ms);
     e2e_push_key(SDL_KEYUP, key, SDL_RELEASED);
     char resp[64];
     snprintf(resp, sizeof(resp), "OK key %d", (int)key);
     e2e_write_line(fd, resp);
 }
 
-static void e2e_inject_paste(const char *text, int fd) {
+static int e2e_set_clipboard(const char *text) {
     if (SDL_SetClipboardText(text ? text : "") != 0) {
-        e2e_write_line(fd, "ERR clipboard");
-        return;
+        return 0;
     }
+    return 1;
+}
+
+static void e2e_inject_paste_shortcut(int fd) {
     /* Ctrl+V is a platform-edit action, not a Mythroad key.  Carry the Ctrl
      * modifier in the SDL event and mirror it into SDL's mod state so the main
      * edit-mode branch observes the same condition as a real keyboard paste. */
@@ -201,6 +212,14 @@ static void e2e_inject_paste(const char *text, int fd) {
     SDL_Delay(1);
     SDL_SetModState(old_mod);
     e2e_write_line(fd, "OK paste");
+}
+
+static void e2e_inject_paste(const char *text, int fd) {
+    if (!e2e_set_clipboard(text)) {
+        e2e_write_line(fd, "ERR clipboard");
+        return;
+    }
+    e2e_inject_paste_shortcut(fd);
 }
 
 static void e2e_handle_wait_draw(VmrpE2eControl *control, int draw_count, int timeout_ms, int fd) {
@@ -282,7 +301,15 @@ static void e2e_handle_client(VmrpE2eControl *control, int fd) {
             e2e_write_line(fd, "ERR usage");
             return;
         }
-        e2e_inject_key(key, fd);
+        /* 可选第二参数 = 本次按住毫秒数（覆盖 VMRP_E2E_HOLD_MS） */
+        e2e_inject_key(key, b[0] ? atoi(b) : 0, fd);
+    } else if (strcasecmp(op, "SET_CLIPBOARD") == 0) {
+        const char *text = line + strlen(op);
+        while (*text == ' ' || *text == '\t') text++;
+        e2e_write_line(fd, e2e_set_clipboard(text)
+                               ? "OK clipboard" : "ERR clipboard");
+    } else if (strcasecmp(op, "PASTE_SHORTCUT") == 0) {
+        e2e_inject_paste_shortcut(fd);
     } else if (strcasecmp(op, "PASTE") == 0) {
         const char *text = line + strlen(op);
         while (*text == ' ' || *text == '\t') text++;
