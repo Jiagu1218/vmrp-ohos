@@ -262,8 +262,11 @@ int VmrpEngine::Init(int w, int h) {
     int ret = api_.init(w, h);
     if (ret == 0 && api_.set_dns_map) {
         api_.set_dns_map(
-            "proxy2.51mrp.com->159.75.119.124;help.proxy.51mrp.com->159.75.119.124");
-        LOGI("DNS map overridden: proxy2/help.proxy.51mrp.com -> 159.75.119.124");
+            "wap.skmeg.com->159.75.119.124;rop.skymobiapp.com->159.75.119.124;"
+            "spd.skymobiapp.com->159.75.119.124;freeads.51mrp.com->159.75.119.124;"
+            "proxy.51mrp.com->127.0.0.1;proxy2.51mrp.com->159.75.119.124;"
+            "help.proxy.51mrp.com->159.75.119.124");
+        LOGI("DNS map set: 7 entries (upstream default)");
     }
     return ret;
 }
