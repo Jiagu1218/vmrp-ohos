@@ -223,36 +223,58 @@ MRP 调 mr_plat(300x) ──→ dsm.c ──→ ohos_image_decode ──→ OH_I
 
 ## 移植补丁说明
 
-构建脚本 `scripts/CMakeLists.txt` 在 `add_subdirectory(vmrp)` 前会自动应用以下补丁（幂等，可重复运行）：
+构建脚本 `scripts/CMakeLists.txt` 在 `add_subdirectory(vmrp)` 前会自动应用以下补丁（幂等，可重复运行）。所有补丁通过标记字符串（如 `OHOS_MEMSET_BOUNDS_GUARD`）检测是否已应用，支持增量构建。
+
+### 为什么 OHOS 需要这些补丁而上游不需要
+
+上游 vmrp 基于 **SDL 单线程模型**：主循环在一个线程里串行处理定时器、输入、渲染和引擎逻辑。单次 dispatch 失败只丢一个 tick，`while` 循环自然容错继续运行。
+
+OHOS 必须**分离 UI 线程和引擎 Worker 线程**——ArkUI 要求主线程 16ms 内完成帧渲染，而 Unicorn 模拟一次 `arm_ext_call` 可能耗时数十毫秒，放主线程会冻屏。分离后 Worker 是引擎的唯一驱动者：dispatch 失败 → timer 停摆 → 不再产生新事件 → 游戏永久冻结。因此 OHOS 的核心容错原则是 **"让 dispatch 永远干净返回，绝不中断 Worker 事件循环"**。
+
+此外，OHOS/musl 的内存映射与 Linux/glibc 不同：Unicorn 无法在低地址做 `MAP_FIXED`，ARM 虚拟地址不再等于 host 指针地址，需要显式地址翻译；内存越界写入可能不触发 SIGSEGV 而是静默损坏其他数据。
 
 ### 基础移植补丁
 
-| 补丁 | 文件 | 原因 |
-|------|------|------|
-| **Unicorn /dev/null 探测** | unicorn/CMakeLists.txt | Windows 宿主下 `/dev/null` 不存在，Unicorn 主机架构探测失败。改为空字符串输入 |
-| **Unicorn --cc wrapper** | unicorn/CMakeLists.txt | OHOS clang 是交叉编译器，裸调用不带 `--target` 导致 `qemu/configure` 误判宿主为 mingw32。用 sh wrapper 注入 `--target`/`--sysroot`；同时用 `string(REGEX REPLACE)` 匹配任意已有 wrapper 路径，支持跨 ABI（arm64-v8a ↔ x86_64）交替构建 |
-| **Unicorn TCG 架构检测** | unicorn/CMakeLists.txt | Unicorn 的 CMakeLists.txt 用 `execute_process(COMMAND ${CMAKE_C_COMPILER} -dM -E -)` 检测宿主架构（选择 TCG 后端）。Windows 下 OHOS clang 默认 x86_64，所以 `__x86_64__` 被定义 → `UNICORN_TARGET_ARCH=i386` → 错误地编译 `tcg/i386` 后端。用 `.bat` wrapper（`ohos-cc.bat`，注入 `--target`/`--sysroot`）替代裸 clang，使目标架构正确定义 |
-| **跨 ABI 补丁鲁棒性** | `build_libvmpp_ohos.bat` + `scripts/CMakeLists.txt` | 每次构建前 `git checkout --` 恢复 Unicorn CMakeLists.txt 到原始状态，防止上次 ABI 的 patch 残留导致下次替换不匹配 |
-| **MAP_32BIT** | native_dsm_funcs.c | `MAP_32BIT` 是 x86-glibc 专有，OHOS musl 缺失，x86_64 模拟器构建失败。替换为 0（有 calloc 兜底） |
-| **case 800 ARM 地址修复** | mythroad.c + arm_ext_executor.c | 部分 MRP（如 3D暴力摩托）的 cfunction loader 把 ext 放在 ARM 内存并用 ARM 地址调 case 800。arm_ext_load 把 ARM 地址当 host 指针读取导致全 0 崩溃。检测到 ARM 地址时用 `arm_ext_host_ptr` 转成 host 指针 |
+| 幂等标记 | 文件 | 原因 |
+|---------|------|------|
+| (无标记) | unicorn/CMakeLists.txt | **/dev/null 探测**：Windows 宿主下 `/dev/null` 不存在，Unicorn 主机架构探测失败。改为空字符串输入 |
+| (无标记) | unicorn/CMakeLists.txt | **--cc wrapper**：OHOS clang 是交叉编译器，裸调用不带 `--target` 导致 `qemu/configure` 误判宿主为 mingw32。用 sh wrapper 注入 `--target`/`--sysroot`；`string(REGEX REPLACE)` 匹配任意已有 wrapper 路径，支持跨 ABI 交替构建 |
+| (无标记) | unicorn/CMakeLists.txt | **TCG 架构检测**：Windows 下 OHOS clang 默认 x86_64，`__x86_64__` 被定义 → `UNICORN_TARGET_ARCH=i386` → 编译错误的 TCG 后端。用 `.bat` wrapper 替代裸 clang |
+| (无标记) | native_dsm_funcs.c | **MAP_32BIT**：x86-glibc 专有，OHOS musl 缺失，x86_64 模拟器构建失败。替换为 0（有 calloc 兜底） |
+| `OHOS_ARM_ADDR_FIX` | mythroad.c | **case 800 ARM 地址修复**：部分 MRP（如 3D暴力摩托）的 cfunction loader 把 ext 放在 ARM 内存并用 ARM 地址调 case 800。上游 Linux/glibc 下 Unicorn 用 `MAP_FIXED` 把 ARM 虚拟内存映射到宿主同一地址（guest 0x2C5C44 = host 0x2C5C44），直接解引用正确；OHOS/musl 无法在低地址做 MAP_FIXED，ARM 地址需通过 `arm_ext_host_ptr()` 翻译为 host 指针 |
+| `arm_ext_host_ptr` | arm_ext_executor.c | **ARM 地址→host 指针**：`arm_ext_host_ptr(m, addr)` = `m->mem + (addr - EXT_BASE_ADDR)`，供 case 800 修复使用 |
 
 ### 稳定性修复补丁
 
-| 补丁 | 文件 | 原因 |
-|------|------|------|
-| **ARM_ALLOC_U64** | arm_ext_executor.c | `arm_alloc` 分配大小用 `int` 计算，大内存请求时整数溢出导致分配过小，后续 `memset` 越界 SIGSEGV。改用 `uint64_t` 计算 + 边界守卫 |
-| **MEMSET_BOUNDS_GUARD** | arm_ext_executor.c | `memset` 写入长度可能超过 `arm_alloc` 实际分配大小，导致堆溢出。增加边界检查 |
-| **MEMSET_NULL_GUARD** | arm_ext_executor.c | case 14 中 `memset2` 目标指针可能为 NULL（未映射 ARM 地址），导致空指针解引用 SIGSEGV。增加 NULL 检查 |
-| **UNMAPPED_GRACEFUL_EXIT** | arm_ext_executor.c | Unicorn 访问未映射 ARM 地址时 UC_ERR_EXCEPTION 直接崩溃。改为优雅退出当前 ARM 调用，返回 MR_IGNORE，避免闪退 |
-| **EXCEPTION_HEAP_RECOVERY** | arm_ext_executor.c | 定时器线程中 UC_ERR_EXCEPTION 会导致 ARM 引擎状态损坏，后续所有调用均失败。检测到异常后重建 Unicorn 引擎 + 重映射内存，恢复正常运行 |
-| **TIMER_NO_OVERRIDE** | mythroad.c | `arm_ext_call_dispatch(native_ext, 0, 50)` 硬编码 timer 间隔为 50ms，覆盖 MRP 应用自己设置的间隔，导致定时器运行过快。改为尊重应用设定的间隔 |
+| 幂等标记 | 文件 | 原因 |
+|---------|------|------|
+| `OHOS_MEMSET_BOUNDS_GUARD` | aex_table.c | **memset 越界守卫**：`arm_alloc` 的长度守卫不覆盖 `heap_top` 被踩为异常小值场景。上游 Linux/glibc 下 memset 越界立即 SIGSEGV 被 Unicorn hook 捕获走优雅退出；OHOS/musl 可能不触发 SIGSEGV 而静默损坏后续数据。增加 `a - EXT_BASE_ADDR + want ≤ EXT_MEM_SIZE` 二次检查 |
+| `OHOS_UNMAPPED_GRACEFUL_EXIT` | arm_ext_executor.c + aex_exec.c | **WRITE 黑洞页 + READ/INSN/EXCEPTION 优雅退出**：① WRITE_UNMAPPED：上游 hook_invalid 返回 false → `uc_emu_start` 报错 → run_arm_with_sp 返回 MR_FAILED → SDL 主循环丢一个 tick 继续转。OHOS Worker 线程丢 tick 后永久冻结；改为动态 `uc_mem_map` 64K 黑洞页让写操作真正完成，guest 状态一致不会循环崩溃。② READ_UNMAPPED/INSN_INVALID/EXCEPTION：设 `PC=EXT_STOP_ADDR` + TB flush，返回 MR_SUCCESS 让 Worker 继续处理下一个命令 |
+| `OHOS_EXCEPTION_HEAP_RECOVERY` | aex_exec.c | **EXCEPTION 堆数据恢复**：上游只检查 INSN_INVALID 是否 PC 在堆上，因为 Linux/glibc 下 INSN_INVALID 是最常见的堆损坏表现。OHOS/musl 内存布局不同，同样的堆损坏更常触发 UC_ERR_EXCEPTION（如 BLX 跳到损坏的返回地址落在数据区），需要同样恢复堆上的 R9/栈等关键数据 |
+| `OHOS_TIMER_NO_OVERRIDE` | arm_ext_executor.c | **timer 间隔不覆盖**：`arm_ext_call_dispatch` 的 post-dispatch 逻辑无条件调 `mr_timerStart(50)`，覆盖 ARM 代码通过 `table[31]` 设的 timer interval。例如 MRP 设 timerStart(1000) 表示 1 秒后触发，50ms 覆盖后每 50ms 触发一次。修复：检查 `host_timer_pending`，ARM 侧已设 timer 时不覆盖 |
 
 ### 功能扩展补丁
 
-| 补丁 | 文件 | 原因 |
-|------|------|------|
-| **PLATEX_MEM_EXT** | arm_ext_executor.c | SkyEngine `mr_platEx` 1001/1002/1012/1013 接口：获取/设置内存布局信息（IRAM/EXRAM/屏幕缓冲区地址和大小），MRP 应用通过此接口动态配置内存 |
-| **GIF_TICK** | mythroad.c | GIF 动画驱动：在 `mr_timer()` 末尾注入 `ohos_gif_tick()` 调用，每 tick 推进活跃 GIF 动画的当前帧，实现动画播放 |
+| 幂等标记 | 文件 | 功能 |
+|---------|------|------|
+| `OHOS_MOTION_ACC_FIELD` | arm_ext_internal.h | ArmExtModule 新增字段：`motion_acc_addr`（T_MOTION_ACC 缓冲 ARM 地址）、`screen_buf_addr/len`（platEx(1001) 离屏缓冲）、`iram_addr/len`（platEx(1012) 内部 cache） |
+| `OHOS_MOTION_POWER` | vmrp_api.c | 传感器电源控制 `vmrp_api_motion_power(on)` + 动感事件投递 `vmrp_api_motion_event(x,y,z)` + 灵敏度调节 + 震动回调 `vmrp_api_start/stop_shake` + 外部移植接口 `vmrp_api_start_dsmB/C/ex` |
+| `OHOS_MOTION_CHIP` | dsm.c | 重力感应 mr_plat(4001-4006) 命令实现 + 加速度缓存 `dsm_set/get_motion_acc` + 事件投递 `dsm_dispatch_motion_event` |
+| `arm_ext_write_motion_acc` | arm_ext_executor.c | T_MOTION_ACC 缓冲分配 + `arm_ext_write_motion_acc()` 将三轴加速度写入 Unicorn 虚拟内存，返回 ARM 可见 32 位地址。ARM 代码只能通过 32 位虚拟地址访问，不能解引用宿主 64 位指针 |
+| `OHOS_MOTION_ACC_BRIDGE` | mythroad.c | `dsm_write_motion_acc_to_arm()` 桥接：从 dsm.c 读缓存加速度 → 调 `arm_ext_write_motion_acc` 写入 Unicorn 内存 → 返回 ARM 地址给 `mr_event` param2 |
+| `OHOS_SHAKE` | native_dsm_funcs.c | `native_startShake/stopShake` → 转发到 `vmrp_api_start/stop_shake` → 宿主调 OH_Vibrator C API |
+| `OHOS_MEDIA_CTRL` | native_dsm_funcs.c | NativeAudioState 扩展：`pcm_total_len/paused/midi_total_samples/midi_rendered_samples` + 暂停渲染跳过 + MIDI 已渲染计数 + pause/resume/seek/position/duration 函数 |
+| `OHOS_MEDIA_API` | vmrp_api.c | 导出 `vmrp_api_media_pause/resume/seek/position/duration` + `vmrp_api_set_media_cb`（暂停/恢复回调通知宿主停启 OHAudio renderer）+ `vmrp_api_set_volume/set_volume_cb`（音量控制） |
+| `OHOS_MEDIA_DECL` | vmrp_api.h + native_dsm_funcs.h | 上述函数的声明 |
+| `OHOS_DSM_MEDIA` | dsm.c | 修复 PAUSE/STOP/RESUME（上游 PAUSE 和 STOP 实现相同都清 PCM 导致无法 RESUME）+ 实现 MR_MEDIA_SETPOS(210)/GET_TOTAL_TIME(212)/GET_CURTIME(213)/GET_CURTIME_MSEC(215) |
+| `OHOS_SET_VOL` | dsm.c | `mr_plat(MR_SET_VOL=1302)` 音量控制：`param`(0~10) → `vmrp_api_set_volume` → 宿主调 `OH_AudioRenderer_SetVolume`，不做软件 PCM 缩放避免双算 |
+| `OHOS_VOLUME_API` | vmrp_api.c | `vmrp_api_set_volume(level)` + `vmrp_api_set_volume_cb(cb)` |
+| `OHOS_VOLUME_DECL` | vmrp_api.h | 音量控制声明 |
+| `OHOS_PLATEX_MEM_EXT` | aex_table.c | platEx(1001) 获取屏幕缓冲（第二内存）→ ARM 堆分配 `SCRW*SCRH*2` + 幂等复用；platEx(1002) 释放（清零 addr/len）；platEx(1012) 申请内部 cache；platEx(1013) 释放内部 cache。均与 1014/1015 同模式——ARM 堆分配，guest 通过写回的 ARM 地址访问 |
+| `OHOS_GIF_TICK` | mythroad.c | `mr_timer()` 末尾注入 `ohos_gif_tick()` 推进 GIF 动画帧 + `dsm_dispatch_motion_event()` 投递动感数据，保证与 mr_screenBuf 写入串行 |
+| `OHOS_ENTRY_CALL` | mythroad.c | dofile 后显式调用 `_mr_entry` 指向的入口函数（恢复上游 b82dd68 修复，上游升级 d367585 时丢失） |
+| `OHOS_DSM_BC_EX` | mythroad.c | `mr_start_dsmB(entry)` / `mr_start_dsmC(entry)` / `mr_start_dsm_ex(path, entry)` 外部移植接口 |
+| `OHOS_CONNECT_TIMEOUT` | network.c | 阻塞式 `connect()` 加 3s 超时：非阻塞 → connect → select 等可写 → 恢复阻塞 → SO_ERROR。避免断网时 connect 卡住数十秒~分钟，冻结 Worker 线程导致游戏卡死 |
 
 ### 鸿蒙专属源码（ohos_src/）
 
@@ -310,10 +332,10 @@ A: 这是 vmrp 对个别游戏的兼容性限制（如 3D暴力摩托）。vmrp 
 A: 已通过引擎锁（`engine_mtx_`）修复。若仍出现，确认 `vmrp_engine.cpp` 的 SendEvent/StepTimer 等方法都持有 `engine_mtx_` 锁。
 
 ### Q: 游戏画面花屏/卡死
-A: 已通过 `UNMAPPED_GRACEFUL_EXIT` 补丁修复——当 ARM 代码访问未映射地址时优雅退出而非崩溃。若仍出现，可能是 MRP 应用的绘图指令超出了屏幕缓冲区范围。
+A: 已通过 `OHOS_UNMAPPED_GRACEFUL_EXIT` 补丁修复——WRITE_UNMAPPED 动态映射黑洞页让写操作完成保持 guest 状态一致，READ/INSN/EXCEPTION 设 PC=STOP 优雅退出当前 dispatch。若仍出现，可能是 MRP 应用的绘图指令超出了屏幕缓冲区范围（见 `OHOS_MEMSET_BOUNDS_GUARD`）。
 
 ### Q: 游戏运行一段时间后定时器停了
-A: 已通过 `EXCEPTION_HEAP_RECOVERY` 补丁修复——UC_ERR_EXCEPTION 后自动重建 Unicorn 引擎。若仍出现，查看 hilog 中 `vmrp_core:` 标签的日志。
+A: 已通过 `OHOS_UNMAPPED_GRACEFUL_EXIT` + `OHOS_EXCEPTION_HEAP_RECOVERY` 补丁修复——UC_ERR_EXCEPTION 后恢复堆上 R9/栈等关键数据，graceful exit 让 Worker 继续处理下一个命令。若仍出现，查看 hilog 中 `vmrp_core:` 标签的日志。
 
 ### Q: 游戏中图片不显示
 A: SkyEngine 图片 API（3001-3012）已实现。若图片仍不显示，可能是 MRP 使用了 3014/3015（MTK 私有资源格式，暂未实现），或图片文件路径无法通过 `mr_open` 访问。
