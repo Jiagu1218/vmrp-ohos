@@ -841,6 +841,92 @@ if(EXISTS "${_VMRP_DSM_VOL}")
     endif()
 endif()
 
+# --- Patch mythroad.c: 添加 pack_filename/start_filename/start_fileparameter 的 setter ---
+# OHOS_RESTART_READBACK 修复 cookie.mrp 等原生 ARM ext 启动其它 mrp 失败的问题。
+# 真机上 ARM 代码与宿主共享 pack_filename/start_filename 等全局缓冲区(table[100/101/138]),
+# ARM 代码写入新目标后设 mr_state=RESTART,宿主 mr_timer() 直接 mr_stop()+_mr_intra_start()。
+# Unicorn 下 ARM 内存独立,arm_ext_executor.c 需要把 ARM 侧 table 槽回读到宿主全局。
+# 上游只有 old_pack_filename/old_start_filename 有 setter(mr_set_old_*),
+# 缺少 pack_filename/start_filename/start_fileparameter 的 setter,此处补齐。
+# mythroad.c 属于 :restore_patched,用 CMake patch 保证幂等。
+set(_VMRP_RESTART_SETTER "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+if(EXISTS "${_VMRP_RESTART_SETTER}")
+    file(READ "${_VMRP_RESTART_SETTER}" _rs)
+    if(NOT _rs MATCHES "OHOS_RESTART_READBACK")
+        string(REPLACE
+            "int32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
+            "/* OHOS_RESTART_READBACK: pack_filename/start_filename/start_fileparameter 的 setter。\n * arm_ext_executor.c 的 arm_ext_readback_filename_globals() 把 Unicorn ARM 侧\n * table[100/101/138] 缓冲区内容回读到这些宿主全局,供 mr_timer() RESTART 分支\n * 的 _mr_intra_start(start_filename) 使用。与已有的 mr_set_old_* 同模式。 */\nvoid mr_set_pack_filename(const char* name) {\n    MEMSET(pack_filename, 0, sizeof(pack_filename));\n    if (name && name[0]) {\n        STRNCPY(pack_filename, name, sizeof(pack_filename) - 1);\n    }\n}\n\nvoid mr_set_start_filename(const char* name) {\n    MEMSET(start_filename, 0, sizeof(start_filename));\n    if (name && name[0]) {\n        STRNCPY(start_filename, name, sizeof(start_filename) - 1);\n    }\n}\n\nvoid mr_set_start_fileparameter(const char* name) {\n    MEMSET(start_fileparameter, 0, sizeof(start_fileparameter));\n    if (name && name[0]) {\n        STRNCPY(start_fileparameter, name, sizeof(start_fileparameter) - 1);\n    }\n}\n\nint32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
+            _rs "${_rs}")
+        file(WRITE "${_VMRP_RESTART_SETTER}" "${_rs}")
+        message(STATUS "[OHOS] Patched mythroad.c pack/start/start_fileparameter setters (OHOS_RESTART_READBACK)")
+    endif()
+endif()
+
+# --- Patch arm_ext_executor.c: 回读函数 + 区分 RESTART(3)/STOP(4) ---
+# OHOS_RESTART_READBACK 的核心修复:
+# 1) 添加 arm_ext_readback_filename_globals(): 把 ARM 侧 table[100/101/102/103/138]
+#    指向的字符串回读到宿主全局(pack_filename/start_filename/old_*/start_fileparameter)。
+# 2) 修改 arm_ext_finish_callback_state: 区分 RESTART(3) 和 STOP(4)。
+#    - RESTART(3): 回读 + 设宿主 mr_state=RESTART,不调 mr_exit()。
+#      真机 mr_timer() 捕获 RESTART 后直接 mr_stop()+_mr_intra_start(start_filename),
+#      不经过 mr_exit/mr_restart_old_app。mr_exit 内部的 mr_restart_old_app 会用 old_*
+#      覆盖 start_filename,破坏 ARM 代码刚写的新目标。
+#    - STOP(4)/ERROR(5): 保留原有 mr_exit() 行为(退出/返回上层)。
+# arm_ext_executor.c 属于 :restore_patched,用 CMake patch 保证幂等。
+set(_VMRP_ARMEXT_RB "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
+if(EXISTS "${_VMRP_ARMEXT_RB}")
+    file(READ "${_VMRP_ARMEXT_RB}" _aerb)
+    if(NOT _aerb MATCHES "OHOS_RESTART_READBACK")
+        # 子补丁1: 在 arm_ext_finish_callback_state 之前插入回读函数
+        string(REPLACE
+            "static int arm_ext_finish_callback_state(ArmExtModule *m, uint32_t ext_chunk) {"
+            "/* OHOS_RESTART_READBACK: 把 ARM 侧 table[100/101] 指向的字符串回读到宿主全局。\n * 真机上 table[100]=pack_filename / table[101]=start_filename 指向宿主全局本身\n * (共享内存),ARM 代码通过 strcpy(table[100], newpack) 写入后宿主立即可见。\n * Unicorn 下 ARM 内存独立,启动时宿主→ARM 单向写入(arm_ext_executor.c:971-977),\n * ARM 代码往 ARM 副本写的新目标从未被读回,导致 mr_timer() RESTART 分支用的\n * start_filename 仍是旧值。此函数在 RESTART 检测时补上缺失的反向同步。\n *\n * 注意: 只回读 table[100]/[101]。old_pack_filename/old_start_filename/\n * start_fileparameter 不回读——ARM 代码通过 table[131](_mr_TestCom1 case 3/4)\n * 设置它们时走的是宿主 C 函数路径(aex_t131→_mr_TestCom1),直接写宿主全局,\n * 不经过 ARM 副本。回读 ARM 侧 table[102]/[103]/[138] 会用启动时的旧值覆盖\n * table[131] 刚写入的正确值(实测 old_pack 回读为 't' 即此问题)。\n * 读法与 arm_ext_current_pack_table_name 一致: table[idx] 存 ARM 指针,解引用得字符串。 */\nstatic void arm_ext_readback_filename_globals(ArmExtModule *m) {\n    if (!m) return;\n    extern void mr_set_pack_filename(const char * name);\n    extern void mr_set_start_filename(const char * name);\n    extern const char *mr_get_old_pack_filename(void);\n    extern const char *mr_get_old_start_filename(void);\n    extern const char *mr_get_start_fileparameter(void);\n    const char *s100 = read_table_string(m, 100);\n    const char *s101 = read_table_string(m, 101);\n    mr_set_pack_filename(s100);\n    /* start_filename 不回读 ARM 侧 table[101]: 真机 mr_start_dsmC 启动子 mrp 时\n     * 会清空 start_filename(memclr),_mr_intra_start 收到空字符串后用 mrp 包默认\n     * 入口 start.mr。ARM 副本 table[101] 没被更新,仍是 cookie 自己的 'cfunction.ext',\n     * 回读它会导致 dofile('cfunction.ext') 卡住(那是 ARM ext 二进制,不是 Lua 脚本)。\n     * 清空 start_filename 与真机一致,_mr_intra_start 会 fallback 到 start.mr。 */\n    mr_set_start_filename(\"\");\n    /* 回读 table[102]/[103]/[138]: 现在它们用 128 字节固定缓冲,ARM 代码\n     * strcpy 写入的值能正确保存。真机上这些就是宿主全局本身,无需回读。 */\n    const char *a102 = read_table_string(m, 102);\n    const char *a103 = read_table_string(m, 103);\n    const char *a138 = read_table_string(m, 138);\n    if (a102 && a102[0]) mr_set_old_pack_filename(a102);\n    if (a103 && a103[0]) mr_set_old_start_filename(a103);\n    if (a138 && a138[0]) { extern void mr_set_start_fileparameter(const char *); mr_set_start_fileparameter(a138); }\n}\n\nstatic int arm_ext_finish_callback_state(ArmExtModule *m, uint32_t ext_chunk) {"
+            _aerb "${_aerb}")
+        # 子补丁2: read_table_string 辅助函数 + table[101-103,138] 改用 128 字节固定缓冲区
+        # read_table_string: 读取 table[index] 槽中的 ARM 指针,解引用得到 C 字符串。
+        # table[101-103,138] 用 128 字节固定缓冲(alloc_bytes),不用 alloc_string(精确长度)。
+        # 真机上这些槽指向 char xxx[128] 全局数组,ARM 代码可以 strcpy 写入最多 127 字节的新值。
+        # alloc_string 按初始值精确长度分配(空串=1字节),ARM 代码 strcpy 到这个小缓冲会溢出
+        # (实测 table[102] 写入后只剩 't')。改用 alloc_bytes(128) 与真机 ABI 一致。
+        string(REPLACE
+            "static void write_table_entry(ArmExtModule *m, uint32_t index, uint32_t value) {\n    memcpy((uint8_t *)arm_ptr(m, EXT_TABLE_ADDR + index * 4), &value, 4);\n}"
+            "static void write_table_entry(ArmExtModule *m, uint32_t index, uint32_t value) {\n    memcpy((uint8_t *)arm_ptr(m, EXT_TABLE_ADDR + index * 4), &value, 4);\n}\n\n/* OHOS_RESTART_READBACK: 读取 table[index] 槽中的 ARM 指针,解引用得到 C 字符串。 */\nstatic const char *read_table_string(ArmExtModule *m, uint32_t index) {\n    if (!m) return NULL;\n    uint8_t *slotp = arm_ptr(m, EXT_TABLE_ADDR + index * 4u);\n    if (!slotp) return NULL;\n    uint32_t strp = 0;\n    memcpy(&strp, slotp, 4);\n    if (!strp) return NULL;\n    const char *s = (const char *)arm_ptr(m, strp);\n    if (!s) return NULL;\n    return s;\n}"
+            _aerb "${_aerb}")
+        # table[101-103,138] 改用 128 字节固定缓冲
+        string(REPLACE
+            "    write_table_entry(m, 101, alloc_string(m, mr_get_start_filename()));\n    write_table_entry(m, 102, alloc_string(m, mr_get_old_pack_filename()));\n    write_table_entry(m, 103, alloc_string(m, mr_get_old_start_filename()));\n    write_table_entry(m, 138, alloc_string(m, mr_get_start_fileparameter()));"
+            "    /* OHOS_RESTART_READBACK: table[101-103,138] 用 128 字节固定缓冲(alloc_bytes),\n     * 不用 alloc_string(精确长度)。真机上这些槽指向 char[128] 全局数组,ARM 代码\n     * 启动子 mrp 时会 strcpy 自己的包名到 table[102](old_pack_filename)。\n     * alloc_string 对空串只分配 1 字节,strcpy 溢出(实测残留 't')。 */\n    {\n        const char *inits_[] = { mr_get_start_filename(), mr_get_old_pack_filename(),\n                                 mr_get_old_start_filename(), mr_get_start_fileparameter() };\n        uint32_t idxs_[] = { 101, 102, 103, 138 };\n        for (int _i = 0; _i < 4; _i++) {\n            uint32_t slot_ = arm_alloc(m, 128);\n            if (slot_) {\n                char *dst_ = (char *)arm_ptr(m, slot_);\n                memset(dst_, 0, 128);\n                snprintf(dst_, 128, \"%s\", inits_[_i] ? inits_[_i] : \"\");\n            }\n            write_table_entry(m, idxs_[_i], slot_);\n        }\n    }"
+            _aerb "${_aerb}")
+        # 子补丁3: 区分 RESTART(3) 与 STOP(4)
+        # 原: if (arm_state >= 3) { mr_exit(); return 1; }
+        # 新: RESTART(3) 回读+设状态不调mr_exit; STOP(4+) 调mr_exit
+        string(REPLACE
+            "        if (arm_state >= 3) {\n            mr_exit();\n            return 1;\n        }"
+            "        /* OHOS_RESTART_READBACK: 区分 RESTART(3) 与 STOP(4)。\n         * RESTART(3): ARM ext 写了新 pack/start 目标并要求宿主重启到该目标。\n         *   真机 mr_timer() 捕获 RESTART 后直接 mr_stop()+_mr_intra_start(start_filename),\n         *   不调 mr_exit。Unicorn 下必须先回读 ARM 侧 table 到宿主全局(真机共享内存\n         *   不需要),再设宿主 mr_state=RESTART 让 mr_timer 自然消费。\n         *   不能调 mr_exit(): 它内部 mr_restart_old_app() 会用 old_* 覆盖 start_filename,\n         *   破坏 ARM 代码刚写的新目标(cookie→子mrp 启动失败的根因)。\n         * STOP(4)/ERROR(5): 保留原有 mr_exit() 行为(退出/返回上层应用)。 */\n        if (arm_state == 3) {\n            arm_ext_readback_filename_globals(m);\n            mr_state = 3; /* MR_STATE_RESTART: 不用枚举名因 arm_ext_executor.c 未 include mr.h */\n            return 1;\n        }\n        if (arm_state >= 4) {\n            mr_exit();\n            return 1;\n        }"
+            _aerb "${_aerb}")
+        file(WRITE "${_VMRP_ARMEXT_RB}" "${_aerb}")
+        message(STATUS "[OHOS] Patched arm_ext_executor.c RESTART readback + STOP distinction (OHOS_RESTART_READBACK)")
+    endif()
+endif()
+
+# --- Patch mythroad.c: _mr_intra_start 空入口 fallback ---
+# 真机 mr_start_dsmC 启动子 mrp 时清空 start_filename(memclr 128 bytes),
+# mr_timer() RESTART 分支调 _mr_intra_start(start_filename, NULL) 时 start_filename 为空。
+# 原代码直接 mrp_dofile(vm_state, "") 会找不到文件失败。fallback 到 MR_START_FILE("start.mr"),
+# 与 mr_start_dsm 的 ext 默认值逻辑一致(mythroad.c line 3977-3978)。
+set(_VMRP_CASE800_DIAG "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+if(EXISTS "${_VMRP_CASE800_DIAG}")
+    file(READ "${_VMRP_CASE800_DIAG}" _c8d)
+    if(NOT _c8d MATCHES "OHOS_CASE800_DIAG")
+        string(REPLACE
+            "    fprintf(stderr, \"[_mr_intra_start] all registered, dofile('%s')...\\n\", appExName); fflush(stderr);"
+            "    /* OHOS_CASE800_DIAG: 真机 mr_start_dsmC 启动子 mrp 时清空 start_filename,\n     * _mr_intra_start 收到空串。fallback 到 MR_START_FILE(\"start.mr\"),与\n     * mr_start_dsm 的 ext 默认值逻辑一致(line 3977-3978)。 */\n    if (!appExName || !appExName[0]) {\n        appExName = MR_START_FILE;\n    }\n    fprintf(stderr, \"[_mr_intra_start] all registered, dofile('%s')...\\n\", appExName); fflush(stderr);"
+            _c8d "${_c8d}")
+        file(WRITE "${_VMRP_CASE800_DIAG}" "${_c8d}")
+        message(STATUS "[OHOS] Patched _mr_intra_start empty appExName fallback (OHOS_CASE800_DIAG)")
+    endif()
+endif()
+
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
 # --- OHOS 图片解码：注入 ohos_image_decode.c 到 vmrp-shared ---
