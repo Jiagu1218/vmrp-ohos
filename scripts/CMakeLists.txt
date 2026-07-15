@@ -863,6 +863,32 @@ if(EXISTS "${_VMRP_ARMEXT_SUBV}")
     endif()
 endif()
 
+# --- Patch arm_ext_executor.c: table[138] 改用128字节固定缓冲 + pack回读还原完整路径 ---
+# OHOS_HANDOFF_FIX: 两个上游遗漏的修复:
+# 1) table[138](start_fileparameter) 上游仍用 alloc_string(精确长度),ARM 代码 strcpy
+#    到短缓冲会溢出(同 table[101-103] 的问题)。改用 alloc_filename_table_slot(128字节)。
+# 2) arm_ext_sync_handoff_filenames 回读 pack_filename 时,table[100] 存的是 pack alias
+#    (短名如 'cookie.mrp'),不是完整路径。宿主 _mr_readFile 需要完整路径才能打开文件。
+#    回读时通过 arm_ext_pack_to_host_path 还原成完整路径再 set。
+set(_VMRP_HANDOFF "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
+if(EXISTS "${_VMRP_HANDOFF}")
+    file(READ "${_VMRP_HANDOFF}" _ho)
+    if(NOT _ho MATCHES "OHOS_HANDOFF_FIX")
+        # 1) table[138] 改用 alloc_filename_table_slot
+        string(REPLACE
+            "    write_table_entry(m, 138, alloc_string(m, mr_get_start_fileparameter()));"
+            "    /* OHOS_HANDOFF_FIX: table[138] 用 128 字节固定缓冲(与 table[101-103] 一致),\n     * 不用 alloc_string(精确长度)。真机上 start_fileparameter 是 char[128] 数组,\n     * ARM 代码 strcpy 到 alloc_string 分配的短缓冲会溢出。 */\n    write_table_entry(m, 138, alloc_filename_table_slot(m, mr_get_start_fileparameter()));"
+            _ho "${_ho}")
+        # 2) sync_handoff 中 pack_filename 回读时还原完整路径
+        string(REPLACE
+            "    arm_ext_sync_filename_slot(m, m->pack_table_addr, mr_set_pack_filename);"
+            "    /* OHOS_HANDOFF_FIX: table[100] 存的是 pack alias(短名),回读时还原成\n     * 完整 host 路径,保证后续 _mr_readFile/mrp_dofile 能正确打开文件。 */\n    {\n        char _pack_val[ARM_EXT_PACK_TABLE_SIZE];\n        const void *_src = m->pack_table_addr ? arm_ptr(m, m->pack_table_addr) : NULL;\n        if (_src) {\n            memcpy(_pack_val, _src, sizeof(_pack_val));\n            _pack_val[sizeof(_pack_val) - 1] = '\\0';\n            const char *_host = arm_ext_pack_to_host_path(m, _pack_val);\n            mr_set_pack_filename(_host ? _host : _pack_val);\n        }\n    }"
+            _ho "${_ho}")
+        file(WRITE "${_VMRP_HANDOFF}" "${_ho}")
+        message(STATUS "[OHOS] Patched arm_ext_executor.c table[138] 128B + pack path restore (OHOS_HANDOFF_FIX)")
+    endif()
+endif()
+
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
 # --- OHOS 图片解码：注入 ohos_image_decode.c 到 vmrp-shared ---
