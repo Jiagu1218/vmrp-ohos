@@ -801,6 +801,7 @@ if(EXISTS "${_VMRP_CASE800_DIAG}")
             "    /* OHOS_CASE800_DIAG: 真机 mr_start_dsmC 启动子 mrp 时清空 start_filename,\n     * _mr_intra_start 收到空串。fallback 到 MR_START_FILE(\"start.mr\"),与\n     * mr_start_dsm 的 ext 默认值逻辑一致(line 3977-3978)。 */\n    if (!appExName || !appExName[0]) {\n        appExName = MR_START_FILE;\n    }\n    fprintf(stderr, \"[_mr_intra_start] all registered, dofile('%s')...\\n\", appExName); fflush(stderr);"
             _c8d "${_c8d}")
         # MR_VERSION 验证: 移除此补丁,保持上游 1968,测试是否有动画
+        # case 801 诊断已移除(验证完毕)
         # mr_set_start_fileparameter setter (上游未提供,OHOS_HANDOFF_FIX 的 table[138] 回读需要)
         string(REPLACE
             "int32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
