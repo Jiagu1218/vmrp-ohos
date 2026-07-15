@@ -226,6 +226,7 @@ ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/dsm.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/vmrp_api.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/network.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/native_dsm_funcs.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/src/lib/mr_strlib.c")
 
 # --- Patch arm_ext_internal.h: 添加 OHOS 需要的额外字段 ---
 # 上游重构后的 ArmExtModule 缺少 OHOS 特有字段:
@@ -855,7 +856,7 @@ if(EXISTS "${_VMRP_RESTART_SETTER}")
     if(NOT _rs MATCHES "OHOS_RESTART_READBACK")
         string(REPLACE
             "int32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
-            "/* OHOS_RESTART_READBACK: pack_filename/start_filename/start_fileparameter 的 setter。\n * arm_ext_executor.c 的 arm_ext_readback_filename_globals() 把 Unicorn ARM 侧\n * table[100/101/138] 缓冲区内容回读到这些宿主全局,供 mr_timer() RESTART 分支\n * 的 _mr_intra_start(start_filename) 使用。与已有的 mr_set_old_* 同模式。 */\nvoid mr_set_pack_filename(const char* name) {\n    MEMSET(pack_filename, 0, sizeof(pack_filename));\n    if (name && name[0]) {\n        STRNCPY(pack_filename, name, sizeof(pack_filename) - 1);\n    }\n}\n\nvoid mr_set_start_filename(const char* name) {\n    MEMSET(start_filename, 0, sizeof(start_filename));\n    if (name && name[0]) {\n        STRNCPY(start_filename, name, sizeof(start_filename) - 1);\n    }\n}\n\nvoid mr_set_start_fileparameter(const char* name) {\n    MEMSET(start_fileparameter, 0, sizeof(start_fileparameter));\n    if (name && name[0]) {\n        STRNCPY(start_fileparameter, name, sizeof(start_fileparameter) - 1);\n    }\n}\n\nint32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
+            "/* OHOS_RESTART_READBACK: pack_filename/start_filename/start_fileparameter 的 setter。\n * arm_ext_executor.c 的 arm_ext_readback_filename_globals() 把 Unicorn ARM 侧\n * table[100/101/138] 缓冲区内容回读到这些宿主全局,供 mr_timer() RESTART 分支\n * 的 _mr_intra_start(start_filename) 使用。与已有的 mr_set_old_* 同模式。 */\nvoid mr_set_pack_filename(const char* name) {\n    MEMSET(pack_filename, 0, sizeof(pack_filename));\n    if (name && name[0]) {\n        STRNCPY(pack_filename, name, sizeof(pack_filename) - 1);\n    }\n}\n\nvoid mr_set_start_filename(const char* name) {\n    MEMSET(start_filename, 0, sizeof(start_filename));\n    if (name && name[0]) {\n        STRNCPY(start_filename, name, sizeof(start_filename) - 1);\n    }\n}\n\nvoid mr_set_start_fileparameter(const char* name) {\n    MEMSET(start_fileparameter, 0, sizeof(start_fileparameter));\n    if (name && name[0]) {\n        STRNCPY(start_fileparameter, name, sizeof(start_fileparameter) - 1);\n    }\n}\n\n\n\nint32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
             _rs "${_rs}")
         file(WRITE "${_VMRP_RESTART_SETTER}" "${_rs}")
         message(STATUS "[OHOS] Patched mythroad.c pack/start/start_fileparameter setters (OHOS_RESTART_READBACK)")
@@ -924,6 +925,64 @@ if(EXISTS "${_VMRP_CASE800_DIAG}")
             _c8d "${_c8d}")
         file(WRITE "${_VMRP_CASE800_DIAG}" "${_c8d}")
         message(STATUS "[OHOS] Patched _mr_intra_start empty appExName fallback (OHOS_CASE800_DIAG)")
+    endif()
+endif()
+
+# --- Patch mythroad.c: arm_ext_get_native_ext_impl getter (OHOS_SUBV_ARM_PTR) ---
+# native_ext 是 static 变量,arm_ext_executor.c 无法直接 extern。
+# 在 native_ext_reset() 之后插入 getter,供 mr_subv_to_arm_ptr 使用。
+set(_VMRP_NATEXT_GET "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+if(EXISTS "${_VMRP_NATEXT_GET}")
+    file(READ "${_VMRP_NATEXT_GET}" _neg)
+    if(NOT _neg MATCHES "OHOS_SUBV_GETNATEXT")
+        string(REPLACE
+            "    native_resumeApp_function = 0;\n}\n\nstatic int32 native_ext_event"
+            "    native_resumeApp_function = 0;\n}\n\n/* OHOS_SUBV_GETNATEXT: 返回当前 native_ext 指针,供 mr_subv_to_arm_ptr 使用。 */\nvoid* arm_ext_get_native_ext_impl(void) { return (void*)native_ext; }\n\nstatic int32 native_ext_event"
+            _neg "${_neg}")
+        file(WRITE "${_VMRP_NATEXT_GET}" "${_neg}")
+        message(STATUS "[OHOS] Patched mythroad.c native_ext getter (OHOS_SUBV_GETNATEXT)")
+    endif()
+endif()
+
+# --- Patch mythroad.c: mr_stop RESTART场景保留ext（已禁用，方案有副作用）---
+# 该方案在 cookie→子mrp 和 子mrp→cookie 两种 RESTART 中无法区分,
+# 导致 cookie→子mrp 时复用了 cookie 的 ext 而非加载子mrp 的 ext。
+# 正确方案需要保存 cookie ext 的快照,在返回 cookie 时恢复。留作后续 issue。
+# set(_VMRP_MRSTOP_DIAG "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+
+# --- Patch mr_strlib.c: string.subV 返回 ARM 可见地址（修复 64 位指针截断）---
+# OHOS_SUBV_ARM_PTR: string.subV 把 Lua 字符串的 C 指针返回给 Lua 层，Lua 层再通过
+# string.pack("iii", 5001, ptr, len) 把 ptr 打包传给 ARM ext(arm_ext_call code=1)。
+# 真机 32 位：ptr 是有效的 ARM 地址。OHOS 64 位：ptr 是 64 位宿主地址，截断为 32 位后
+# ARM ext(Unicorn)无法通过它访问字符串内容 → cookie 收不到 _mr_param → 页面不恢复。
+# 修复：str_subV 调用弱符号 mr_subv_to_arm_ptr(str, len)，把字符串拷贝到 Unicorn ARM
+# 内存并返回 32 位 ARM 地址。弱符号未定义时回退原始行为（兼容非 ARM ext 模式）。
+set(_VMRP_STRLIB "${VMRP_SRC_DIR}/src/mythroad/src/lib/mr_strlib.c")
+if(EXISTS "${_VMRP_STRLIB}")
+    file(READ "${_VMRP_STRLIB}" _sl)
+    if(NOT _sl MATCHES "OHOS_SUBV_ARM_PTR")
+        string(REPLACE
+            "static int str_subV (mrp_State *L) {\n  size_t l_sz;\n  int32 l;\n  char * p = (char*)mr_L_checklstring(L, 1, &l_sz);\n  l = (int32)l_sz;\n  mrp_pushnumber(L, (mrp_Number)p);\n  mrp_pushnumber(L, (mrp_Number)l);\n  return 2;\n}"
+            "/* OHOS_SUBV_ARM_PTR: 弱符号,由 arm_ext_executor.c 实现。\n * 把字符串拷贝到 Unicorn ARM 内存,返回 32 位 ARM 地址。\n * 未定义时回退原始行为(返回宿主指针,仅 32 位平台有效)。 */\n__attribute__((weak)) uint32 mr_subv_to_arm_ptr(const char *str, int32 len);\nstatic int str_subV (mrp_State *L) {\n  size_t l_sz;\n  int32 l;\n  char * p = (char*)mr_L_checklstring(L, 1, &l_sz);\n  l = (int32)l_sz;\n  if (mr_subv_to_arm_ptr) {\n      uint32 arm_ptr = mr_subv_to_arm_ptr(p, l);\n      if (arm_ptr) {\n          mrp_pushnumber(L, (mrp_Number)arm_ptr);\n          mrp_pushnumber(L, (mrp_Number)l);\n          return 2;\n      }\n  }\n  mrp_pushnumber(L, (mrp_Number)p);\n  mrp_pushnumber(L, (mrp_Number)l);\n  return 2;\n}"
+            _sl "${_sl}")
+        file(WRITE "${_VMRP_STRLIB}" "${_sl}")
+        message(STATUS "[OHOS] Patched mr_strlib.c str_subV ARM ptr (OHOS_SUBV_ARM_PTR)")
+    endif()
+endif()
+
+# --- Patch arm_ext_executor.c: 实现 mr_subv_to_arm_ptr ---
+# 把宿主字符串拷贝到 Unicorn ARM 内存,返回 32 位 ARM 地址。
+# ARM ext 通过 arm_ext_call(code=1) 收到的 buffer 中的 ptr 字段即可正确访问字符串。
+set(_VMRP_ARMEXT_SUBV "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
+if(EXISTS "${_VMRP_ARMEXT_SUBV}")
+    file(READ "${_VMRP_ARMEXT_SUBV}" _aesubv)
+    if(NOT _aesubv MATCHES "OHOS_SUBV_ARM_PTR")
+        string(REPLACE
+            "void arm_ext_unload(ArmExtModule *m) {"
+            "/* OHOS_SUBV_ARM_PTR: 把宿主字符串拷贝到当前 native_ext 的 Unicorn ARM 内存,\n * 返回 32 位 ARM 地址。供 string.subV 使用:Lua 层拿到 ARM 地址后通过\n * string.pack 打包传给 ARM ext,ARM ext 能正确访问字符串内容。\n * 拷贝到 origin_mem 池(与 ext 的 mr_malloc 同池),ext 的 mrc_init 后即可释放。 */\nuint32 mr_subv_to_arm_ptr(const char *str, int32 len) {\n    extern void* arm_ext_get_native_ext_impl(void);\n    ArmExtModule *ext = (ArmExtModule *)arm_ext_get_native_ext_impl();\n    if (!ext || !str || len <= 0) return 0;\n    uint32_t arm_addr = arm_alloc(ext, (uint32_t)(len + 1));\n    if (!arm_addr) return 0;\n    char *dst = (char *)arm_ptr(ext, arm_addr);\n    if (!dst) return 0;\n    memcpy(dst, str, len);\n    dst[len] = 0;\n    return arm_addr;\n}\n\nvoid arm_ext_unload(ArmExtModule *m) {"
+            _aesubv "${_aesubv}")
+        file(WRITE "${_VMRP_ARMEXT_SUBV}" "${_aesubv}")
+        message(STATUS "[OHOS] Patched arm_ext_executor.c mr_subv_to_arm_ptr impl (OHOS_SUBV_ARM_PTR)")
     endif()
 endif()
 

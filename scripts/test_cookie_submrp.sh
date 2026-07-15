@@ -39,10 +39,8 @@ $HDC shell "aa start -a EntryAbility -b com.example.vmrpohos"
 wait_s 4
 echo "    dsm_gm 已加载"
 
-# --- 进入冒泡(第3项): 2次下 → OK ---
-echo ">>> 2次下 → OK → 冒泡"
-click $DOWN_X $DOWN_Y
-click $DOWN_X $DOWN_Y
+# --- 进入冒泡(第1项): 直接OK ---
+echo ">>> OK → 冒泡"
 click $OK_X $OK_Y
 
 # --- 启动应用(第1项): OK ---
@@ -50,8 +48,8 @@ echo ">>> OK → 启动应用(cookie)"
 click $OK_X $OK_Y
 
 # --- 等网络失败 ---
-echo ">>> 等待10秒网络失败..."
-wait_s 10
+echo ">>> 等待15秒网络失败..."
+wait_s 15
 
 # --- 菜单: 左软 ---
 echo ">>> 左软 → 菜单"
