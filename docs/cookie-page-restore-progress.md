@@ -127,10 +127,37 @@ cookie 正常退出（回到 dsm_gm）后检查文件变化：
 2. **ARM ext 的 mrc_init 内部状态**：game.ext 在初始化时根据某些条件决定初始页面
 3. 网页模拟器能恢复是因为它的 ARM ext 内存模型和真机一致（共享地址空间）
 
-### 后续方向
+### game.ext mrc_init 深入反汇编结论
 
-1. **反汇编 game.ext 的 mrc_init @0x9A9C**：找它如何决定初始页面
-   - 检查它是否通过 table[138] 读取 start_fileparameter
-   - 检查它是否读取 _mr_param 或 _RL 来决定页面
-2. **RESTART 场景保留 ext 内存**（架构级修复）
-3. **暂不修复**：当前功能（启动+退出+无动画）已满足基本使用需求
+反汇编确认 game.ext 的页面恢复机制：
+
+1. **`_RL` 通过 `table[138]` 读取**（`sb+0xF7A8` 桥接指针，地址 0x1B338）
+2. **`fm.sav` 在 FM 视图函数中读写**（地址 0xBD0E-0xC5E4，`fm_view.c` 模块）
+3. **`reload.flag`/`mrparam.bak`** 在重载检测函数中检查（地址 0x19D44）
+   - 如果 `reload.flag` 存在 → 执行重载
+   - 否则使用 `mrparam.bak`
+   - 两者都不存在 → 走默认初始化
+
+**设备上 `reload.flag` 和 `mrparam.bak` 都不存在**——game.ext 走默认初始化。
+
+### 真正的根因：wrapper 模态快照丢失
+
+页面恢复的真正机制是 **wrapper（logo.ext）的前台分发表**（RW 区 `+0xE0`, 长度 `0xD0`）：
+
+- **cookie 启动子mrp前**：wrapper 的 suspend 把前台分发表切到子mrp
+- **退出返回 cookie 时**：wrapper 的 resume 恢复前台分发表 → 事件路由回到文件管理页
+
+模拟器的 `arm_ext_save_modal_fg_snapshot`/`arm_ext_restore_modal_fg_snapshot` 实现了这个机制。但：
+
+- **RESTART 场景下** `mr_stop()` → `arm_ext_unload()` 销毁整个 `ArmExtModule`（含 `modal_fg_snapshot`）
+- 新 module（`arm_ext_load`）没有快照，前台分发表为默认值（首页）
+- 真机上 wrapper 的 RW 区在 RESTART 后仍存在（内存未清零），分发表保留
+
+**不能简单拷贝快照到新 module**——分发表中的函数指针/helper 地址在新 mem 中不同，直接拷贝会崩溃。
+
+### 最终结论
+
+页面恢复需要 wrapper 的 RW 分发表在 RESTART 后正确恢复。这是一个架构级问题：
+- 方案1：RESTART 时不销毁 module，只重新执行 mrc_init（需要精确的 ext 生命周期管理）
+- 方案2：保存 wrapper RW 区的分发表，在新 module 中重新定位后恢复
+- 方案3：暂不修复，当前功能（启动+退出+无动画）已满足基本使用需求
