@@ -800,11 +800,7 @@ if(EXISTS "${_VMRP_CASE800_DIAG}")
             "    fprintf(stderr, \"[_mr_intra_start] all registered, dofile('%s')...\\n\", appExName); fflush(stderr);"
             "    /* OHOS_CASE800_DIAG: 真机 mr_start_dsmC 启动子 mrp 时清空 start_filename,\n     * _mr_intra_start 收到空串。fallback 到 MR_START_FILE(\"start.mr\"),与\n     * mr_start_dsm 的 ext 默认值逻辑一致(line 3977-3978)。 */\n    if (!appExName || !appExName[0]) {\n        appExName = MR_START_FILE;\n    }\n    fprintf(stderr, \"[_mr_intra_start] all registered, dofile('%s')...\\n\", appExName); fflush(stderr);"
             _c8d "${_c8d}")
-        # MR_VERSION 改回 2011
-        string(REPLACE
-            "#define MR_VERSION 1968"
-            "/* OHOS_HANDOFF_FIX: 保持 2011(上游改为 1968)。 */\n#define MR_VERSION 2011"
-            _c8d "${_c8d}")
+        # MR_VERSION 验证: 移除此补丁,保持上游 1968,测试是否有动画
         # mr_set_start_fileparameter setter (上游未提供,OHOS_HANDOFF_FIX 的 table[138] 回读需要)
         string(REPLACE
             "int32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
@@ -873,27 +869,15 @@ if(EXISTS "${_VMRP_ARMEXT_SUBV}")
     endif()
 endif()
 
-# --- Patch arm_ext_executor.c: table[138] 改用128字节固定缓冲 + pack回读还原完整路径 ---
-# OHOS_HANDOFF_FIX: 两个上游遗漏的修复:
-# 1) table[138](start_fileparameter) 上游仍用 alloc_string(精确长度),ARM 代码 strcpy
-#    到短缓冲会溢出(同 table[101-103] 的问题)。改用 alloc_filename_table_slot(128字节)。
-# 2) arm_ext_sync_handoff_filenames 回读 pack_filename 时,table[100] 存的是 pack alias
-#    (短名如 'cookie.mrp'),不是完整路径。宿主 _mr_readFile 需要完整路径才能打开文件。
-#    回读时通过 arm_ext_pack_to_host_path 还原成完整路径再 set。
+# --- Patch arm_ext_executor.c: table[138]回读 + STOP不回读 ---
+# OHOS_HANDOFF_FIX: 上游 sync_handoff 遗漏的修复:
+# 1) table[138](start_fileparameter) 回读: 上游只回读 table[100-103],不回读 table[138]。
+#    退出返回 cookie 时 start_fileparameter 为空 → cookie 不知道"从子应用返回" → 走启动动画。
+# 2) STOP 分支不调 sync_handoff_filenames: 避免回读 ARM 侧 old_start 的 logo.ext。
 set(_VMRP_HANDOFF "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
 if(EXISTS "${_VMRP_HANDOFF}")
     file(READ "${_VMRP_HANDOFF}" _ho)
     if(NOT _ho MATCHES "OHOS_HANDOFF_FIX")
-        # 1) table[138] 改用 alloc_filename_table_slot
-        string(REPLACE
-            "    write_table_entry(m, 138, alloc_string(m, mr_get_start_fileparameter()));"
-            "    /* OHOS_HANDOFF_FIX: table[138] 用 128 字节固定缓冲(与 table[101-103] 一致),\n     * 不用 alloc_string(精确长度)。真机上 start_fileparameter 是 char[128] 数组,\n     * ARM 代码 strcpy 到 alloc_string 分配的短缓冲会溢出。 */\n    write_table_entry(m, 138, alloc_filename_table_slot(m, mr_get_start_fileparameter()));"
-            _ho "${_ho}")
-        # 2) sync_handoff 中 pack_filename 回读时还原完整路径
-        string(REPLACE
-            "    arm_ext_sync_filename_slot(m, m->pack_table_addr, mr_set_pack_filename);"
-            "    /* OHOS_HANDOFF_FIX: table[100] 存的是 pack alias(短名),回读时还原成\n     * 完整 host 路径,保证后续 _mr_readFile/mrp_dofile 能正确打开文件。 */\n    {\n        char _pack_val[ARM_EXT_PACK_TABLE_SIZE];\n        const void *_src = m->pack_table_addr ? arm_ptr(m, m->pack_table_addr) : NULL;\n        if (_src) {\n            memcpy(_pack_val, _src, sizeof(_pack_val));\n            _pack_val[sizeof(_pack_val) - 1] = '\\0';\n            const char *_host = arm_ext_pack_to_host_path(m, _pack_val);\n            mr_set_pack_filename(_host ? _host : _pack_val);\n        }\n    }"
-            _ho "${_ho}")
         # 3) sync_handoff 中添加 table[138](start_fileparameter) 回读
         #    上游的 arm_ext_sync_handoff_filenames 只回读 table[100-103],不回读 table[138]。
         #    退出返回 cookie 时 start_fileparameter 为空,cookie 的 start.mr 检查 _mr_param
