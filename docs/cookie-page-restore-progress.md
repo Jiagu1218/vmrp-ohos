@@ -100,18 +100,37 @@ cookie 正常退出（回到 dsm_gm）后检查文件变化：
 - game.ext 的运行时状态被完全清除
 - `mrc_init` 找不到残留状态，走默认首页
 
+### 网页模拟器日志对比分析（重要突破）
+
+通过对比网页模拟器(vmrp.gddhy.net)的日志，发现了 `fm.sav` 文件：
+
+**网页模拟器流程**：
+1. cookie 启动子mrp前：`mr_open(mythroad/fm.sav, 10)` **写** fm.sav（保存页面状态）
+2. 退出返回 cookie 时：`mr_open(mythroad/fm.sav, 1)` **读** fm.sav（恢复页面状态）
+3. 读后：`mr_remove(mythroad/fm.sav)` **删除** fm.sav（一次性消费）
+
+**OHOS 模拟器行为**：
+- `fm.sav` 存在（13字节），退出返回时被重写（时间戳变化）
+- 内容变化：退出前末字节 `0x1F(31)` → 退出后 `0x16(22)`（可能是列表选中项）
+- 但 cookie 仍显示首页，说明 fm.sav 的内容不足以恢复"当前在文件管理页"状态
+
+**fm.sav 内容分析**（13字节）：
+```
+00 00 00 01  00 00 00 00  01 00 00 00  1F/16
+              前12字节不变        末字节=选中项索引
+```
+
+### 真正的页面恢复机制
+
+页面恢复不依赖磁盘文件（fm.sav 只记录列表选中项），而依赖：
+1. **`_mr_param` 值**：cookie 的 start.mr 检查 `_mr_param` 非空时发 5001 命令
+2. **ARM ext 的 mrc_init 内部状态**：game.ext 在初始化时根据某些条件决定初始页面
+3. 网页模拟器能恢复是因为它的 ARM ext 内存模型和真机一致（共享地址空间）
+
 ### 后续方向
 
-1. **RESTART 场景保留 ext 内存**：在 `mr_stop_ex` 中，RESTART 场景不调 `native_ext_reset`
-   - 需要区分"RESTART 需要保留 ext"和"STOP/不同应用切换需要释放 ext"
-   - 方案：在 `arm_ext_finish_callback_state` 的 RESTART 分支设置标志，
-     `mr_stop_ex` 检测到标志后跳过 `native_ext_reset`，
-     `_mr_intra_start` 的 `case 800` 检测到 native_ext 仍存在时跳过重新加载
-   - 之前的尝试因无法区分"cookie→子mrp"和"子mrp→cookie"而失败
-   - 正确方案：在 `old_pack_filename` 中记录来源，case 800 时比较 pack 名
-
-2. **保留 ext 内存但重新执行 mrc_init**：卸载 ext 的 Unicorn 实例但保留 mem 内容
-   - 创建新 `ArmExtModule` 时从旧 module 拷贝 mem
-   - 然后在新 module 上重新执行 mrc_init
-
+1. **反汇编 game.ext 的 mrc_init @0x9A9C**：找它如何决定初始页面
+   - 检查它是否通过 table[138] 读取 start_fileparameter
+   - 检查它是否读取 _mr_param 或 _RL 来决定页面
+2. **RESTART 场景保留 ext 内存**（架构级修复）
 3. **暂不修复**：当前功能（启动+退出+无动画）已满足基本使用需求
