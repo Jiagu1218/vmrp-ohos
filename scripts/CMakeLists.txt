@@ -786,31 +786,10 @@ if(EXISTS "${_VMRP_DSM_VOL}")
 endif()
 
 # --- Patch mythroad.c: _mr_intra_start 空入口 fallback ---
-# 注意: 上游 ac82d17 已修复 cookie 启动子mrp的核心问题(RESTART readback + 128字节缓冲 +
-# MR_VERSION 1968 + _mr_TestCom1 case3 L==NULL)。以下为上游未覆盖的 OHOS 独有补丁。
-# 真机 mr_start_dsmC 启动子 mrp 时清空 start_filename(memclr 128 bytes),
-# mr_timer() RESTART 分支调 _mr_intra_start(start_filename, NULL) 时 start_filename 为空。
-# 原代码直接 mrp_dofile(vm_state, "") 会找不到文件失败。fallback 到 MR_START_FILE("start.mr"),
-# 与 mr_start_dsm 的 ext 默认值逻辑一致(mythroad.c line 3977-3978)。
-set(_VMRP_CASE800_DIAG "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
-if(EXISTS "${_VMRP_CASE800_DIAG}")
-    file(READ "${_VMRP_CASE800_DIAG}" _c8d)
-    if(NOT _c8d MATCHES "OHOS_CASE800_DIAG")
-        string(REPLACE
-            "    fprintf(stderr, \"[_mr_intra_start] all registered, dofile('%s')...\\n\", appExName); fflush(stderr);"
-            "    /* OHOS_CASE800_DIAG: 真机 mr_start_dsmC 启动子 mrp 时清空 start_filename,\n     * _mr_intra_start 收到空串。fallback 到 MR_START_FILE(\"start.mr\"),与\n     * mr_start_dsm 的 ext 默认值逻辑一致(line 3977-3978)。 */\n    if (!appExName || !appExName[0]) {\n        appExName = MR_START_FILE;\n    }\n    fprintf(stderr, \"[_mr_intra_start] all registered, dofile('%s')...\\n\", appExName); fflush(stderr);"
-            _c8d "${_c8d}")
-        # MR_VERSION 验证: 移除此补丁,保持上游 1968,测试是否有动画
-        # case 801 诊断已移除(验证完毕)
-        # mr_set_start_fileparameter setter (上游未提供,OHOS_HANDOFF_FIX 的 table[138] 回读需要)
-        string(REPLACE
-            "int32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
-            "/* OHOS_HANDOFF_FIX: start_fileparameter setter,供 table[138] 回读使用。 */\nvoid mr_set_start_fileparameter(const char *name) {\n    mr_set_filename(start_fileparameter, name);\n}\n\nint32 mr_restart_old_app(void) {\n    if (!old_pack_filename[0]) {"
-            _c8d "${_c8d}")
-        file(WRITE "${_VMRP_CASE800_DIAG}" "${_c8d}")
-        message(STATUS "[OHOS] Patched _mr_intra_start fallback + MR_VERSION 2011 + fileparam setter (OHOS_CASE800_DIAG)")
-    endif()
-endif()
+# 注意: 上游 2832b0e 已完整修复 cookie 子mrp启动/退出/页面恢复。
+# 移除 OHOS_CASE800_DIAG（空入口fallback）和 OHOS_HANDOFF_FIX（table[138]回读+STOP不回读）。
+# 上游通过 table[138] 128字节二进制缓冲 + dsm_work_path 重置 + pack 路径还原解决。
+# 保留的 OHOS 独有补丁: OHOS_SUBV_ARM_PTR + OHOS_SUBV_GETNATEXT。
 
 # --- Patch mythroad.c: arm_ext_get_native_ext_impl getter (OHOS_SUBV_ARM_PTR) ---
 # native_ext 是 static 变量,arm_ext_executor.c 无法直接 extern。
@@ -828,11 +807,12 @@ if(EXISTS "${_VMRP_NATEXT_GET}")
     endif()
 endif()
 
-# --- Patch mythroad.c: mr_stop RESTART场景保留ext（已禁用，方案有副作用）---
-# 该方案在 cookie→子mrp 和 子mrp→cookie 两种 RESTART 中无法区分,
-# 导致 cookie→子mrp 时复用了 cookie 的 ext 而非加载子mrp 的 ext。
-# 正确方案需要保存 cookie ext 的快照,在返回 cookie 时恢复。留作后续 issue。
-# set(_VMRP_MRSTOP_DIAG "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
+# --- Patch mythroad.c: RESTART场景保留ARM ext内存(OHOS_PRESERVE_EXT) ---
+# 上游 2832b0e 已修复 cookie 返回页面问题(table[138] 128B + sync_start_parameter +
+# pack path 还原 + dsm_work_path 重置)。移除实验性 PRESERVE_EXT 补丁。
+
+# --- Patch arm_ext_executor.c: arm_ext_pack_host_path accessor (OHOS_PRESERVE_EXT) ---
+# 上游已覆盖,移除。
 
 # --- Patch mr_strlib.c: string.subV 返回 ARM 可见地址（修复 64 位指针截断）---
 # OHOS_SUBV_ARM_PTR: string.subV 把 Lua 字符串的 C 指针返回给 Lua 层，Lua 层再通过
@@ -871,45 +851,8 @@ if(EXISTS "${_VMRP_ARMEXT_SUBV}")
 endif()
 
 # --- Patch arm_ext_executor.c: table[138]回读 + STOP不回读 ---
-# OHOS_HANDOFF_FIX: 上游 sync_handoff 遗漏的修复:
-# 1) table[138](start_fileparameter) 回读: 上游只回读 table[100-103],不回读 table[138]。
-#    退出返回 cookie 时 start_fileparameter 为空 → cookie 不知道"从子应用返回" → 走启动动画。
-# 2) STOP 分支不调 sync_handoff_filenames: 避免回读 ARM 侧 old_start 的 logo.ext。
-set(_VMRP_HANDOFF "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_HANDOFF}")
-    file(READ "${_VMRP_HANDOFF}" _ho)
-    if(NOT _ho MATCHES "OHOS_HANDOFF_FIX")
-        # 3) sync_handoff 中添加 table[138](start_fileparameter) 回读
-        #    上游的 arm_ext_sync_handoff_filenames 只回读 table[100-103],不回读 table[138]。
-        #    退出返回 cookie 时 start_fileparameter 为空,cookie 的 start.mr 检查 _mr_param
-        #    为空 → 不发 5001 命令 → ARM ext 不知道"从子应用返回" → 走启动动画。
-        #    修复: 在 sync_handoff 末尾添加 table[138] 回读到 start_fileparameter。
-        string(REPLACE
-            "    arm_ext_sync_filename_slot(m, m->old_start_table_addr, mr_set_old_start_filename);\n}"
-            "    arm_ext_sync_filename_slot(m, m->old_start_table_addr, mr_set_old_start_filename);\n    /* OHOS_HANDOFF_FIX: 回读 table[138](start_fileparameter)。\n     * 上游遗漏了 table[138] 的回读,导致退出返回 cookie 时 _mr_param 为空,\n     * cookie 不知道'从子应用返回' → 走启动动画。 */\n    {\n        uint8_t *_slot138 = arm_ptr(m, EXT_TABLE_ADDR + 138u * 4u);\n        if (_slot138) {\n            uint32_t _fp_addr = 0;\n            memcpy(&_fp_addr, _slot138, 4);\n            if (_fp_addr) {\n                const char *_fp_str = (const char *)arm_ptr(m, _fp_addr);\n                if (_fp_str && _fp_str[0]) {\n                    extern void mr_set_start_fileparameter(const char *);\n                    mr_set_start_fileparameter(_fp_str);\n                }\n            }\n        }\n    }\n}"
-            _ho "${_ho}")
-        #    上游回读了 ARM 侧 start_table_addr(可能含 'logo.ext' 等 ARM ext 入口名),
-        #    dofile('logo.ext') 会走 logo 动画。真机 mr_start_dsmC 启动子 mrp 时清空
-        #    start_filename,_mr_intra_start 收到空串后 fallback 到 start.mr(OHOS_CASE800_DIAG)。
-        #    清空 start_filename 与真机行为一致,cookie 的 start.mr 通过 _mr_param 判断恢复。
-        string(REPLACE
-            "    arm_ext_sync_filename_slot(m, m->start_table_addr, mr_set_start_filename);"
-            "    /* OHOS_HANDOFF_FIX: 不回读 start_filename。ARM 侧 table[101] 可能含\n     * 'logo.ext' 等 ARM ext 入口名,dofile 它会走 logo 动画。清空 start_filename\n     * 让 _mr_intra_start fallback 到 start.mr(与真机 mr_start_dsmC 一致)。 */\n    mr_set_start_filename(\"\");"
-            _ho "${_ho}")
-        # 5) MR_VERSION 改回 2011 — 在 mythroad.c 补丁中处理(见下方)
-        #    上游 STOP 分支调了 arm_ext_sync_handoff_filenames,回读了 old_start_filename
-        #    (table[103])。这个值可能是 'logo.ext',mr_exit → mr_restart_old_app 会用它
-        #    覆盖 start_filename,导致 dofile('logo.ext') 走 logo 动画。
-        #    591d2b2 版本(可用)中 STOP 不回读,直接 mr_exit,让 mr_restart_old_app 用
-        #    table[131] case3 写入的宿主全局 old_start_filename。与 591d2b2 行为一致。
-        string(REPLACE
-            "        if (arm_state == ARM_MR_STATE_STOP) {\n            arm_ext_sync_handoff_filenames(m);\n            mr_state = ARM_MR_STATE_STOP;"
-            "        if (arm_state == ARM_MR_STATE_STOP) {\n            /* OHOS_HANDOFF_FIX: STOP 不调 sync_handoff_filenames。\n             * mr_exit → mr_restart_old_app 用 table[131] case3 写入的宿主全局\n             * old_start_filename 恢复入口(与 591d2b2 行为一致),避免回读 ARM 侧\n             * table[103] 的 'logo.ext' 导致 logo 动画。 */\n            mr_state = ARM_MR_STATE_STOP;"
-            _ho "${_ho}")
-        file(WRITE "${_VMRP_HANDOFF}" "${_ho}")
-        message(STATUS "[OHOS] Patched arm_ext_executor.c table[138] 128B + pack path restore (OHOS_HANDOFF_FIX)")
-    endif()
-endif()
+# 上游 2832b0e 已通过 arm_ext_sync_start_parameter_slot + alloc_start_parameter_table_slot
+# + mr_reset_dsm_work_path 完整覆盖。移除 OHOS_HANDOFF_FIX。
 
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 

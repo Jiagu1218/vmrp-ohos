@@ -1,10 +1,10 @@
 # Wiki Index
 
-> 28 pages | Last updated: 2026-07-15T05:09:32Z
+> 30 pages | Last updated: 2026-07-15T14:13:48.940Z
 
 ## debugging
 
-- [Cookie E2E key timer-generation boundary](cookie-e2e-key-timer-generation-boundary.md) — # Cookie E2E key timer-generation boundary
+- [Cookie child return opening-folder frame replay](cookie-child-return-opening-folder-frame-replay.md) — # Cookie child return opening-folder frame replay
 - [Cookie MRP restart and FULL runtime version contract](cookie-mrp-restart-and-full-runtime-version-contract.md) — # Cookie MRP restart and FULL runtime version contract
 - [DOTA browser plugin DSM package provenance](dota-browser-plugin-dsm-package-provenance.md) — # DOTA browser plugin DSM package provenance
 - [DOTA browser plugin network state investigation](dota-browser-plugin-network-state-investigation.md) — # DOTA browser plugin network state investigation
@@ -12,6 +12,7 @@
 - [DOTA browser plugin second simpleDownload trigger](dota-browser-plugin-second-simpledownload-trigger.md) — # DOTA browser plugin second simpleDownload trigger
 - [DOTA download-browser-components transition frame fix](dota-download-browser-components-transition-frame-fix.md) — # DOTA download-browser-components transition frame fix
 - [DOTA download-browser-components waiting hypothesis invalidated](dota-download-browser-components-waiting-hypothesis-invalidated.md) — # DOTA download-browser-components waiting hypothesis invalidated
+- [gfhcq game stutter performance investigation](gfhcq-game-stutter-performance-investigation.md) — # gfhcq game stutter performance investigation
 - [gghjt modal timer and cold extraction regressions](gghjt-modal-timer-and-cold-extraction-regressions.md) — # gghjt modal timer and cold extraction regressions
 - [gms payment latency analysis](gms-payment-latency-analysis.md) — # gms payment latency analysis
 - [gzwdzjs ARM EXT DrawBitmap source overrun](gzwdzjs-arm-ext-drawbitmap-source-overrun.md) — # gzwdzjs ARM EXT DrawBitmap source overrun
@@ -26,6 +27,7 @@
 - [wbrw input paste UCS2 table77 fix](wbrw-input-paste-ucs2-table77-fix.md) — # wbrw input paste UCS2 table77 fix
 - [WBRW proxy2 bitmap logo GIF adaptation 2026-07-13](wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md) — # WBRW proxy2 bitmap logo GIF adaptation 2026-07-13
 - [WBRW proxy2 font MRP download](wbrw-proxy2-font-mrp-download.md) — # WBRW proxy2 font MRP download
+- [WBRW proxy2 image loading 2026-07-12](wbrw-proxy2-image-loading-2026-07-12.md) — # WBRW proxy2 image loading 2026-07-12
 - [WBRW proxy2 web page rendering](wbrw-proxy2-web-page-rendering.md) — # WBRW proxy2 web page rendering
 
 ## session-log

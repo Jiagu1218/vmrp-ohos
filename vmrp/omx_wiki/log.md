@@ -1,5 +1,21 @@
 # Wiki Log
 
+## [2026-07-15T19:21:26+08:00] complete
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Completed independent implementation/evidence/requirements audits, replaced rectangle over-damage with actual changed-pixel spans that preserve off-screen, subview, temporary-stride and transparent/no-op semantics, remeasured 5.49x steady throughput with explicit SDL dummy, matched the pre-fix PPM byte-for-byte, and passed the final dummy 31/31 E2E suite.
+
+## [2026-07-15T18:17:18+08:00] update
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Recorded the first table[120] rectangle-damage implementation and initial regressions; the final audit later replaced rectangle over-damage with actual changed-pixel tracking to preserve off-screen and transparent/no-op behavior.
+
+## [2026-07-15T16:35:00+08:00] update
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Recorded an intermediate 8 MiB reproduction and timer/pixel-loop disassembly; the completion entry corrects its game-phase baseline because those early artifacts predated the final three-second menu delay.
+
+## [2026-07-15T00:00:00+08:00] add
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Started the focused gfhcq game-stutter investigation; recorded the SDL dummy-driver constraint, 480x800 scaling factor, fixture identity, low-volume measurement plan, and disassembly requirement.
+
 ## [2026-07-10T16:40:00+08:00] update
 - **Pages:** wbrw-proxy2-web-page-rendering.md
 - **Summary:** Corrected WBRW link activation semantics from caption/href to href/caption/companion; recorded 320 real-device anchor samples, the first-link PPM proof, and the successful child-page request/cache evidence.
@@ -323,3 +339,31 @@
 ## [2026-07-15T05:09:32Z] complete
 - **Pages:** cookie-mrp-restart-and-full-runtime-version-contract.md
 - **Summary:** Recorded the four-slot shared-memory handoff repair, RESTART/STOP split, FULL 1968 versus MINI 2011 startup-version regression, rejected native-helper bootstrap, stable DSM PPM proof, and complete 31-test E2E regression.
+
+## [2026-07-15T14:13:48.924Z] ingest
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Created new page "Cookie child return opening-folder frame replay"
+
+## [2026-07-15T14:13:48.943Z] add
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Created wiki page cookie-child-return-opening-folder-frame-replay.md
+
+## [2026-07-15T14:14:08.770Z] lint
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md, cookie-mrp-restart-and-full-runtime-version-contract.md, dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gfhcq-game-stutter-performance-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
+- **Summary:** Lint: 30 issues (24 orphan, 0 stale, 2 broken, 1 contradictions)
+
+## [2026-07-15T14:36:30Z] verify
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Re-ran the default parallel E2E suite without `--no-file-parallelism`; 19 files and 31 tests passed. Refreshed retained Cookie PPM evidence at `/tmp/vmrp-e2e-Vdk5ke`, where `return-draw-0047.ppm` shows `正在打开` before the restored file-manager list.
+
+## [2026-07-16T11:10:00+08:00] fix
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Corrected direct-ENTER child return by making present-history generations represent distinct full-frame states; paired screen/ARM checkpoints now survive repeated identical startup submits, and retained PPMs prove `正在打开` precedes the exact pre-launch file-manager content.
+
+## [2026-07-16T11:25:00+08:00] verify
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Verified the exact direct-ENTER command, both Cookie launch routes, TypeScript, C unit tests, and the default parallel e2e suite; 19 files and 32 tests passed without xvfb in 315.18s.
+
+## [2026-07-16T14:20:00+08:00] fix
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Replaced the rejected present-history/frame-replay approach with the real reload-protocol fix: table[138] start_fileparameter is a 128-byte binary "_RL" record; host now memcpy-copies it across the RESTART handoff instead of truncating as a C string, so Cookie's own cold-start path reloads fm.sav, redraws 正在打开, and restores the selection. Removed MrPausedAppSnapshot, present_screen_history, directory-open screenshot replay. Full parallel e2e 19 files/32 tests pass without xvfb.

@@ -155,9 +155,30 @@ cookie 正常退出（回到 dsm_gm）后检查文件变化：
 
 **不能简单拷贝快照到新 module**——分发表中的函数指针/helper 地址在新 mem 中不同，直接拷贝会崩溃。
 
-### 最终结论
+### 最终结论：上游 2832b0e 已完整修复
 
-页面恢复需要 wrapper 的 RW 分发表在 RESTART 后正确恢复。这是一个架构级问题：
-- 方案1：RESTART 时不销毁 module，只重新执行 mrc_init（需要精确的 ext 生命周期管理）
-- 方案2：保存 wrapper RW 区的分发表，在新 module 中重新定位后恢复
-- 方案3：暂不修复，当前功能（启动+退出+无动画）已满足基本使用需求
+上游 commit 2832b0e `fix: cookie打开子应用后返回` 完整解决了页面恢复问题。
+
+根因是 **table[138]（start_fileparameter）被当作 C 字符串处理**，截断了 128 字节二进制续传记录：
+- cookie 在 table[138] 中写入 `"_RL\0"` + 零填充 + 大端视图参数（+0x6C/+0x70/+0x74/+0x78/+0x7C/+0x7F）
+- 模拟器之前用 STRNCPY + NUL 截断，丢失了 +0x7F 处的视图ID
+- cookie 匹配 `"_RL"` 跳过开屏动画，但读视图参数为 0 → 回到首页
+
+上游修复：把 table[138] 全程当作 128 字节固定二进制缓冲（memcpy，不截断）。
+
+### OHOS 补丁精简
+
+同步上游 2832b0e 后，移除了所有和上游重复的 OHOS 补丁。最终只保留 **2 个 OHOS 独有补丁**：
+
+| 补丁 | 修复内容 | 原因 |
+|---|---|---|
+| `OHOS_SUBV_ARM_PTR` | string.subV 64位指针截断 | OHOS 64位平台必需，上游未修 |
+| `OHOS_SUBV_GETNATEXT` | native_ext getter | SUBV 需要访问 native_ext |
+
+已移除的补丁（上游覆盖）：
+- ~~OHOS_CASE800_DIAG~~（空入口 fallback）：上游 sync_handoff 正确回读 start_filename
+- ~~OHOS_HANDOFF_FIX~~（table[138] 回读 + STOP 不回读）：上游 sync_start_parameter_slot 覆盖
+- ~~OHOS_PRESERVE_EXT~~（RESTART 保留 ext 内存）：实验性方案，上游不需要
+- ~~MR_VERSION 2011~~：上游 1968 正确
+- ~~pack_filename 路径还原~~：上游 arm_ext_sync_pack_filename_slot 覆盖
+- ~~table[138] 128字节缓冲~~：上游 alloc_start_parameter_table_slot 覆盖
