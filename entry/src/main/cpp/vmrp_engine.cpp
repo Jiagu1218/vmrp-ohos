@@ -264,7 +264,7 @@ int VmrpEngine::Init(int w, int h) {
         api_.set_dns_map(
             "wap.skmeg.com->159.75.119.124;rop.skymobiapp.com->159.75.119.124;"
             "spd.skymobiapp.com->159.75.119.124;freeads.51mrp.com->159.75.119.124;"
-            "proxy.51mrp.com->127.0.0.1;proxy2.51mrp.com->159.75.119.124;"
+            "proxy.51mrp.com->159.75.119.124;proxy2.51mrp.com->159.75.119.124;"
             "help.proxy.51mrp.com->159.75.119.124");
         LOGI("DNS map set: 7 entries (upstream default)");
     }

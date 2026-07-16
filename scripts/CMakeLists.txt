@@ -854,6 +854,52 @@ endif()
 # 上游 2832b0e 已通过 arm_ext_sync_start_parameter_slot + alloc_start_parameter_table_slot
 # + mr_reset_dsm_work_path 完整覆盖。移除 OHOS_HANDOFF_FIX。
 
+# --- Patch network.c: select 超时 50ms→5ms + printf→VMRP_NET_LOG (OHOS_NET_SPEEDUP) ---
+# 下载热路径优化:
+# 1) checkReadable/checkWritable 的 select 超时从 50ms 降到 5ms。
+#    有数据时 select 立即返回,无数据时从等满 50ms 降到 5ms,减少空等。
+# 2) my_send/my_recv 高频 printf 替换为 VMRP_NET_LOG 宏(默认不输出,
+#    仅设了 VMRP_NETWORK_LOG/VMRP_LOG 环境变量时才打日志)。
+#    去掉每次 recv 往返 3+ 行 printf 的 I/O 开销。
+set(_VMRP_NET "${VMRP_SRC_DIR}/src/network.c")
+if(EXISTS "${_VMRP_NET}")
+    file(READ "${_VMRP_NET}" _net)
+    if(NOT _net MATCHES "OHOS_NET_SPEEDUP")
+        # 1) checkReadable: 50ms → 5ms
+        string(REPLACE
+            "    struct timeval timeout = {\n        .tv_sec = 0,\n        .tv_usec = 1000 * 50  // 50ms\n    };\n\n    SOCKET_T max_sd = socket;\n    int ret = select(max_sd + 1, &readfds, NULL, NULL, &timeout);"
+            "    /* OHOS_NET_SPEEDUP: select 超时 50ms→5ms,减少无数据时的空等开销。 */\n    struct timeval timeout = {\n        .tv_sec = 0,\n        .tv_usec = 1000 * 5  // 5ms\n    };\n\n    SOCKET_T max_sd = socket;\n    int ret = select(max_sd + 1, &readfds, NULL, NULL, &timeout);"
+            _net "${_net}")
+        # 2) checkWritable: 50ms → 5ms
+        string(REPLACE
+            "    struct timeval timeout = {\n        .tv_sec = 0,\n        .tv_usec = 1000 * 50  // 50ms\n    };\n\n    SOCKET_T max_sd = socket;\n    int ret = select(max_sd + 1, NULL, &writefds, NULL, &timeout);"
+            "    /* OHOS_NET_SPEEDUP: select 超时 50ms→5ms,减少不可写时的空等开销。 */\n    struct timeval timeout = {\n        .tv_sec = 0,\n        .tv_usec = 1000 * 5  // 5ms\n    };\n\n    SOCKET_T max_sd = socket;\n    int ret = select(max_sd + 1, NULL, &writefds, NULL, &timeout);"
+            _net "${_net}")
+        # 3) my_send: printf → VMRP_NET_LOG
+        string(REPLACE
+            "    printf(\"my_send(s:%d, fd:%d, len:%d): sent=%d, errno=%d\\n\", s, (int)data->s, len, ret, errno);\n    printf(\"[my_send] data: %s\\n\", buf);"
+            "    VMRP_NET_LOG(\"my_send(s:%d, fd:%d, len:%d): sent=%d, errno=%d\\n\", s, (int)data->s, len, ret, errno);\n    VMRP_NET_LOG(\"[my_send] data: %s\\n\", buf);"
+            _net "${_net}")
+        # 4) my_recv: printf → VMRP_NET_LOG (checkReadable 行)
+        string(REPLACE
+            "    printf(\"my_recv(s:%d, fd:%d, len:%d): checkReadable=%d\\n\", s, (int)data->s, len, ret);"
+            "    VMRP_NET_LOG(\"my_recv(s:%d, fd:%d, len:%d): checkReadable=%d\\n\", s, (int)data->s, len, ret);"
+            _net "${_net}")
+        # 5) my_recv: printf → VMRP_NET_LOG (recv 结果行)
+        string(REPLACE
+            "    printf(\"my_recv(s:%d): recv=%d, errno=%d\\n\", s, ret, errno);"
+            "    VMRP_NET_LOG(\"my_recv(s:%d): recv=%d, errno=%d\\n\", s, ret, errno);"
+            _net "${_net}")
+        # 6) my_recv: printf → VMRP_NET_LOG (data preview 行)
+        string(REPLACE
+            "        printf(\"my_recv data: [%s]\\n\", preview);"
+            "        VMRP_NET_LOG(\"my_recv data: [%s]\\n\", preview);"
+            _net "${_net}")
+        file(WRITE "${_VMRP_NET}" "${_net}")
+        message(STATUS "[OHOS] Patched network.c select 5ms + printf→VMRP_NET_LOG (OHOS_NET_SPEEDUP)")
+    endif()
+endif()
+
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
 # --- OHOS 图片解码：注入 ohos_image_decode.c 到 vmrp-shared ---
