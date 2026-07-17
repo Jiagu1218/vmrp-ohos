@@ -892,8 +892,20 @@ if(EXISTS "${_VMRP_NET}")
             "        printf(\"my_recv data: [%s]\\n\", preview);"
             "        VMRP_NET_LOG(\"my_recv data: [%s]\\n\", preview);"
             _net "${_net}")
+        # 7) OHOS_NET_NULLGUARD: 所有 socket 函数在 uIntMap_search 后加 NULL 检查。
+        # 游戏可能传入已关闭/无效的 socket id, uIntMap_search 返回 NULL 时
+        # 直接 obj->data 解引用 → SIGSEGV。string(REPLACE) 默认替换所有匹配。
+        string(REPLACE
+            "    uIntMap* obj = uIntMap_search(&sockets, (uint32_t)s);\n    mSocket* data = (mSocket*)obj->data;"
+            "    uIntMap* obj = uIntMap_search(&sockets, (uint32_t)s);\n    if (!obj) return MR_FAILED; /* OHOS_NET_NULLGUARD */\n    mSocket* data = (mSocket*)obj->data;"
+            _net "${_net}")
+        # my_getSocketState 用了变量名 p 而非 data,单独处理
+        string(REPLACE
+            "    uIntMap* obj = uIntMap_search(&sockets, (uint32_t)s);\n    mSocket* p = ((mSocket*)obj->data);"
+            "    uIntMap* obj = uIntMap_search(&sockets, (uint32_t)s);\n    if (!obj) return MR_FAILED; /* OHOS_NET_NULLGUARD */\n    mSocket* p = ((mSocket*)obj->data);"
+            _net "${_net}")
         file(WRITE "${_VMRP_NET}" "${_net}")
-        message(STATUS "[OHOS] Patched network.c select 5ms + printf→VMRP_NET_LOG (OHOS_NET_SPEEDUP)")
+        message(STATUS "[OHOS] Patched network.c select 5ms + printf→VMRP_NET_LOG + NULL guard (OHOS_NET_SPEEDUP)")
     endif()
 endif()
 
