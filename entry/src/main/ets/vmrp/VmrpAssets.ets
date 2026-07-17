@@ -192,6 +192,31 @@ export class VmrpAssets {
     return dst;
   }
 
+  // 批量导入 MRP 文件到 mythroad 目录。srcUris 为 picker 返回的 URI 数组。
+  // 同名文件覆盖。返回成功导入的文件数。
+  static async importMrpBatch(ctx: common.Context, srcUris: string[]): Promise<number> {
+    const mythroadDir = VmrpAssets.getMythroadDir(ctx);
+    let count = 0;
+    for (const srcUri of srcUris) {
+      const name = srcUri.substring(srcUri.lastIndexOf('/') + 1);
+      if (!name.toLowerCase().endsWith('.mrp')) continue;
+      const dst = `${mythroadDir}/${name}`;
+      try {
+        const srcFile = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
+        const dstFile = fs.openSync(dst,
+          fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+        await fs.copyFile(srcFile.fd, dstFile.fd);
+        fs.closeSync(srcFile);
+        fs.closeSync(dstFile);
+        count++;
+      } catch (e) {
+        console.error(`${TAG}: importMrpBatch ${name} failed: ${JSON.stringify(e)}`);
+      }
+    }
+    console.info(`${TAG}: importMrpBatch done, ${count}/${srcUris.length} imported`);
+    return count;
+  }
+
   // 递归收集目录下所有文件路径（不含目录本身）。
   private static collectFiles(dir: string, out: string[]): void {
     const names: string[] = fs.listFileSync(dir);

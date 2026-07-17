@@ -326,6 +326,29 @@ export struct SettingsPage {
     });
   }
 
+  // 批量导入 MRP 游戏文件到 mythroad 目录。
+  async doImportMrp(): Promise<void> {
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    try {
+      const opt = new picker.DocumentSelectOptions();
+      opt.maxSelectNumber = 100;
+      opt.fileSuffixFilters = ['.mrp'];
+      const docPicker = new picker.DocumentViewPicker();
+      const uris = await docPicker.select(opt);
+      if (!uris || uris.length === 0) return; // 用户取消
+      this.getUIContext().getPromptAction().showToast({ message: '正在导入...' });
+      const count = await VmrpAssets.importMrpBatch(ctx, uris);
+      this.getUIContext().getPromptAction().showToast({
+        message: count > 0 ? `已导入 ${count} 个游戏` : '导入失败',
+        duration: 2500
+      });
+    } catch (e) {
+      console.error(`doImportMrp failed: ${JSON.stringify(e)}`);
+      this.getUIContext().getPromptAction().showToast({ message: '导入失败', duration: 2500 });
+    }
+  }
+
   @Builder
   sectionHeader(title: string) {
     Text(title)
@@ -844,6 +867,28 @@ export struct SettingsPage {
                     this.confirmRestore();
                   })
                 Text('从 zip 文件导入文件到内存卡(沙箱),同名覆盖')
+                  .fontSize(12)
+                  .fontColor('#6666AA')
+                  .margin({ top: 6 })
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
+            }
+            .padding({ left: 16, right: 16, top: 4, bottom: 4 })
+
+            ListItem() {
+              Column() {
+                Button('导入游戏')
+                  .width('100%')
+                  .height(44)
+                  .fontSize(16)
+                  .fontColor('#FFFFFF')
+                  .backgroundColor('#1A1A2E')
+                  .borderRadius(12)
+                  .onClick(() => {
+                    this.doImportMrp();
+                  })
+                Text('批量导入 .mrp 游戏文件到内存卡')
                   .fontSize(12)
                   .fontColor('#6666AA')
                   .margin({ top: 6 })
