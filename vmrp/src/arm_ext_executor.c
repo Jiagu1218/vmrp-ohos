@@ -49,6 +49,11 @@ extern const char *mr_get_start_filename(void);
 extern const char *mr_get_old_pack_filename(void);
 extern const char *mr_get_old_start_filename(void);
 extern const char *mr_get_start_fileparameter(void);
+extern void mr_set_pack_filename(const char *name);
+extern void mr_set_start_filename(const char *name);
+extern void mr_set_old_pack_filename(const char *name);
+extern void mr_set_old_start_filename(const char *name);
+extern void mr_set_start_fileparameter(const char *name);
 extern int32 mr_platEx(int32 code, uint8 *input, int32 input_len,
                        uint8 **output, int32 *output_len, MR_PLAT_EX_CB *cb);
 extern int32 mr_ferrno(void);
@@ -132,6 +137,9 @@ uint32_t arm_addr(ArmExtModule *m, const void *ptr) {
     if (m && m->platform_mem && p >= m->platform_mem &&
         p < m->platform_mem + EXT_PLATFORM_MEM_SIZE)
         return (uint32_t)(p - m->platform_mem) + EXT_PLATFORM_MEM_ADDR;
+    if (m && m->scrram_mem && p >= m->scrram_mem &&
+        p < m->scrram_mem + EXT_SCRRAM_SIZE)
+        return (uint32_t)(p - m->scrram_mem) + EXT_SCRRAM_ADDR;
     if (m && m->platform_io_mem && p >= m->platform_io_mem &&
         p < m->platform_io_mem + EXT_PLATFORM_IO_MEM_SIZE)
         return (uint32_t)(p - m->platform_io_mem) + EXT_PLATFORM_IO_MEM_ADDR;
@@ -255,8 +263,47 @@ ArmExtNestedModule *arm_ext_resource_owner_for_lr(ArmExtModule *m,
     if (owner_helper) *owner_helper = 0;
     if (!m) return NULL;
 
-    p = arm_ext_p_for_code_addr(m, reg_read32(m->uc, UC_ARM_REG_LR), &helper);
+    uint32_t lr = reg_read32(m->uc, UC_ARM_REG_LR);
+    p = arm_ext_p_for_code_addr(m, lr, &helper);
     owner = arm_ext_find_nested_module_by_p(m, p);
+    if (!owner) {
+        uint32_t return_pc = lr & ~1u;
+        uint32_t sp = reg_read32(m->uc, UC_ARM_REG_SP);
+        /* Shared wrapper thunks hide the child caller from table bridges: LR
+         * names the thunk's instruction after BLX, while the thunk has saved
+         * the child's LR in its small stack frame.  Recover only a structurally
+         * valid Thumb call return into a registered child, and only when the
+         * direct return belongs to the wrapper.  The bounded scan avoids using
+         * unrelated active/foreground state as a resource-owner fallback. */
+        if (return_pc >= EXT_CODE_ADDR &&
+            return_pc < EXT_CODE_ADDR + m->code_len) {
+            for (uint32_t off = 0; off < 16u * 4u; off += 4u) {
+                uint32_t candidate = 0;
+                if (!arm_ptr_span(m, sp + off, 4u)) break;
+                memcpy(&candidate, arm_ptr(m, sp + off), 4u);
+                if (!(candidate & 1u) || (candidate & ~1u) < 2u) continue;
+
+                uint32_t caller_pc = candidate & ~1u;
+                uint32_t stack_helper = 0;
+                uint32_t stack_p = arm_ext_p_for_code_addr(
+                    m, candidate, &stack_helper);
+                ArmExtNestedModule *stack_owner =
+                    arm_ext_find_nested_module_by_p(m, stack_p);
+                if (!stack_owner) continue;
+                if (!arm_ptr_span(m, caller_pc - 2u, 2u)) continue;
+                uint16_t call = 0;
+                memcpy(&call, arm_ptr(m, caller_pc - 2u), 2u);
+                /* Private children enter wrapper bridges through BLX Rm.  A
+                 * matching return address proves this stack word is a call
+                 * frame, rather than data that happens to fall in code RAM. */
+                if ((call & 0xFF87u) != 0x4780u) continue;
+                p = stack_p;
+                helper = stack_helper;
+                owner = stack_owner;
+                break;
+            }
+        }
+    }
     if (owner_p) *owner_p = p;
     if (owner_helper) *owner_helper = helper;
     return owner;
@@ -319,12 +366,48 @@ static uint32_t alloc_u32_slot(ArmExtModule *m, uint32_t value) {
     return slot;
 }
 
-static uint32_t alloc_string(ArmExtModule *m, const char *value) {
-    if (!value) value = "";
-    size_t len = strlen(value) + 1;
-    uint32_t slot = arm_alloc(m, (uint32_t)len);
-    if (slot) memcpy(arm_ptr(m, slot), value, len);
+static uint32_t alloc_filename_table_slot(ArmExtModule *m, const char *value) {
+    uint32_t slot = arm_alloc(m, ARM_EXT_PACK_TABLE_SIZE);
+    char *dst = slot ? (char *)arm_ptr(m, slot) : NULL;
+    if (!dst) return 0;
+    /* table[100..103] are arrays in native Mythroad, not exact-length strings;
+     * guests legitimately clear/copy a fixed prefix when switching packages. */
+    memset(dst, 0, ARM_EXT_PACK_TABLE_SIZE);
+    snprintf(dst, ARM_EXT_PACK_TABLE_SIZE, "%s", value ? value : "");
     return slot;
+}
+
+static uint32_t alloc_start_parameter_table_slot(ArmExtModule *m,
+                                                 const char *value) {
+    uint32_t slot = arm_alloc(m, ARM_EXT_PACK_TABLE_SIZE);
+    char *dst = slot ? (char *)arm_ptr(m, slot) : NULL;
+    if (!dst) return 0;
+    /* table[138] mirrors the host start_fileparameter[128] verbatim.  The
+     * buffer carries binary continuation records past the first NUL (Cookie's
+     * "_RL\0" + trailing big-endian view words), so seed the whole array. */
+    memcpy(dst, value, ARM_EXT_PACK_TABLE_SIZE);
+    return slot;
+}
+
+static int arm_ext_host_path_is_absolute(const char *path) {
+    if (!path || !path[0]) return 0;
+#ifdef _WIN32
+    if (isalpha((unsigned char)path[0]) && path[1] == ':') return 1;
+    return (path[0] == '\\' && path[1] == '\\');
+#else
+    return path[0] == '/';
+#endif
+}
+
+static const char *arm_ext_guest_pack_alias_for_handoff(ArmExtModule *m,
+                                                       const char *host_value) {
+    if (!host_value || !host_value[0]) return "";
+    if (!arm_ext_host_path_is_absolute(host_value)) return host_value;
+    /* Return packages are copied by legacy helpers through fixed 32-byte ARM
+     * buffers.  Keep the guest token short and retain the host path in the
+     * executor alias map for lifecycle synchronization and file bridges. */
+    const char *alias = arm_ext_register_short_pack_alias(m, host_value);
+    return (alias && alias[0]) ? alias : host_value;
 }
 
 uint32_t alloc_bytes(ArmExtModule *m, const void *value, uint32_t len) {
@@ -480,15 +563,6 @@ static void sync_internal_state_to_arm(ArmExtModule *m) {
     internal_slot_write(m, m->mr_timer_state_slot, (uint32_t)mr_timer_state);
 }
 
-void sync_origin_mem_slots(ArmExtModule *m) {
-    if (m->origin_mem_left_slot)
-        memcpy(arm_ptr(m, m->origin_mem_left_slot), &m->origin_mem_left, 4);
-    if (m->origin_mem_min_slot)
-        memcpy(arm_ptr(m, m->origin_mem_min_slot), &m->origin_mem_min, 4);
-    if (m->origin_mem_top_slot)
-        memcpy(arm_ptr(m, m->origin_mem_top_slot), &m->origin_mem_top, 4);
-}
-
 /*
  * Guest 侧 LG_mem first-fit 分配器,链表操作逐语句对应 src/mythroad/mem.c
  * 的 mr_malloc/mr_free。原生 ABI 中 table[0]/[1]/[2] 就是这三个函数,且
@@ -512,6 +586,11 @@ void sync_origin_mem_slots(ArmExtModule *m) {
  * - LG_mem_left/min/top 统计沿用 note_origin_mem_alloc/free 的既有账本
  *   (所有 table[0]/[1] 调用无论落在池内或 bump 都记账),与修复前的
  *   ARM 可见值一致,不影响依赖该预算的游戏(见 origin_mem_len 注释)。
+ * - 部分旧 wrapper 会临时把 0x40000000 映射带的 arena 接到 free-list,
+ *   并直接改 table[108]/[110]/[136] 和 table[146] 指向的链表。
+ *   table bridge 每次从这些 ARM 可见 slot 读取当前 base/end/head/统计,
+ *   不能继续使用 init_table 时的固定副本;
+ *   否则 host 与 guest 会遍历两个不同的链表边界并在 teardown 中成环。
  * 验证:talkcat.mrp 主界面 PPM 无花屏;e2e 全量回归与基线一致。
  */
 
@@ -971,10 +1050,18 @@ static void init_table(ArmExtModule *m) {
     arm_ext_set_pack_table_name(m, m->pack_alias[0] ?
                                    m->pack_alias :
                                    mr_get_pack_filename());
-    write_table_entry(m, 101, alloc_string(m, mr_get_start_filename()));
-    write_table_entry(m, 102, alloc_string(m, mr_get_old_pack_filename()));
-    write_table_entry(m, 103, alloc_string(m, mr_get_old_start_filename()));
-    write_table_entry(m, 138, alloc_string(m, mr_get_start_fileparameter()));
+    m->start_table_addr = alloc_filename_table_slot(m, mr_get_start_filename());
+    m->old_pack_table_addr = alloc_filename_table_slot(
+        m, arm_ext_guest_pack_alias_for_handoff(m, mr_get_old_pack_filename()));
+    m->old_start_table_addr = alloc_filename_table_slot(m, mr_get_old_start_filename());
+    m->start_parameter_table_addr =
+        alloc_start_parameter_table_slot(m, mr_get_start_fileparameter());
+    write_table_entry(m, 101, m->start_table_addr);
+    write_table_entry(m, 102, m->old_pack_table_addr);
+    write_table_entry(m, 103, m->old_start_table_addr);
+    /* table[138] is start_fileparameter[128] in native Mythroad.  Some launchers
+     * store return/continuation state there before publishing RESTART. */
+    write_table_entry(m, 138, m->start_parameter_table_addr);
 
     /* 真机 MR 平台的应用堆一般为 512KB–1MB；origin_mem_len 过大会使
      * 部分游戏的 exRam 预算计算（= 固定值 − origin_mem_len）溢出为负，
@@ -1231,6 +1318,72 @@ fail:
 }
 
 
+typedef void (*ArmExtFilenameSetter)(const char *name);
+
+static void arm_ext_sync_filename_slot(ArmExtModule *m, uint32_t slot,
+                                       ArmExtFilenameSetter setter) {
+    char value[ARM_EXT_PACK_TABLE_SIZE];
+    const void *src = slot ? arm_ptr(m, slot) : NULL;
+    if (!src || !setter) return;
+    memcpy(value, src, sizeof(value));
+    value[sizeof(value) - 1] = '\0';
+    setter(value);
+}
+
+static void arm_ext_sync_pack_filename_slot(ArmExtModule *m, uint32_t slot,
+                                            ArmExtFilenameSetter setter) {
+    char value[ARM_EXT_PACK_TABLE_SIZE];
+    const char *host_value;
+    const void *src = slot ? arm_ptr(m, slot) : NULL;
+    if (!src || !setter) return;
+    memcpy(value, src, sizeof(value));
+    value[sizeof(value) - 1] = '\0';
+    /* ARM-visible package names are often shortened to fit legacy fixed
+     * buffers.  Native restart needs the host-openable spelling, so resolve the
+     * token through the same alias map used by file bridges. */
+    host_value = arm_ext_pack_to_host_path(m, value);
+    setter(host_value ? host_value : value);
+}
+
+static void arm_ext_sync_start_parameter_slot(ArmExtModule *m, uint32_t slot) {
+    const void *src = slot ? arm_ptr(m, slot) : NULL;
+    char value[ARM_EXT_PACK_TABLE_SIZE];
+    if (!src) return;
+    /* table[138] 在真机上就是宿主的 start_fileparameter[128]。launcher 在这
+     * 128 字节里保存二进制续传记录（如 Cookie 的 "_RL\0"+尾部大端视图字段，
+     * 末字节 +0x7F 也是有效数据），因此不能按 C 字符串截断，也不能补 NUL。 */
+    memcpy(value, src, sizeof(value));
+    mr_set_start_fileparameter(value);
+}
+
+static const char *arm_ext_diag_filename_slot(ArmExtModule *m, uint32_t slot,
+                                              char *out, size_t out_len) {
+    const void *src = slot ? arm_ptr(m, slot) : NULL;
+    if (!out || !out_len) return "";
+    out[0] = '\0';
+    if (!src) return out;
+    memcpy(out, src, out_len - 1);
+    out[out_len - 1] = '\0';
+    return out;
+}
+
+static int arm_ext_lifecycle_diag(void) {
+    static int cached = -1;
+    if (cached < 0) cached = getenv("VMRP_LIFECYCLE_DIAG") ? 1 : 0;
+    return cached;
+}
+
+static void arm_ext_sync_handoff_filenames(ArmExtModule *m) {
+    /* Native EXT code writes these host arrays directly.  Copying them only at
+     * a published lifecycle transition recreates that shared-memory ABI without
+     * treating ordinary transient package aliases as a handoff. */
+    arm_ext_sync_pack_filename_slot(m, m->pack_table_addr, mr_set_pack_filename);
+    arm_ext_sync_filename_slot(m, m->start_table_addr, mr_set_start_filename);
+    arm_ext_sync_pack_filename_slot(m, m->old_pack_table_addr, mr_set_old_pack_filename);
+    arm_ext_sync_filename_slot(m, m->old_start_table_addr, mr_set_old_start_filename);
+    arm_ext_sync_start_parameter_slot(m, m->start_parameter_table_addr);
+}
+
 static int arm_ext_finish_callback_state(ArmExtModule *m, uint32_t ext_chunk) {
     if (!m) return 0;
 
@@ -1238,9 +1391,52 @@ static int arm_ext_finish_callback_state(ArmExtModule *m, uint32_t ext_chunk) {
      * MR_STATE_RESTART(3) 或 MR_STATE_STOP(4)。真机上 ARM 代码与宿主共享
      * 同一全局变量；Unicorn 下 ARM 内存独立，所以回调结束后要同步一次。 */
     if (m->mr_state_slot) {
+        enum {
+            ARM_MR_STATE_RUN = 1,
+            ARM_MR_STATE_RESTART = 3,
+            ARM_MR_STATE_STOP = 4,
+            ARM_MR_TIMER_RUNNING = 1
+        };
         uint32_t arm_state = 0;
         memcpy(&arm_state, arm_ptr(m, m->mr_state_slot), 4);
-        if (arm_state >= 3) {
+        if (arm_state == ARM_MR_STATE_RESTART) {
+            if (arm_ext_lifecycle_diag()) {
+                char pack[ARM_EXT_PACK_TABLE_SIZE];
+                char start[ARM_EXT_PACK_TABLE_SIZE];
+                char old_pack[ARM_EXT_PACK_TABLE_SIZE];
+                char old_start[ARM_EXT_PACK_TABLE_SIZE];
+                char param[ARM_EXT_PACK_TABLE_SIZE];
+                printf("LIFE arm state=RESTART pack='%s' start='%s' old_pack='%s' old_start='%s' param='%s'\n",
+                       arm_ext_diag_filename_slot(m, m->pack_table_addr, pack, sizeof(pack)),
+                       arm_ext_diag_filename_slot(m, m->start_table_addr, start, sizeof(start)),
+                       arm_ext_diag_filename_slot(m, m->old_pack_table_addr, old_pack, sizeof(old_pack)),
+                       arm_ext_diag_filename_slot(m, m->old_start_table_addr, old_start, sizeof(old_start)),
+                       arm_ext_diag_filename_slot(m, m->start_parameter_table_addr, param, sizeof(param)));
+            }
+            arm_ext_sync_handoff_filenames(m);
+            /* The guest has already armed the restart timer.  Publish RESTART
+             * to native Mythroad so mr_timer() performs its normal stop/start. */
+            mr_state = ARM_MR_STATE_RESTART;
+            return 1;
+        }
+        if (arm_state == ARM_MR_STATE_STOP) {
+            if (arm_ext_lifecycle_diag()) {
+                char pack[ARM_EXT_PACK_TABLE_SIZE];
+                char start[ARM_EXT_PACK_TABLE_SIZE];
+                char old_pack[ARM_EXT_PACK_TABLE_SIZE];
+                char old_start[ARM_EXT_PACK_TABLE_SIZE];
+                char param[ARM_EXT_PACK_TABLE_SIZE];
+                printf("LIFE arm state=STOP pack='%s' start='%s' old_pack='%s' old_start='%s' param='%s'\n",
+                       arm_ext_diag_filename_slot(m, m->pack_table_addr, pack, sizeof(pack)),
+                       arm_ext_diag_filename_slot(m, m->start_table_addr, start, sizeof(start)),
+                       arm_ext_diag_filename_slot(m, m->old_pack_table_addr, old_pack, sizeof(old_pack)),
+                       arm_ext_diag_filename_slot(m, m->old_start_table_addr, old_start, sizeof(old_start)),
+                       arm_ext_diag_filename_slot(m, m->start_parameter_table_addr, param, sizeof(param)));
+            }
+            arm_ext_sync_handoff_filenames(m);
+            mr_state = ARM_MR_STATE_STOP;
+            /* STOP follows the platform exit contract; mr_exit() returns to a
+             * registered old app when present, otherwise it terminates VMRP. */
             mr_exit();
             return 1;
         }
@@ -2543,6 +2739,7 @@ void arm_ext_unload(ArmExtModule *m) {
     arm_ext_free_row_spans(&m->foreground_cover);
     free(m->low_table);
     free(m->platform_mem);
+    free(m->scrram_mem);
     free(m->platform_io_mem);
     free(m->platform_alt_mem);
     free(m->executor_meta_mem);

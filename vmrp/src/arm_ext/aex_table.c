@@ -12,7 +12,9 @@
 #include "../include/utils.h"
 
 #include <ctype.h>
+#ifndef _MSC_VER
 #include <unistd.h>
+#endif
 
 static void aex_t001(ArmExtModule *m, AexTableCtx *c) {
     (void)m;
@@ -796,7 +798,12 @@ static void aex_t043(ArmExtModule *m, AexTableCtx *c) {
     uint32_t r2 = c->r2;
     uint32_t ret = MR_SUCCESS;
  {
-            void *src = arm_ptr(m, r1);
+            /* mr_write consumes the complete guest range.  Validating only the
+             * first byte lets a wrapped/oversized length make the host write(2)
+             * read past the 16MB guest backing and report a misleading partial
+             * success.  Match table[44]/mr_read: an unmapped span is an ABI
+             * failure and must never be dereferenced by the host. */
+            void *src = arm_ptr_span(m, r1, r2 ? r2 : 1u);
             uint32_t len = r2;
             int substituted = 0;
             void *new_src = NULL;
@@ -808,7 +815,7 @@ static void aex_t043(ArmExtModule *m, AexTableCtx *c) {
                 len = new_len;
                 substituted = 1;
             }
-            ret = mr_write((int32)r0, src, len);
+            ret = src ? mr_write((int32)r0, src, len) : MR_FAILED;
             if (substituted) {
                 if (m->profile && m->profile->post_write_cleanup)
                     m->profile->post_write_cleanup(m->app_state);
@@ -1509,16 +1516,20 @@ static void aex_t120(ArmExtModule *m, AexTableCtx *c) {
                 }
                 ArmExtScreenContext screen_ctx;
                 if (arm_ext_push_draw_screen_context(m, &screen_ctx)) {
-                    uint16_t *before = arm_ext_snapshot_screen(m);
                     arm_ext_draw_bitmap_from_guest(
-                        m, r0, (int16)r1, (int16)r2,
+                        m, &screen_ctx, r0, (int16)r1, (int16)r2,
                         (uint16)r3, h, rop, trans, sx, sy, mw);
                     arm_ext_pop_draw_screen_context(&screen_ctx);
-                    arm_ext_note_screen_damage_diff(m, before);
-                    arm_ext_claim_foreground_screen_diff(m, claim_p,
-                                                         claim_helper,
-                                                         before);
-                    free(before);
+                    /* The draw helper records only primary-screen pixels whose
+                     * RGB565 value changed in its existing per-pixel loop. This
+                     * preserves the old diff semantics for off-screen targets,
+                     * transparency and rejected sources without an O(screen)
+                     * snapshot/scan per blit. Verify with the focused
+                     * performance/paired-PPM test, then off-screen and golden
+                     * E2E cases before the full suite. */
+                    arm_ext_claim_foreground_screen_rect(
+                        m, claim_p, claim_helper,
+                        (int16)r1, (int16)r2, (uint16)r3, h);
                     arm_ext_finish_screen_cache_write(m, &screen_ctx,
                                                       claim_p,
                                                       claim_helper);
@@ -2020,6 +2031,50 @@ aex_done:
     c->ret = ret;
 }
 
+static uint32_t arm_ext_scrram_acquire(ArmExtModule *m, uint32_t want) {
+    if (!m || !want || want > EXT_SCRRAM_SIZE) return 0;
+    if (!m->scrram_mem) {
+        uint8_t *mem = (uint8_t *)calloc(1, EXT_SCRRAM_SIZE);
+        if (!mem) return 0;
+        /* Native MR_MALLOC_SCRRAM allocates outside LG_mem.  Mapping the
+         * platform scratch band lazily preserves that ownership boundary and
+         * avoids reserving 16 MiB for applications that never request it. */
+        uc_err err = uc_mem_map_ptr(m->uc, EXT_SCRRAM_ADDR,
+                                    EXT_SCRRAM_SIZE,
+                                    UC_PROT_READ | UC_PROT_WRITE, mem);
+        if (err != UC_ERR_OK) {
+            free(mem);
+            return 0;
+        }
+        m->scrram_mem = mem;
+    }
+    if (!m->exram_addr || want > m->exram_len) {
+        /* The platform keeps a stable allocation while callers probe larger
+         * sizes.  Preserve the live prefix and initialize only newly exposed
+         * bytes; clearing [0, want) would corrupt data retained by the guest. */
+        memset(m->scrram_mem + m->exram_len, 0, want - m->exram_len);
+        m->exram_addr = EXT_SCRRAM_ADDR;
+        m->exram_len = want;
+    }
+    return m->exram_addr;
+}
+
+static int32_t arm_ext_scrram_release(ArmExtModule *m, uint32_t addr) {
+    if (!m || !addr) return MR_SUCCESS; /* Native free(NULL) is a no-op. */
+    if (!m->exram_addr || addr != m->exram_addr || !m->scrram_mem)
+        return MR_FAILED;
+    /* SCRRAM is data-only and cannot contain the executing table bridge, so
+     * unmapping it here gives stale guest pointers the same invalid lifetime
+     * as the native free instead of retaining a hidden mapped fallback. */
+    if (uc_mem_unmap(m->uc, EXT_SCRRAM_ADDR, EXT_SCRRAM_SIZE) != UC_ERR_OK)
+        return MR_FAILED;
+    free(m->scrram_mem);
+    m->scrram_mem = NULL;
+    m->exram_addr = 0;
+    m->exram_len = 0;
+    return MR_SUCCESS;
+}
+
 static void aex_t038(ArmExtModule *m, AexTableCtx *c) {
     (void)m;
     uint32_t r0 = c->r0;
@@ -2042,29 +2097,14 @@ static void aex_t038(ArmExtModule *m, AexTableCtx *c) {
                                            diag_input_preview,
                                            sizeof(diag_input_preview));
             }
-            /*
-             * MR_MALLOC_SCRRAM/MR_FREE_SCRRAM provide scratch RAM that native
-             * code treats as ARM-visible storage, often for large off-screen
-             * framebuffers. Allocate it from the emulated ARM heap so later
-             * pointer arithmetic and blits can access the returned address.
-             */
+            /* SCRRAM is a separate platform allocation, not an LG_mem/bump
+             * block.  Sharing the 16 MiB main map made a 10 MiB request fit
+             * with a 1 MiB app heap but fail after --memory 2M/4M moved the
+             * bump top across the wrapper stack reservation. */
             if (r0 == 1014) {
                 uint32_t outp = r3, outlenp = arg_read(m, 4);
                 uint32_t want = (uint32_t)r2;
-                uint32_t a = 0;
-                if (want) {
-                    if (m->exram_addr && want <= m->exram_len) {
-                        a = m->exram_addr;          /* 复用已有 exRam（幂等） */
-                    } else {
-                        a = arm_alloc(m, want);
-                        if (a) {
-                            m->exram_addr = a;
-                            m->exram_len = want;
-                            void *ep = arm_ptr(m, a);
-                            if (ep) memset(ep, 0, want);
-                        }
-                    }
-                }
+                uint32_t a = arm_ext_scrram_acquire(m, want);
                 if (a) {
                     if (outp) uc_mem_write(m->uc, outp, &a, 4);
                     if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);
@@ -2081,7 +2121,9 @@ static void aex_t038(ArmExtModule *m, AexTableCtx *c) {
                 goto aex_done;
             }
             if (r0 == 1015) {
-                ret = MR_SUCCESS;
+                /* Native MR_FREE_SCRRAM frees the pointer supplied in input;
+                 * foreign and repeated non-NULL frees are explicit errors. */
+                ret = arm_ext_scrram_release(m, r1);
                 if (diag_enabled) {
                     printf("DIAG table38 code=%d input=0x%X inputLen=%u outputp=0x%X outputLenp=0x%X ret=0x%X out=0x0 outLen=0 inputPreview='%s' lr=0x%X ownerP=0x%X ownerH=0x%X ownerFile=0x%X ownerLen=%u activeP=0x%X primaryP=0x%X\n",
                            (int32_t)r0, r1, r2, r3, arg_read(m, 4), ret,

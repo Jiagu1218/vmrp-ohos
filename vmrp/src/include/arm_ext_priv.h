@@ -13,6 +13,7 @@
 
 #include "arm_ext_internal.h"
 #include "arm_ext_host.h"
+#include "compat_msvc.h"
 
 /* ---- 微工具(拆分期间上收,多个单元共用) ---- */
 static inline uint32_t align4(uint32_t v) { return (v + 3u) & ~3u; }
@@ -64,7 +65,6 @@ int arm_ext_screen_diag_on(void);
 /* ---- arm_ext_executor.c 暂存主体中,被拆分单元调用的符号 ---- */
 
 uint32_t arm_alloc(ArmExtModule *m, uint32_t len);
-void sync_origin_mem_slots(ArmExtModule *m);
 uint32_t read_game_timer_head(ArmExtModule *m, uint32_t grw);
 void write_game_timer_head(ArmExtModule *m, uint32_t grw, uint32_t val);
 int arm_ext_foreground_child_has_compact_timer_queue(ArmExtModule *m);
@@ -173,7 +173,12 @@ int arm_ext_suspend_depth_for_p(ArmExtModule *m, uint32_t p_addr, uint32_t *susp
 int arm_ext_present_bitmap_rect(ArmExtModule *m, uint16_t *bmp, int32_t x, int32_t y, int32_t w, int32_t h, int32_t source_stride, int32_t source_x, int32_t source_y, int covered_by_foreground);
 void arm_ext_note_screen_damage_addr_range(ArmExtModule *m, uint64_t address, int size);
 void arm_ext_mirror_draw_bitmap_to_screen(ArmExtModule *m, uint32_t bmp_addr, int16_t x, int16_t y, uint16_t w, uint16_t h, int32_t source_stride, int32_t source_x, int32_t source_y);
-void arm_ext_draw_bitmap_from_guest(ArmExtModule *m, uint32_t p_addr, int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t rop, uint16_t transcoler, int16_t sx, int16_t sy, int16_t mw);
+void arm_ext_draw_bitmap_from_guest(ArmExtModule *m,
+                                    const ArmExtScreenContext *screen_ctx,
+                                    uint32_t p_addr, int16_t x, int16_t y,
+                                    uint16_t w, uint16_t h, uint16_t rop,
+                                    uint16_t transcoler, int16_t sx,
+                                    int16_t sy, int16_t mw);
 int arm_ext_dispup_rect(ArmExtModule *m, int32_t x, int32_t y, int32_t w, int32_t h, int covered_by_foreground);
 int arm_ext_bitmap_source_uses_screen_stride(ArmExtModule *m, uint32_t bmp_addr);
 
@@ -204,6 +209,8 @@ void arm_ext_install_pc_watches(ArmExtModule *m, uint32_t base, uint32_t len);
 void arm_ext_drop_overlapping_stale_nested_modules(ArmExtModule *m, uint32_t file_addr, uint32_t file_len);
 int arm_ext_has_internal_loader_chunk(ArmExtModule *m, uint32_t file_addr, uint32_t file_len);
 const char *arm_ext_pack_to_host_path(ArmExtModule *m, const char *pack);
+const char *arm_ext_register_short_pack_alias(ArmExtModule *m,
+                                              const char *host_path);
 void arm_ext_record_nested_module(ArmExtModule *m, uint32_t file_addr, uint32_t file_len, uint32_t p_addr, uint32_t helper_addr);
 void arm_ext_record_timer_owner(ArmExtModule *m);
 void arm_ext_repair_private_child_record_bridges(ArmExtModule *m, uint32_t record, uint32_t file_addr, uint32_t file_len);

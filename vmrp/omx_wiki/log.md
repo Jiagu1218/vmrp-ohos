@@ -1,5 +1,21 @@
 # Wiki Log
 
+## [2026-07-15T19:21:26+08:00] complete
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Completed independent implementation/evidence/requirements audits, replaced rectangle over-damage with actual changed-pixel spans that preserve off-screen, subview, temporary-stride and transparent/no-op semantics, remeasured 5.49x steady throughput with explicit SDL dummy, matched the pre-fix PPM byte-for-byte, and passed the final dummy 31/31 E2E suite.
+
+## [2026-07-15T18:17:18+08:00] update
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Recorded the first table[120] rectangle-damage implementation and initial regressions; the final audit later replaced rectangle over-damage with actual changed-pixel tracking to preserve off-screen and transparent/no-op behavior.
+
+## [2026-07-15T16:35:00+08:00] update
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Recorded an intermediate 8 MiB reproduction and timer/pixel-loop disassembly; the completion entry corrects its game-phase baseline because those early artifacts predated the final three-second menu delay.
+
+## [2026-07-15T00:00:00+08:00] add
+- **Pages:** gfhcq-game-stutter-performance-investigation.md
+- **Summary:** Started the focused gfhcq game-stutter investigation; recorded the SDL dummy-driver constraint, 480x800 scaling factor, fixture identity, low-volume measurement plan, and disassembly requirement.
+
 ## [2026-07-10T16:40:00+08:00] update
 - **Pages:** wbrw-proxy2-web-page-rendering.md
 - **Summary:** Corrected WBRW link activation semantics from caption/href to href/caption/companion; recorded 320 real-device anchor samples, the first-link PPM proof, and the successful child-page request/cache evidence.
@@ -236,3 +252,170 @@
 ## [2026-07-12T04:06:31.247Z] lint
 - **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
 - **Summary:** Lint: 19 issues (16 orphan, 0 stale, 1 broken, 0 contradictions)
+## [2026-07-12T10:37:19.291Z] ingest
+- **Pages:** wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Created new page "WBRW Go html2sky rendering progress 2026-07-12"
+
+## [2026-07-12T10:37:19.318Z] add
+- **Pages:** wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Created wiki page wbrw-go-html2sky-rendering-progress-2026-07-12.md
+
+## [2026-07-12T11:32:16.280Z] ingest
+- **Pages:** wbrw-go-html2sky-rendering-final-verification-2026-07-12.md
+- **Summary:** Created new page "WBRW Go html2sky rendering final verification 2026-07-12"
+
+## [2026-07-12T11:32:16.286Z] add
+- **Pages:** wbrw-go-html2sky-rendering-final-verification-2026-07-12.md
+- **Summary:** Created wiki page wbrw-go-html2sky-rendering-final-verification-2026-07-12.md
+
+## [2026-07-12T11:41:32.802Z] ingest
+- **Pages:** wbrw-html2sky-completion-audit-2026-07-12-latest.md
+- **Summary:** Created new page "WBRW html2sky completion audit 2026-07-12 latest"
+
+## [2026-07-12T11:41:32.809Z] add
+- **Pages:** wbrw-html2sky-completion-audit-2026-07-12-latest.md
+- **Summary:** Created wiki page wbrw-html2sky-completion-audit-2026-07-12-latest.md
+
+## [2026-07-12T11:46:39.491Z] ingest
+- **Pages:** wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md
+- **Summary:** Created new page "WBRW html2sky post-cleanup final evidence 2026-07-12"
+
+## [2026-07-12T11:46:39.500Z] add
+- **Pages:** wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md
+- **Summary:** Created wiki page wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md
+
+## [2026-07-12T12:38:25.071Z] ingest
+- **Pages:** wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md
+- **Summary:** Created new page "WBRW html2sky native elements and PPM verification 2026-07-12"
+
+## [2026-07-12T12:49:59.988Z] ingest
+- **Pages:** wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md
+- **Summary:** Updated "WBRW html2sky native elements and PPM verification 2026-07-12" with new content
+
+## [2026-07-12T12:50:00.319Z] lint
+- **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
+- **Summary:** Lint: 25 issues (21 orphan, 0 stale, 1 broken, 1 contradictions)
+
+## [2026-07-12T13:06:43.621Z] ingest
+- **Pages:** wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md
+- **Summary:** Updated "WBRW html2sky native elements and PPM verification 2026-07-12" with new content
+
+## [2026-07-13T03:47:00Z] ingest
+- **Pages:** wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Recorded the completed proxy2 bitmap-logo fix, selector-12 decoder evidence, generic PNG/JPEG-to-GIF adaptation, and final no-xvfb PPM proof.
+
+## [2026-07-13T03:55:50Z] verify
+- **Pages:** wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Re-ran the no-xvfb bitmap E2E after explicit image-request validation, retained and inspected the final PPM, and refreshed its pixel, cache, and hash evidence.
+
+## [2026-07-13T04:00:06Z] verify
+- **Pages:** wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Hardened GIF/BMP pass-through against malformed streams, re-ran backend checks and the no-xvfb E2E, and replaced the final retained PPM evidence.
+
+## [2026-07-13T04:23:29Z] complete
+- **Pages:** wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Closed the generic WBRW cache-publication gate, added strict image envelopes and resource limits, restored footer-band coverage, and retained the final no-xvfb bitmap PPM/GIF evidence.
+
+## [2026-07-13T04:35:35Z] complete
+- **Pages:** wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Completed the post-review GIF preallocation guard, RFC corrected-age handling, concrete image negotiation, quoted cache parsing, and final no-xvfb PPM/GIF verification.
+
+## [2026-07-13T05:38:00Z] verify
+- **Pages:** wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Replaced WBRW's exposed transparent-black GIF canvas with a source-derived opaque matte, added a white-background E2E assertion, and retained the final PPM/GIF evidence.
+
+## [2026-07-13T06:01:24Z] complete
+- **Pages:** wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Fitted proxy2 images to WBRW tag-31 layout bounds without upscaling or cropping, proved the complete 220x44 logo and rightmost glyph in a no-xvfb PPM, and recorded focused test/race/vet results.
+
+## [2026-07-13T06:35:53Z] complete
+- **Pages:** wbrw-go-html2sky-rendering-progress-2026-07-12.md
+- **Summary:** Preserved generic CSS background-container identity in html2sky, nested pagination rows and the jump form under one SKY parent, and proved the former white gap is continuously green in the final no-xvfb PPM.
+
+## [2026-07-15T02:48:06Z] complete
+- **Pages:** cookie-e2e-key-timer-generation-boundary.md
+- **Summary:** Recorded the ARM event-chain evidence and replaced queue/draw/anonymous-timer completion guesses with main-thread short-key release plus timer-generation publication; the unfinished cookie scenario test remains unchanged.
+
+## [2026-07-15T05:09:32Z] complete
+- **Pages:** cookie-mrp-restart-and-full-runtime-version-contract.md
+- **Summary:** Recorded the four-slot shared-memory handoff repair, RESTART/STOP split, FULL 1968 versus MINI 2011 startup-version regression, rejected native-helper bootstrap, stable DSM PPM proof, and complete 31-test E2E regression.
+
+## [2026-07-15T14:13:48.924Z] ingest
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Created new page "Cookie child return opening-folder frame replay"
+
+## [2026-07-15T14:13:48.943Z] add
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Created wiki page cookie-child-return-opening-folder-frame-replay.md
+
+## [2026-07-15T14:14:08.770Z] lint
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md, cookie-mrp-restart-and-full-runtime-version-contract.md, dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gfhcq-game-stutter-performance-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md
+- **Summary:** Lint: 30 issues (24 orphan, 0 stale, 2 broken, 1 contradictions)
+
+## [2026-07-15T14:36:30Z] verify
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Re-ran the default parallel E2E suite without `--no-file-parallelism`; 19 files and 31 tests passed. Refreshed retained Cookie PPM evidence at `/tmp/vmrp-e2e-Vdk5ke`, where `return-draw-0047.ppm` shows `正在打开` before the restored file-manager list.
+
+## [2026-07-16T11:10:00+08:00] fix
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Corrected direct-ENTER child return by making present-history generations represent distinct full-frame states; paired screen/ARM checkpoints now survive repeated identical startup submits, and retained PPMs prove `正在打开` precedes the exact pre-launch file-manager content.
+
+## [2026-07-16T11:25:00+08:00] verify
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Verified the exact direct-ENTER command, both Cookie launch routes, TypeScript, C unit tests, and the default parallel e2e suite; 19 files and 32 tests passed without xvfb in 315.18s.
+
+## [2026-07-16T14:20:00+08:00] fix
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md
+- **Summary:** Replaced the rejected present-history/frame-replay approach with the real reload-protocol fix: table[138] start_fileparameter is a 128-byte binary "_RL" record; host now memcpy-copies it across the RESTART handoff instead of truncating as a C string, so Cookie's own cold-start path reloads fm.sav, redraws 正在打开, and restores the selection. Removed MrPausedAppSnapshot, present_screen_history, directory-open screenshot replay. Full parallel e2e 19 files/32 tests pass without xvfb.
+
+## [2026-07-16T18:38:00+08:00] ingest
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Recorded the retained baseline PPM, visual line-crowding evidence, live HTML break structure, and the lost FlowID boundary in html2sky extraction.
+
+## [2026-07-16T18:40:00+08:00] complete
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Advanced paragraph FlowID at explicit HTML breaks, passed all sky-engine-tool Go tests after hot reload, and retained a final PPM visibly proving `mynes [顶]` ends before the next link row.
+
+## [2026-07-16T18:53:00+08:00] investigate
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Compared source CSS and retained PPMs for task.jysafe and gddhy, proving an unconditional element-9 form style leaks four green rectangles onto the unstyled page.
+
+## [2026-07-16T18:58:00+08:00] fix
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Made form style follow extracted CSS container ownership, retained task's source-defined green/yellow regions, and reduced gddhy's erroneous green pixels from 3248 to zero without hiding either form.
+
+## [2026-07-16T19:10:00+08:00] ingest
+- **Pages:** wbrw-proxy2-white-matte-progress-2026-07-16.md
+- **Summary:** Recorded the black-canvas PPM/GIF baseline and traced it to transparent-black scaling before opaque GIF quantization; the source's dominant hidden transparent RGB is white.
+
+## [2026-07-16T19:15:00+08:00] fix
+- **Pages:** wbrw-proxy2-white-matte-progress-2026-07-16.md
+- **Summary:** Flattened alpha onto opaque white before resizing, retained logo colors, and replaced the black cached GIF canvas with an all-opaque white canvas proven by the final PPM and GIF.
+
+## [2026-07-16T20:18:00+08:00] investigate
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Re-audited the original acceptance criterion, proved the converter still drops the visible `<hr>` below 软件列表, identified reference SKY op 0x60/element 14, and restored the repro capture target to the page top.
+
+## [2026-07-16T20:24:00+08:00] fix
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Preserved HTML hr as a structural item, emitted the native element-14/op-0x60 separator in DOM order, passed Go tests/vet after hot reload, and retained a PPM visibly proving the line below 软件列表.
+
+## [2026-07-17T10:37:08+08:00] complete
+- **Pages:** gtxzj-date-guard-and-default-runtime-assets.md
+- **Summary:** Recorded the GTXZJ table[34] date-guard disassembly, rejected duplicate child initialization, deterministic virtual handset RTC, desktop base-font deployment, real DISPLAY=:0 interaction evidence, and clean 21-file/34-test regression.
+
+## [2026-07-17T11:10:52+08:00] verify
+- **Pages:** gtxzj-date-guard-and-default-runtime-assets.md
+- **Summary:** Added durable EXT hashes and extraction commands, shared-API date control with active-run rejection, recoverable/custom-output font deployment, focused date regressions, final build-id real WSLg transcript and PPMs, and the retained 22-file/43-test full-suite log.
+
+## [2026-07-17T13:27:48+08:00] complete
+- **Pages:** wxmdld-wrapped-lg-mem-first-fit-fix.md
+- **Summary:** Recorded the shared-wrapper nested resource-owner recovery, proved the cold-only missing `pet` was downstream of a rejected 32-bit wrapped LG_mem free-list link, implemented generic decoded-address validation, removed temporary probes, and retained clean cold/warm cache, PPM, draw-count and real-key evidence.
+
+## [2026-07-17T13:53:01+08:00] verify
+- **Pages:** wxmdld-wrapped-lg-mem-first-fit-fix.md
+- **Summary:** Reproduced the post-fix default-work-dir black frame as a same-length but mostly zero SKY left by the pre-fix crash, proved single-file removal invokes the application's normal rebuild without clearing other state, restored the exact user command and full-color title, and passed the final 22-file/43-test E2E suite.
+
+## [2026-07-17T15:08:48+08:00] complete
+- **Pages:** op6120-independent-scrram-4m-startup-fix.md
+- **Summary:** Traced the 4M-only progress stall to a 10 MiB MR_MALLOC_SCRRAM request incorrectly sharing the main ARM bump heap, implemented an independent 0x50000000 guest mapping with explicit lifecycle semantics, proved the fixed 4M PPM matches successful 1M byte-for-byte, and passed the final 24-file/45-test E2E suite without Xvfb.

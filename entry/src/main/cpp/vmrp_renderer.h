@@ -41,9 +41,19 @@ public:
     int32_t SurfaceWidth() const { return surface_w_; }
     int32_t SurfaceHeight() const { return surface_h_; }
 
+    // 画面滤镜设置：运行时即时生效，无需重启引擎。
+    // filterType: 0=Nearest, 1=Bilinear, 2=EPX, 3=xBRZ
+    // screenEffect: 0=关闭, 1=CRT扫描线, 2=LCD网格
+    // screenEffectStrength: 0.0~1.0
+    // brightness: -0.3~0.3, contrast: 0.5~2.0, saturation: 0.0~2.0
+    void SetDisplayFilter(int filterType, int screenEffect, float screenEffectStrength,
+                          float brightness, float contrast, float saturation);
+
 private:
     int InitGL();   // 编译 shader、生成纹理/vao
     void DestroyGL();
+    void ApplyFilterUniforms();  // 每帧渲染前设置滤镜 uniform + texture filter
+    void UpdateTextureFilter();  // 根据 filter_type_ 切换 GL_NEAREST/LINEAR
 
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;
     EGLConfig  egl_config_  = nullptr;
@@ -59,6 +69,15 @@ private:
     int32_t tex_h_   = 0;
     int32_t surface_w_ = 0; // EGL surface 实际像素宽（绘制视口，铺满用）
     int32_t surface_h_ = 0;
+
+    // 滤镜参数（NAPI线程写，渲染线程读，int/float原子性足够）。
+    int   filter_type_             = 0;    // 0=Nearest,1=Bilinear,2=EPX,3=xBRZ
+    int   screen_effect_           = 0;    // 0=关闭,1=CRT扫描线,2=LCD网格
+    float screen_effect_strength_  = 0.5f;
+    float brightness_              = 0.0f;
+    float contrast_                = 1.0f;
+    float saturation_              = 1.0f;
+    int   prev_filter_type_        = -1;   // 上一次设置的 filter_type，用于检测变化切换 texture filter
 };
 
 #endif // VMRP_RENDERER_H

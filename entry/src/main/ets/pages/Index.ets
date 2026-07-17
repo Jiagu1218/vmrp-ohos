@@ -492,6 +492,14 @@ struct Index {
         this.engine.setMotionSensitivity(sensitivity);
         const shakeIntensity = (await pref.get('shake_intensity', 1)) as number;
         this.engine.setShakeIntensity(shakeIntensity);
+        const displayFilter = (await pref.get('display_filter', 0)) as number;
+        const screenEffect = (await pref.get('screen_effect', 0)) as number;
+        const screenEffectStrength = (await pref.get('screen_effect_strength', 0.5)) as number;
+        const brightness = (await pref.get('brightness', 0.0)) as number;
+        const contrast = (await pref.get('contrast', 1.0)) as number;
+        const saturation = (await pref.get('saturation', 1.0)) as number;
+        this.engine.setDisplayFilter(displayFilter, screenEffect, screenEffectStrength,
+          brightness, contrast, saturation);
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }

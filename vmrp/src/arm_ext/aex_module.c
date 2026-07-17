@@ -9,7 +9,9 @@
 #include "../include/arm_ext_priv.h"
 #include "../include/fileLib.h"
 
+#ifndef _MSC_VER
 #include <unistd.h>
+#endif
 #include <zlib.h>
 
 static uint32_t arm_ext_read_le32(const uint8_t *p) {
@@ -373,7 +375,9 @@ static const char *arm_ext_basename(const char *path) {
 void arm_ext_init_pack_names(ArmExtModule *m) {
     const char *host_path;
     const char *alias;
+#ifndef _WIN32
     char cwd[PATH_MAX];
+#endif
     if (!m) return;
     host_path = mr_get_pack_filename();
     alias = host_path;
@@ -435,8 +439,8 @@ const char *arm_ext_pack_to_host_path(ArmExtModule *m, const char *pack) {
     return pack;
 }
 
-static const char *arm_ext_register_short_pack_alias(ArmExtModule *m,
-                                                     const char *host_path) {
+const char *arm_ext_register_short_pack_alias(ArmExtModule *m,
+                                              const char *host_path) {
     if (!m || !host_path || !host_path[0]) return "";
     for (uint32_t i = 0; i < m->short_pack_alias_count; ++i) {
         if (strcmp(m->short_pack_aliases[i].host_path, host_path) == 0) {

@@ -13,10 +13,14 @@ export interface VmrpE2eOptions {
   bin?: string;
   workDir?: string;
   timeoutMs?: number;
+  /** 域名重映射(--dns-map),用于把依赖网络的用例约束到本地测试端点。 */
+  dnsMap?: string;
   /** 屏幕分辨率(--screen WxH),如 "480x320"。默认由 vmrp 决定(240x320)。 */
   screen?: `${number}x${number}`;
   /** 应用可见内存(--memory),档位 1M/2M/4M/6M/8M/16M。默认由 vmrp 决定(1M)。 */
   memory?: "1M" | "2M" | "4M" | "6M" | "8M" | "16M";
+  /** 应用可见设备日期；"host" 显式使用宿主墙钟日期。 */
+  deviceDate?: `${number}-${number}-${number}` | "host";
   /** 每次绘图后更新 defaultScreenPath，不向 SDL 事件队列注入 SCREEN。 */
   captureLatestFrame?: boolean;
 }
@@ -61,9 +65,11 @@ export class VmrpE2e {
   private readonly bin: string;
   private readonly workDir: string;
   private readonly timeoutMs: number;
+  private readonly dnsMap?: string;
   /** 命名避免与 screen() 方法冲突:实例字段会遮蔽原型方法。 */
   private readonly screenSize?: string;
   private readonly memorySize?: string;
+  private readonly deviceDate?: string;
   private readonly captureLatestFrame: boolean;
   private process?: ChildProcessByStdio<null, Readable, Readable>;
 
@@ -76,8 +82,10 @@ export class VmrpE2e {
     this.bin = options.bin ?? process.env.VMRP_BIN ?? "build/vmrp";
     this.workDir = options.workDir ?? process.env.VMRP_WORK_DIR ?? ".";
     this.timeoutMs = options.timeoutMs ?? Number(process.env.VMRP_TIMEOUT_MS ?? 30_000);
+    this.dnsMap = options.dnsMap;
     this.screenSize = options.screen;
     this.memorySize = options.memory;
+    this.deviceDate = options.deviceDate;
     this.captureLatestFrame = options.captureLatestFrame ?? false;
   }
 
@@ -85,6 +93,8 @@ export class VmrpE2e {
     const tmpDir = await mkdtemp(path.join(tmpdir(), "vmrp-e2e-"));
     const vmrp = new VmrpE2e(tmpDir, options);
     await vmrp.spawn(await vmrp.prepareMrp(mrpPath));
+    // 同时输出 CI 收集的截图目录和模拟器工作目录，便于从用例日志定位产物。
+    console.info(`[vmrp-e2e] artifact-dir: ${tmpDir}; work-dir: ${path.resolve(vmrp.workDir)}`);
     return vmrp;
   }
 
@@ -151,9 +161,9 @@ export class VmrpE2e {
    * ENTER/SELECT, ESC/ESCAPE/POWER, SOFTLEFT/LEFT_SOFT, SOFTRIGHT/RIGHT_SOFT,
    * UP, DOWN, LEFT, RIGHT, SEND, STAR/*, POUND/HASH/#, digits 0-9, letters A-Z.
    *
-   * holdMs: 本次按住时长(毫秒),覆盖 VMRP_E2E_HOLD_MS。Mythroad 应用按定时器
-   * 轮询按键状态,按住时长决定语义(短按=激活/单步移动,长按=按键重复或长按菜单)。
-   * 全局 HOLD_MS 为粘贴稳定性调大后,需要单步语义的按键应显式传短时长。
+   * holdMs: 显式物理按住时长(毫秒),覆盖 VMRP_E2E_KEY_HOLD_MS。省略时由
+   * 主线程在首个后续 guest timer 返回时闭环 KEYUP；显式时长可表达重复键或
+   * 长按菜单。点击和粘贴使用独立的 VMRP_E2E_HOLD_MS。
    */
   async key(
     name: KeyName,
@@ -164,10 +174,14 @@ export class VmrpE2e {
       ? { timeoutMs: optionsOrTimeout, holdMs: legacyHoldMs, waitForDraw: true }
       : { timeoutMs: 2_000, waitForDraw: true, ...optionsOrTimeout };
     const previous = options.waitForDraw ? await this.drawCount() : undefined;
-    await this.command(options.holdMs != null ? `KEY ${name} ${options.holdMs}` : `KEY ${name}`);
+    const response = await this.command(options.holdMs != null ? `KEY ${name} ${options.holdMs}` : `KEY ${name}`);
     // editCreate and other valid state-only actions do not submit a bitmap.  Let
     // callers express that contract instead of accepting an unrelated timer draw.
-    if (previous != null) await this.waitDrawAfter(previous, options.timeoutMs);
+    // A key may also complete by intentionally terminating the runtime; the server
+    // reports that terminal state explicitly because no later draw can exist.
+    if (previous != null && !response.endsWith(" exited")) {
+      await this.waitDrawAfter(previous, options.timeoutMs);
+    }
   }
 
   async paste(text: string, timeoutMs = 5_000): Promise<void> {
@@ -191,6 +205,12 @@ export class VmrpE2e {
   async screen(name = "screen"): Promise<PpmImage> {
     const ppmPath = path.join(this.tmpDir, `${name}.ppm`);
     await this.command(`SCREEN ${ppmPath}`);
+    return readPpm(ppmPath);
+  }
+
+  async screenDraw(drawCount: number, name = `draw-${drawCount}`): Promise<PpmImage> {
+    const ppmPath = path.join(this.tmpDir, `${name}.ppm`);
+    await this.command(`SCREEN_DRAW ${drawCount} ${ppmPath}`);
     return readPpm(ppmPath);
   }
 
@@ -248,8 +268,10 @@ export class VmrpE2e {
 
   private async spawn(mrpPath: string): Promise<void> {
     const args = ["--work-dir", this.workDir];
+    if (this.dnsMap !== undefined) args.push("--dns-map", this.dnsMap);
     if (this.screenSize) args.push("--screen", this.screenSize);
     if (this.memorySize) args.push("--memory", this.memorySize);
+    if (this.deviceDate) args.push("--device-date", this.deviceDate);
     args.push(mrpPath);
     this.process = spawn(this.bin, args, {
       env: {

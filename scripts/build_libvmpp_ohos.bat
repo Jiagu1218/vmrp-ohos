@@ -187,5 +187,7 @@ git checkout -- src\network.c                     >nul 2>&1
 git checkout -- src\arm_ext\aex_exec.c            >nul 2>&1
 git checkout -- src\arm_ext\aex_table.c           >nul 2>&1
 git checkout -- src\arm_ext\aex_mem.c             >nul 2>&1
+git checkout -- src\arm_ext\aex_module.c          >nul 2>&1
+git checkout -- src\mythroad\src\lib\mr_strlib.c  >nul 2>&1
 popd
 exit /b 0

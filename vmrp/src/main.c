@@ -48,6 +48,16 @@ static bool isMouseDown = false;
 /* PPM 截屏：收到 SIGUSR1 时将当前 SDL surface 转储为 PPM 文件，
  * 用于在无显示器环境下验证画面是否正常渲染。 */
 static SDL_atomic_t guiDrawBitmapCount;
+/*
+ * E2E 输入同步把每次 timerStart 作为独立 generation。pending 标识仍可完成的
+ * 那一代 timer，dispatched 只在主线程完整执行 timer() 后发布；三者共同避免
+ * 把按键前已经排队的 timer 事件误认为按键后的 guest 调度边界。
+ */
+static SDL_atomic_t timerArmGeneration;
+static SDL_atomic_t timerDispatchedGeneration;
+static SDL_atomic_t timerPendingGeneration;
+static SDL_atomic_t timerDispatchInProgress;
+static SDL_atomic_t runtimeExited;
 
 static const char *screen_dump_path(void) {
     const char *path = getenv("VMRP_PPM_PATH");
@@ -80,6 +90,115 @@ static int dump_screen_ppm(const char *path) {
     return ret;
 }
 
+#define E2E_DRAW_FRAME_RING_CAP 64
+
+typedef struct {
+    int draw_count;
+    int width;
+    int height;
+    size_t rgb_len;
+    uint8_t *rgb;
+} E2eDrawFrame;
+
+static E2eDrawFrame e2eDrawFrames[E2E_DRAW_FRAME_RING_CAP];
+static SDL_mutex *e2eDrawFrameMutex = NULL;
+
+static int e2e_draw_frame_capture_enabled(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *socket = getenv("VMRP_E2E_SOCKET");
+        cached = (socket && *socket) ? 1 : 0;
+    }
+    return cached;
+}
+
+static int e2e_ensure_draw_frame_mutex(void) {
+    if (e2eDrawFrameMutex) return 1;
+    e2eDrawFrameMutex = SDL_CreateMutex();
+    return e2eDrawFrameMutex != NULL;
+}
+
+static int write_ppm_rgb(const char *path, int width, int height,
+                         const uint8_t *rgb, size_t rgb_len) {
+    if (!path || !rgb || width <= 0 || height <= 0) return -1;
+    size_t expected = (size_t)width * (size_t)height * 3u;
+    if (rgb_len < expected) return -1;
+    FILE *fp = fopen(path, "wb");
+    if (!fp) return -1;
+    fprintf(fp, "P6\n%d %d\n255\n", width, height);
+    fwrite(rgb, 1, expected, fp);
+    int ret = ferror(fp) ? -1 : 0;
+    fclose(fp);
+    return ret;
+}
+
+static void e2e_record_draw_frame(int draw_count, SDL_Surface *surface) {
+    if (!e2e_draw_frame_capture_enabled() || draw_count <= 0 || !surface)
+        return;
+    if (!e2e_ensure_draw_frame_mutex()) return;
+
+    int width = surface->w;
+    int height = surface->h;
+    if (width <= 0 || height <= 0) return;
+    size_t rgb_len = (size_t)width * (size_t)height * 3u;
+    uint8_t *rgb = (uint8_t *)malloc(rgb_len);
+    if (!rgb) return;
+
+    if (SDL_MUSTLOCK(surface) && SDL_LockSurface(surface) != 0) {
+        free(rgb);
+        return;
+    }
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            Uint32 px = *((Uint32 *)(((Uint8 *)surface->pixels) +
+                                      surface->pitch * y) + x);
+            Uint8 r, g, b;
+            size_t out = ((size_t)y * (size_t)width + (size_t)x) * 3u;
+            SDL_GetRGB(px, surface->format, &r, &g, &b);
+            rgb[out] = r;
+            rgb[out + 1] = g;
+            rgb[out + 2] = b;
+        }
+    }
+    if (SDL_MUSTLOCK(surface)) SDL_UnlockSurface(surface);
+
+    SDL_LockMutex(e2eDrawFrameMutex);
+    E2eDrawFrame *slot =
+        &e2eDrawFrames[(uint32_t)draw_count % E2E_DRAW_FRAME_RING_CAP];
+    free(slot->rgb);
+    slot->rgb = rgb;
+    slot->rgb_len = rgb_len;
+    slot->width = width;
+    slot->height = height;
+    slot->draw_count = draw_count;
+    SDL_UnlockMutex(e2eDrawFrameMutex);
+}
+
+static int dump_e2e_draw_frame_ppm(int draw_count, const char *path) {
+    if (!path || draw_count <= 0 || !e2eDrawFrameMutex) return -1;
+    uint8_t *rgb = NULL;
+    size_t rgb_len = 0;
+    int width = 0;
+    int height = 0;
+
+    SDL_LockMutex(e2eDrawFrameMutex);
+    E2eDrawFrame *slot =
+        &e2eDrawFrames[(uint32_t)draw_count % E2E_DRAW_FRAME_RING_CAP];
+    if (slot->draw_count == draw_count && slot->rgb && slot->rgb_len) {
+        width = slot->width;
+        height = slot->height;
+        rgb_len = slot->rgb_len;
+        rgb = (uint8_t *)malloc(rgb_len);
+        if (rgb) memcpy(rgb, slot->rgb, rgb_len);
+    }
+    SDL_UnlockMutex(e2eDrawFrameMutex);
+
+    if (!rgb) return -1;
+    int ret = write_ppm_rgb(path, width, height, rgb, rgb_len);
+    free(rgb);
+    return ret;
+}
+
 static void sigusr1_handler(int sig) {
     (void)sig;
     dump_screen_ppm(screen_dump_path());
@@ -90,6 +209,12 @@ static int e2e_dump_screen_ppm_hook(const char *path, void *userdata) {
     return dump_screen_ppm(path);
 }
 
+static int e2e_dump_draw_frame_ppm_hook(int draw_count, const char *path,
+                                        void *userdata) {
+    (void)userdata;
+    return dump_e2e_draw_frame_ppm(draw_count, path);
+}
+
 static const char *e2e_screen_dump_path_hook(void *userdata) {
     (void)userdata;
     return screen_dump_path();
@@ -98,6 +223,45 @@ static const char *e2e_screen_dump_path_hook(void *userdata) {
 static int e2e_draw_count_hook(void *userdata) {
     (void)userdata;
     return SDL_AtomicGet(&guiDrawBitmapCount);
+}
+
+static uint32_t e2e_timer_arm_generation_hook(void *userdata) {
+    (void)userdata;
+    return (uint32_t)SDL_AtomicGet(&timerArmGeneration);
+}
+
+static uint32_t e2e_timer_dispatched_generation_hook(void *userdata) {
+    (void)userdata;
+    return (uint32_t)SDL_AtomicGet(&timerDispatchedGeneration);
+}
+
+static uint32_t e2e_timer_pending_generation_hook(void *userdata) {
+    (void)userdata;
+    return (uint32_t)SDL_AtomicGet(&timerPendingGeneration);
+}
+
+static int e2e_timer_dispatch_in_progress_hook(void *userdata) {
+    (void)userdata;
+    return SDL_AtomicGet(&timerDispatchInProgress);
+}
+
+static int e2e_runtime_exited_hook(void *userdata) {
+    (void)userdata;
+    return SDL_AtomicGet(&runtimeExited);
+}
+
+static void e2e_publish_runtime_exit(void) {
+    if (vmrp_is_exited()) SDL_AtomicSet(&runtimeExited, 1);
+}
+
+static void e2e_publish_timer_dispatch(uint32_t generation) {
+    int current = SDL_AtomicGet(&timerDispatchedGeneration);
+    /* Removed timers can already have queued callbacks; never let a stale event
+     * move the published completion generation backwards. */
+    while ((int32_t)(generation - (uint32_t)current) > 0 &&
+           !SDL_AtomicCAS(&timerDispatchedGeneration, current, (int)generation)) {
+        current = SDL_AtomicGet(&timerDispatchedGeneration);
+    }
 }
 
 /* timerCb 在 SDL 定时器线程中触发，直接调用 timer() 会与主线程的 event()
@@ -200,6 +364,7 @@ void guiDrawBitmapWithStride(uint16_t *bmp, int32_t x, int32_t y,
     if (SDL_MUSTLOCK(surface)) SDL_UnlockSurface(surface);
     if (SDL_UpdateWindowSurface(window) != 0)
         printf("SDL_UpdateWindowSurface err\n");
+    e2e_record_draw_frame(draw_count, surface);
     if (should_dump_ppm) {
         dump_screen_ppm(screen_dump_path());
     }
@@ -231,24 +396,32 @@ void setEventEnable(int v) {
 
 uint32_t timerCb(uint32_t interval, void *param) {
     (void)interval; /* 签名由 SDL_AddTimer 回调 ABI 固定 */
-    (void)param;
-    SDL_RemoveTimer(timeId);
-    timeId = 0;
-    /* 不在定时器线程调用 timer()，改为推送事件到主线程 */
+    uint32_t generation = (uint32_t)(uintptr_t)param;
+    /* 回调返回 0 已使 SDL timer 成为 one-shot；不在 timer 线程改写 timeId，
+     * 否则一个刚被替换的旧 callback 可能清掉主线程保存的新 timer identity。 */
     SDL_Event ev;
     memset(&ev, 0, sizeof(ev));
     ev.type = timerEventType;
-    SDL_PushEvent(&ev);
+    ev.user.data1 = (void *)(uintptr_t)generation;
+    if (SDL_PushEvent(&ev) != 1) {
+        /* 只清除本代；较新的 timerStart 不能被较旧 callback 的失败覆盖。 */
+        SDL_AtomicCAS(&timerPendingGeneration, (int)generation, 0);
+    }
     return 0;
 }
 
 int32_t timerStart(uint16_t t) {
+    uint32_t generation = (uint32_t)SDL_AtomicAdd(&timerArmGeneration, 1) + 1;
+    /* 先发布身份，callback 即使立即运行也能针对同一 generation 清理失败状态。 */
+    SDL_AtomicSet(&timerPendingGeneration, (int)generation);
     if (!timeId) {
-        timeId = SDL_AddTimer(t, timerCb, NULL);
+        timeId = SDL_AddTimer(t, timerCb, (void *)(uintptr_t)generation);
     } else {
         SDL_RemoveTimer(timeId);
-        timeId = SDL_AddTimer(t, timerCb, NULL);
+        timeId = SDL_AddTimer(t, timerCb, (void *)(uintptr_t)generation);
     }
+    /* generation 即 timer 的身份；0 专门表示已停止或 arm 失败。 */
+    if (!timeId) SDL_AtomicCAS(&timerPendingGeneration, (int)generation, 0);
     return MR_SUCCESS;
 }
 
@@ -257,6 +430,7 @@ int32_t timerStop(void) {
         SDL_RemoveTimer(timeId);
         timeId = 0;
     }
+    SDL_AtomicSet(&timerPendingGeneration, 0);
     return MR_SUCCESS;
 }
 
@@ -349,18 +523,50 @@ static void keyEvent(int16 type, SDL_Keycode code) {
     }
 }
 
-static void dispatch_key_down(SDL_Keycode code) {
+static int dispatch_key_down(SDL_Keycode code) {
     if (isKeyDown == SDLK_UNKNOWN) {
         isKeyDown = code;
         keyEvent(MR_KEY_PRESS, code);
+        return 1;
     }
+    return 0;
 }
 
-static void dispatch_key_up(SDL_Keycode code) {
+static int dispatch_key_up(SDL_Keycode code) {
     if (isKeyDown == code) {
         isKeyDown = SDLK_UNKNOWN;
         keyEvent(MR_KEY_RELEASE, code);
+        return 1;
     }
+    return 0;
+}
+
+static void complete_e2e_key_event(const SDL_KeyboardEvent *key, int delivered) {
+    e2e_publish_runtime_exit();
+    vmrp_e2e_control_key_event_completed(
+        e2eControl, key->type, key->keysym.sym,
+        key->windowID, (uint32_t)key->keysym.scancode, delivered);
+}
+
+static void dispatch_e2e_key_up(int after_timer) {
+    int32_t raw_code;
+    uint32_t token;
+    if (!vmrp_e2e_control_take_key_up(
+            e2eControl, after_timer, &raw_code, &token)) return;
+
+    SDL_Keycode code = (SDL_Keycode)raw_code;
+    int delivered;
+    if (isEditMode) {
+        /* 与 edit-mode SDL_KEYUP 分支一致：编辑器拥有输入，只清宿主按键锁。 */
+        delivered = isKeyDown == code;
+        if (delivered) isKeyDown = SDLK_UNKNOWN;
+    } else {
+        delivered = dispatch_key_up(code);
+    }
+    e2e_publish_runtime_exit();
+    vmrp_e2e_control_key_event_completed(
+        e2eControl, SDL_KEYUP, code,
+        VMRP_E2E_KEY_WINDOW_ID, token, delivered);
 }
 
 static void dispatch_mouse_down(int x, int y) {
@@ -521,11 +727,28 @@ void loop(void) {
                 continue;
             }
             if (ev.type == timerEventType) {
+                uint32_t generation = (uint32_t)(uintptr_t)ev.user.data1;
                 /* The SDL timer is one-shot and timer() rearms the guest's
                  * next tick.  Process it even while the platform editor owns
                  * keyboard input; dropping it there stops the guest scheduler
                  * permanently after a normal pause before Ctrl+V. */
+                /* guest timer() 可能在一次调用内部先 stop 再 start；对控制线程
+                 * 标记整个调用，避免把中途 pending=0 当成真正停止。 */
+                SDL_AtomicSet(&timerDispatchInProgress, 1);
                 timer();
+                /*
+                 * timer() 内可能已 arm 下一代。先发布本代完成，再仅在 pending
+                 * 仍指向本代时清零，控制线程便不会看到 dispatch 中途的假停止。
+                 * SDL 事件按入队顺序处理，generation 因而单调递增。
+                */
+                e2e_publish_timer_dispatch(generation);
+                SDL_AtomicCAS(&timerPendingGeneration, (int)generation, 0);
+                e2e_publish_runtime_exit();
+                /* runtimeExited 必须先于 in-progress 清除发布，避免控制线程在
+                 * 正常退出窗口中继续注入一个永远不会被主循环确认的按键。 */
+                SDL_AtomicSet(&timerDispatchInProgress, 0);
+                /* 默认 E2E 短按在这一拍结束时立即 release，不依赖控制线程调度。 */
+                dispatch_e2e_key_up(1);
                 if (vmrp_is_exited()) {
                     isLoop = false;
                     break;
@@ -534,16 +757,20 @@ void loop(void) {
             }
             if (isEditMode) {
                 switch (ev.type) {
-                    case SDL_KEYUP:
+                    case SDL_KEYUP: {
                         /* A key can open the editor from its KEYDOWN handler.
                          * Its matching KEYUP then arrives while edit mode owns
                          * input, so consume it without sending a Mythroad key
                          * release but clear the host key latch.  Otherwise the
                          * next physical keydown is rejected as a duplicate. */
-                        if (isKeyDown == ev.key.keysym.sym) {
+                        int delivered = isKeyDown == ev.key.keysym.sym;
+                        if (delivered) {
                             isKeyDown = SDLK_UNKNOWN;
                         }
+                        /* 编辑模式也完成了 release；按 token 通知对应的 E2E 命令。 */
+                        complete_e2e_key_event(&ev.key, delivered);
                         continue;
+                    }
                     case SDL_KEYDOWN: {
                         SDL_Keymod key_mod = (SDL_Keymod)(ev.key.keysym.mod | SDL_GetModState());
                         /* SDL_KEYDOWN carries the modifier state observed with
@@ -554,6 +781,8 @@ void loop(void) {
                                 // MR_DIALOG_KEY_CANCEL=1
                                 event(MR_DIALOG_EVENT, 1, 0);
                                 SDL_Log("取消输入");
+                                complete_e2e_key_event(&ev.key, 1);
+                                dispatch_e2e_key_up(0);
                                 continue;
                             } else if (ev.key.keysym.sym == SDLK_v) {  // 编辑框输入
                                 char *str = SDL_GetClipboardText();
@@ -561,6 +790,8 @@ void loop(void) {
                                 SDL_free(str);
                                 // MR_DIALOG_KEY_OK=0
                                 event(MR_DIALOG_EVENT, 0, 0);
+                                complete_e2e_key_event(&ev.key, 1);
+                                dispatch_e2e_key_up(0);
                                 continue;
                             }
                         }
@@ -570,15 +801,27 @@ void loop(void) {
                     case SDL_MOUSEBUTTONDOWN:
                         SDL_Log("ctrl+v输入内容，ctrl+z取消输入");
                 }
+                if (ev.type == SDL_KEYDOWN) {
+                    /* 非编辑快捷键也已由 edit-mode 分支完整消费。 */
+                    complete_e2e_key_event(&ev.key, 1);
+                    dispatch_e2e_key_up(0);
+                }
                 continue;
             }
             switch (ev.type) {
                 case SDL_KEYDOWN:
-                    dispatch_key_down(ev.key.keysym.sym);
+                    complete_e2e_key_event(
+                        &ev.key, dispatch_key_down(ev.key.keysym.sym));
+                    /* A guest with no pending timer still needs a deterministic
+                     * short-key release at this same main-thread boundary. */
+                    dispatch_e2e_key_up(0);
                     break;
-                case SDL_KEYUP:
-                    dispatch_key_up(ev.key.keysym.sym);
+                case SDL_KEYUP: {
+                    int delivered = dispatch_key_up(ev.key.keysym.sym);
+                    /* dispatch 返回表示 guest release 回调已完成，可等待下一 timer epoch。 */
+                    complete_e2e_key_event(&ev.key, delivered);
                     break;
+                }
                 case SDL_MOUSEMOTION:
                     if (isMouseDown) {
                         event(MR_MOUSE_MOVE, ev.motion.x, ev.motion.y);
@@ -690,9 +933,20 @@ int main(int argc, char *args[]) {
     }
     VmrpE2eHooks e2e_hooks;
     memset(&e2e_hooks, 0, sizeof(e2e_hooks));
+    SDL_AtomicSet(&timerArmGeneration, 0);
+    SDL_AtomicSet(&timerDispatchedGeneration, 0);
+    SDL_AtomicSet(&timerPendingGeneration, 0);
+    SDL_AtomicSet(&timerDispatchInProgress, 0);
+    SDL_AtomicSet(&runtimeExited, 0);
     e2e_hooks.dump_screen_ppm = e2e_dump_screen_ppm_hook;
+    e2e_hooks.dump_draw_frame_ppm = e2e_dump_draw_frame_ppm_hook;
     e2e_hooks.screen_dump_path = e2e_screen_dump_path_hook;
     e2e_hooks.draw_count = e2e_draw_count_hook;
+    e2e_hooks.timer_arm_generation = e2e_timer_arm_generation_hook;
+    e2e_hooks.timer_dispatched_generation = e2e_timer_dispatched_generation_hook;
+    e2e_hooks.timer_pending_generation = e2e_timer_pending_generation_hook;
+    e2e_hooks.timer_dispatch_in_progress = e2e_timer_dispatch_in_progress_hook;
+    e2e_hooks.runtime_exited = e2e_runtime_exited_hook;
     e2eControl = vmrp_e2e_control_create(e2eEventType, &e2e_hooks);
 
     if (startVmrp(&vmrp_args) != MR_SUCCESS) {

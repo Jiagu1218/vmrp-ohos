@@ -33,6 +33,7 @@ static uint8_t *screen_rgba_buf = NULL;
 static int screen_dirty = 0;
 static int pending_timer_ms = 0;
 static int api_running = 0;
+static int api_paused = 0;
 static int image_processing_mode = VMRP_IMAGE_PROCESSING_NATIVE;
 static char api_dns_map[VMRP_DNS_MAP_LIMIT];
 static int api_dns_map_set = 0;
@@ -79,6 +80,7 @@ static int api_thread_started = 0;
 static int api_worker_stop = 0;
 static int api_timer_active = 0;
 static uint64_t api_timer_due_ms = 0;
+static uint64_t api_pause_remaining_ms = 0;
 static ApiCommand api_queue[API_QUEUE_CAP];
 static int api_queue_head = 0;
 static int api_queue_tail = 0;
@@ -245,7 +247,10 @@ int32_t timerStart(uint16_t t) {
     api_lock();
     pending_timer_ms = (int)t;
     api_timer_active = t > 0;
-    api_timer_due_ms = api_now_ms() + (uint64_t)t;
+    api_pause_remaining_ms = (uint64_t)t;
+    if (!api_paused) {
+        api_timer_due_ms = api_now_ms() + (uint64_t)t;
+    }
     api_signal();
     api_unlock();
     return 0;
@@ -438,6 +443,8 @@ static void api_finish_if_exited(void) {
     api_running = 0;
     pending_timer_ms = 0;
     api_timer_active = 0;
+    api_paused = 0;
+    api_pause_remaining_ms = 0;
     api_worker_stop = 1;
     api_clear_queue_locked();
     api_signal();
@@ -456,6 +463,11 @@ static API_THREAD_RET api_worker_main(void *userdata) {
             if (api_worker_stop || !api_running) {
                 api_unlock();
                 return API_THREAD_DONE;
+            }
+
+            if (api_paused) {
+                api_wait_forever();
+                continue;
             }
 
             have_cmd = api_pop_command_locked(&cmd);
@@ -520,6 +532,8 @@ static void api_stop_worker(void) {
     api_lock();
     api_worker_stop = 1;
     api_timer_active = 0;
+    api_paused = 0;
+    api_pause_remaining_ms = 0;
     pending_timer_ms = 0;
     api_clear_queue_locked();
     api_signal();
@@ -575,6 +589,8 @@ VMRP_EXPORT int vmrp_api_init(int screen_w, int screen_h) {
 #if VMRP_API_ASYNC_RUNNER
     api_lock();
     api_timer_active = 0;
+    api_paused = 0;
+    api_pause_remaining_ms = 0;
     api_worker_stop = 0;
     api_queue_head = 0;
     api_queue_tail = 0;
@@ -594,6 +610,23 @@ VMRP_EXPORT int vmrp_api_set_memory(int memory_mb) {
     return 0;
 }
 
+VMRP_EXPORT int vmrp_api_set_device_date(const char *date) {
+    int year, month, day;
+
+    /* Runtime callbacks read vmrp_config on the worker thread, so date mode is
+     * an inter-run setting and must never change while a VM is active. */
+    if (vmrp_api_is_running()) return -1;
+    if (vmrp_args_parse_device_date(date, &year, &month, &day) != MR_SUCCESS) {
+        return -1;
+    }
+    /* Commit the mode only after full validation so a bad call preserves the
+     * embedding host's previously selected RTC configuration. */
+    vmrp_config.device_year = year;
+    vmrp_config.device_month = month;
+    vmrp_config.device_day = day;
+    return 0;
+}
+
 VMRP_EXPORT int vmrp_api_set_work_dir(const char *work_dir) {
     int n;
     if (!work_dir || !*work_dir) return -1;
@@ -608,12 +641,20 @@ VMRP_EXPORT int vmrp_api_set_work_dir(const char *work_dir) {
 VMRP_EXPORT int vmrp_api_start(const char *mrp_path, const char *ext, const char *entry) {
     VMRP_API_LOG("[vmrp_api] start('%s','%s','%s')\n", mrp_path ? mrp_path : "(null)",
                  ext ? ext : "(null)", entry ? entry : "(null)");
+    VMRP_API_LOG("[vmrp_api] work_dir='%s' dns_map_set=%d dns_map='%s'\n",
+                 vmrp_config.work_dir[0] ? vmrp_config.work_dir : "(unset)",
+                 api_dns_map_set,
+                 api_dns_map_set ? api_dns_map : "(default)");
     if (!mrp_path || !*mrp_path) return -1;
     if (!ext || !*ext) ext = "start.mr";
 
     VmrpArgs args = vmrp_args_default();
     args.screen_width = vmrp_config.screen_width;
     args.screen_height = vmrp_config.screen_height;
+    /* Preserve the embedding host's explicit virtual-date or host-clock mode. */
+    args.device_year = vmrp_config.device_year;
+    args.device_month = vmrp_config.device_month;
+    args.device_day = vmrp_config.device_day;
     if (vmrp_config.memory_mb > 0) {
         args.memory_mb = vmrp_config.memory_mb;
     }
@@ -651,6 +692,8 @@ VMRP_EXPORT void vmrp_api_destroy(void) {
     screen_dirty = 0;
     pending_timer_ms = 0;
     api_running = 0;
+    api_paused = 0;
+    api_pause_remaining_ms = 0;
     api_dns_map[0] = '\0';
     api_dns_map_set = 0;
     free_hold_edit_text();
@@ -661,23 +704,29 @@ VMRP_EXPORT void vmrp_api_destroy(void) {
 VMRP_EXPORT int vmrp_api_set_dns_map(const char *map) {
     char copy[VMRP_DNS_MAP_LIMIT];
 
+    VMRP_API_LOG("[vmrp_api] set_dns_map('%s')\n", map ? map : "(null)");
     if (!map || !*map) {
         api_dns_map[0] = '\0';
         api_dns_map_set = 0;
-        return configureVmrpDnsMap(map) == 0 ? 0 : -1;
+        int ret = configureVmrpDnsMap(map) == 0 ? 0 : -1;
+        VMRP_API_LOG("[vmrp_api] set_dns_map cleared ret=%d\n", ret);
+        return ret;
     }
 
     int n = snprintf(copy, sizeof(copy), "%s", map);
     if (n < 0 || (size_t)n >= sizeof(copy)) {
+        VMRP_API_LOG("[vmrp_api] set_dns_map too long\n");
         return -1;
     }
     if (configureVmrpDnsMap(copy) != 0) {
         api_dns_map[0] = '\0';
         api_dns_map_set = 0;
+        VMRP_API_LOG("[vmrp_api] set_dns_map invalid\n");
         return -1;
     }
     snprintf(api_dns_map, sizeof(api_dns_map), "%s", copy);
     api_dns_map_set = 1;
+    VMRP_API_LOG("[vmrp_api] set_dns_map stored entries='%s'\n", api_dns_map);
     return 0;
 }
 
@@ -764,6 +813,47 @@ VMRP_EXPORT int vmrp_api_is_running(void) {
         pending_timer_ms = 0;
     }
     return api_running;
+}
+
+VMRP_EXPORT int vmrp_api_pause(void) {
+#if VMRP_API_ASYNC_RUNNER
+    if (!api_running || vmrp_is_exited()) return -1;
+    api_lock();
+    if (!api_paused) {
+        api_paused = 1;
+        if (api_timer_active) {
+            const uint64_t now = api_now_ms();
+            api_pause_remaining_ms = api_timer_due_ms > now
+                ? api_timer_due_ms - now
+                : 0;
+        } else {
+            api_pause_remaining_ms = 0;
+        }
+    }
+    api_signal();
+    api_unlock();
+    return 0;
+#else
+    return api_running ? 0 : -1;
+#endif
+}
+
+VMRP_EXPORT int vmrp_api_resume(void) {
+#if VMRP_API_ASYNC_RUNNER
+    if (!api_running || vmrp_is_exited()) return -1;
+    api_lock();
+    if (api_paused) {
+        api_paused = 0;
+        if (api_timer_active) {
+            api_timer_due_ms = api_now_ms() + api_pause_remaining_ms;
+        }
+    }
+    api_signal();
+    api_unlock();
+    return 0;
+#else
+    return api_running ? 0 : -1;
+#endif
 }
 
 VMRP_EXPORT const uint16_t *vmrp_api_get_screen_buffer(void) {

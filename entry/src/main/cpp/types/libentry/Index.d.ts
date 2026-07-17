@@ -13,6 +13,8 @@ export const sendKey: (type: number, key: number) => number;
 export const sendMotion: (x: number, y: number, z: number) => number;
 export const setMotionSensitivity: (sensitivity: number) => void;
 export const setShakeIntensity: (level: number) => void;
+export const setDisplayFilter: (filterType: number, screenEffect: number, screenEffectStrength: number,
+  brightness: number, contrast: number, saturation: number) => void;
 export const startDsmB: (entry: string) => number;
 export const startDsmC: (entry: string) => number;
 export const startDsmEx: (path: string, entry?: string) => number;

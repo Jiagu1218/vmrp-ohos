@@ -30,6 +30,11 @@
  * into the normal low heap; child loaders may keep the original address. */
 #define EXT_PLATFORM_MEM_ADDR 0x40000000u
 #define EXT_PLATFORM_MEM_SIZE (2u * 1024u * 1024u)
+/* mr_platEx(MR_MALLOC_SCRRAM) is a platform allocation outside LG_mem.
+ * Keep it in its own guest band so increasing --memory cannot consume the
+ * address space needed by large Flash/image scratch buffers. */
+#define EXT_SCRRAM_ADDR 0x50000000u
+#define EXT_SCRRAM_SIZE (16u * 1024u * 1024u)
 #define EXT_PLATFORM_IO_MEM_ADDR 0x80000000u
 #define EXT_PLATFORM_IO_MEM_SIZE (18u * 1024u * 1024u)
 #define EXT_PLATFORM_ALT_MEM_ADDR 0xA0000000u
@@ -205,6 +210,7 @@ struct ArmExtModule {
     uint8_t *mem;
     uint8_t *low_table;
     uint8_t *platform_mem;
+    uint8_t *scrram_mem;
     uint8_t *platform_io_mem;
     uint8_t *platform_alt_mem;
     uint8_t *executor_meta_mem;
@@ -217,7 +223,14 @@ struct ArmExtModule {
     ArmExtShortPackAlias *short_pack_aliases;
     uint32_t short_pack_alias_count;
     uint32_t short_pack_alias_capacity;
+    /* Native table[100..103] exposes four writable filename arrays.  Keep a
+     * stable guest address for every array so lifecycle handoff writes can be
+     * copied back to Mythroad when the guest publishes RESTART/STOP. */
     uint32_t pack_table_addr;
+    uint32_t start_table_addr;
+    uint32_t old_pack_table_addr;
+    uint32_t old_start_table_addr;
+    uint32_t start_parameter_table_addr;
     uint32_t helper_addr;
     uint32_t p_addr;
     uint32_t screen_addr;
@@ -263,14 +276,14 @@ struct ArmExtModule {
     struct ArmExtBumpBlock *app_live_blocks;
     uint32_t app_live_count;
     uint32_t app_live_cap;
-    /* ARM 侧 origin_mem 统计 slot 地址，用于在宿主 table[0]/table[1]
-     * 处理后同步 ARM 可见的剩余内存值，避免 ext 读到过期统计。 */
+    /* ARM 侧 origin_mem 统计 slot 地址。旧 wrapper 会在临时挂接外部 arena
+     * 时直接改这些全局量,所以 table bridge 必须先读 slot 当前值再更新,
+     * 不能用 init_table 时缓存的宿主统计覆盖 guest 的 arena 状态。 */
     uint32_t origin_mem_left_slot;
     uint32_t origin_mem_min_slot;
     uint32_t origin_mem_top_slot;
-    /* MR_MALLOC_SCRRAM/MR_FREE_SCRRAM return ARM-addressable scratch RAM.
-     * Native code uses that RAM as ordinary pixel/data storage, so the host
-     * must keep the allocation inside Unicorn's mapped address space. */
+    /* Active allocation inside the independent EXT_SCRRAM band.  The backing
+     * is mapped lazily by table[38]/MR_MALLOC_SCRRAM and is not LG_mem. */
     uint32_t exram_addr;
     uint32_t exram_len;
     uint32_t internal_table_addr;
@@ -412,6 +425,10 @@ static inline void *arm_ptr(ArmExtModule *m, uint32_t addr) {
         addr >= EXT_PLATFORM_MEM_ADDR &&
         addr - EXT_PLATFORM_MEM_ADDR < EXT_PLATFORM_MEM_SIZE)
         return m->platform_mem + (addr - EXT_PLATFORM_MEM_ADDR);
+    if (m->scrram_mem &&
+        addr >= EXT_SCRRAM_ADDR &&
+        addr - EXT_SCRRAM_ADDR < EXT_SCRRAM_SIZE)
+        return m->scrram_mem + (addr - EXT_SCRRAM_ADDR);
     if (m->platform_io_mem &&
         addr >= EXT_PLATFORM_IO_MEM_ADDR &&
         addr - EXT_PLATFORM_IO_MEM_ADDR < EXT_PLATFORM_IO_MEM_SIZE)
