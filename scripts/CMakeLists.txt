@@ -900,6 +900,21 @@ if(EXISTS "${_VMRP_NET}")
     endif()
 endif()
 
+# --- Patch vmrp_api.c: async worker timer 停止时保持心跳 (OHOS_WORKER_HEARTBEAT) ---
+# 已移除: op6120 卡死的根因是 origin_mem_len 过大(用户设 16MB 内存 → clamp 8MB),
+# 导致 ARM 代码 exRam 预算计算溢出。设置里选 1MB 内存即可正常,不需要此补丁。
+
+# --- Patch arm_ext_executor.c: origin_mem_len 固定 1MB (OHOS_HEAP_FIX) ---
+# 已移除: 用户在设置里选 1MB 内存即可。origin_mem_len = vmrp_memory_bytes(1) = 1MB,
+# 跟真机标准一致。不需要强制覆盖。
+
+# --- Diagnostic patches removed (OHOS_CODE2_HELPER / OHOS_TIMER_PATH) ---
+
+# 已移除: Pattern D 会把 op6120 等游戏从能工作的 native_ext_void_event(2) 路径
+# 推到 arm_ext_call_dispatch 路径,但该路径的 queue liveness 检查对 op6120 的
+# timer 结构不兼容(队列在 socket 等待期间空 → host timer 不重 arm → 卡死)。
+# 上游也无 Pattern D,op6120 在上游走 code=2 正常工作,故此处保持不补丁。
+
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
 # --- OHOS 图片解码：注入 ohos_image_decode.c 到 vmrp-shared ---
