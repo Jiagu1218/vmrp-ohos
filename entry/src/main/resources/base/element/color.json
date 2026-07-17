@@ -23,6 +23,30 @@
     {
       "name": "softkey_bg",
       "value": "#0F3460"
+    },
+    {
+      "name": "glass_bg",
+      "value": "#12FFFFFF"
+    },
+    {
+      "name": "glass_border_dark",
+      "value": "#65FFFFFF"
+    },
+    {
+      "name": "immersive_bg",
+      "value": "#0D0D1A"
+    },
+    {
+      "name": "control_panel_bg",
+      "value": "#1A1A2E"
+    },
+    {
+      "name": "status_dot_run",
+      "value": "#4ADE80"
+    },
+    {
+      "name": "status_dot_idle",
+      "value": "#555577"
     }
   ]
 }
