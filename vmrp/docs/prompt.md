@@ -533,33 +533,24 @@ tool/server-http.js已启动，修改tool/proxy.js来实现代理服务器。
 充分利用子Agent。
 记得存储记忆数据。
 
-测试用例`test/e2e/wbrw/temp.test.ts`执行会自动访问网页，但是图片加载失败。
+复现脚本`test/e2e/wbrw/temp.test.ts`执行会自动访问网页，但是页面没有换行，是否拥挤。
+注意：不是测试用例，只是复现脚本，只需要保存网页加载后的图像，检测是否符合预期即可。
 
-预期结果：测试用例实际能加载图片。
-实际结果：图片加载失败
-`/home/msojocs/github/mrp-store/backend/internal/service/mrp_proxy.go`中的`handleProxy2Image`实现可能有问题；
-真机似乎是把图片保存为gif后缀，二进制还是原始内容；看看s.handleProxy2Image(w, r, body)实现有什么问题
-直接修改go代码，服务会自动重启生效。
-至少：
-1. logo显示
+预期结果：`软件列表`下面显示一条水平线。
+实际结果：没有换行
 
-程序的现有代码不一定正确。
-注意trace日志量会特别大。
-不要使用xvfb。
-修改代码要加注释，不要有兜底代码逻辑。
-深入反汇编检测代理机制。
-一定要截图检测PPM，来验证实现是否成功。
-不能写特定场景代码，如if(is_xxx_app()) {...}
+项目源码：`~/github/sky-engine-tools`，修改源码会热重载。
 
 在分析与解决过程中，把进度定期保存至文档中。
 充分利用子Agent。
 记得存储记忆数据。
 
+工作区中的修改是修复以下BUG产生的，分析实现方案是否合理：
+命令`build/vmrp build/mythroad/op6120.mrp --memory 4M`执行后，进度会卡死。
 
-测试用例`test/e2e/gfhcq/temp.test.ts`执行后，结尾会进入游戏，但是十分卡顿，帮我优化性能。
-
-预期结果：运行速度较快。
-实际结果：特别卡。
+预期结果：游戏正常启动。
+实际结果：进度会卡死，1M内存没问题。
+修复一下，写个测试用例。
 
 程序的现有代码不一定正确。
 注意trace日志量会特别大。
@@ -574,7 +565,7 @@ tool/server-http.js已启动，修改tool/proxy.js来实现代理服务器。
 充分利用子Agent。
 记得存储记忆数据。
 
-工作区中的修改是修复以下BUG产生的，分析实现方案是否存在硬编码等问题，比如一堆present_screen_history真的符合真机逻辑吗。
+工作区中的修改是修复以下BUG产生的，虽然测试用例通过，但是直接执行`~/github/vmrp$ build/vmrp build/mythroad/490111_240x320_sanguo.mrp`，背景图加载不出来，分析原因。
 测试用例`pnpm vitest run test/e2e/cookie/run-mrp.test.ts -t 方式二`执行后，启动应用后，结尾退出子应用后，应该返回文件管理界面，重新加载文件列表。
 
 预期结果：返回文件管理器，文件管理器会显示“正在打开”，进入的状态是启动前的位置。

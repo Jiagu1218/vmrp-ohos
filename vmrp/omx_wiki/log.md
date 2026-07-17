@@ -367,3 +367,55 @@
 ## [2026-07-16T14:20:00+08:00] fix
 - **Pages:** cookie-child-return-opening-folder-frame-replay.md
 - **Summary:** Replaced the rejected present-history/frame-replay approach with the real reload-protocol fix: table[138] start_fileparameter is a 128-byte binary "_RL" record; host now memcpy-copies it across the RESTART handoff instead of truncating as a C string, so Cookie's own cold-start path reloads fm.sav, redraws 正在打开, and restores the selection. Removed MrPausedAppSnapshot, present_screen_history, directory-open screenshot replay. Full parallel e2e 19 files/32 tests pass without xvfb.
+
+## [2026-07-16T18:38:00+08:00] ingest
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Recorded the retained baseline PPM, visual line-crowding evidence, live HTML break structure, and the lost FlowID boundary in html2sky extraction.
+
+## [2026-07-16T18:40:00+08:00] complete
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Advanced paragraph FlowID at explicit HTML breaks, passed all sky-engine-tool Go tests after hot reload, and retained a final PPM visibly proving `mynes [顶]` ends before the next link row.
+
+## [2026-07-16T18:53:00+08:00] investigate
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Compared source CSS and retained PPMs for task.jysafe and gddhy, proving an unconditional element-9 form style leaks four green rectangles onto the unstyled page.
+
+## [2026-07-16T18:58:00+08:00] fix
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Made form style follow extracted CSS container ownership, retained task's source-defined green/yellow regions, and reduced gddhy's erroneous green pixels from 3248 to zero without hiding either form.
+
+## [2026-07-16T19:10:00+08:00] ingest
+- **Pages:** wbrw-proxy2-white-matte-progress-2026-07-16.md
+- **Summary:** Recorded the black-canvas PPM/GIF baseline and traced it to transparent-black scaling before opaque GIF quantization; the source's dominant hidden transparent RGB is white.
+
+## [2026-07-16T19:15:00+08:00] fix
+- **Pages:** wbrw-proxy2-white-matte-progress-2026-07-16.md
+- **Summary:** Flattened alpha onto opaque white before resizing, retained logo colors, and replaced the black cached GIF canvas with an all-opaque white canvas proven by the final PPM and GIF.
+
+## [2026-07-16T20:18:00+08:00] investigate
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Re-audited the original acceptance criterion, proved the converter still drops the visible `<hr>` below 软件列表, identified reference SKY op 0x60/element 14, and restored the repro capture target to the page top.
+
+## [2026-07-16T20:24:00+08:00] fix
+- **Pages:** wbrw-html2sky-line-wrap-progress-2026-07-16.md
+- **Summary:** Preserved HTML hr as a structural item, emitted the native element-14/op-0x60 separator in DOM order, passed Go tests/vet after hot reload, and retained a PPM visibly proving the line below 软件列表.
+
+## [2026-07-17T10:37:08+08:00] complete
+- **Pages:** gtxzj-date-guard-and-default-runtime-assets.md
+- **Summary:** Recorded the GTXZJ table[34] date-guard disassembly, rejected duplicate child initialization, deterministic virtual handset RTC, desktop base-font deployment, real DISPLAY=:0 interaction evidence, and clean 21-file/34-test regression.
+
+## [2026-07-17T11:10:52+08:00] verify
+- **Pages:** gtxzj-date-guard-and-default-runtime-assets.md
+- **Summary:** Added durable EXT hashes and extraction commands, shared-API date control with active-run rejection, recoverable/custom-output font deployment, focused date regressions, final build-id real WSLg transcript and PPMs, and the retained 22-file/43-test full-suite log.
+
+## [2026-07-17T13:27:48+08:00] complete
+- **Pages:** wxmdld-wrapped-lg-mem-first-fit-fix.md
+- **Summary:** Recorded the shared-wrapper nested resource-owner recovery, proved the cold-only missing `pet` was downstream of a rejected 32-bit wrapped LG_mem free-list link, implemented generic decoded-address validation, removed temporary probes, and retained clean cold/warm cache, PPM, draw-count and real-key evidence.
+
+## [2026-07-17T13:53:01+08:00] verify
+- **Pages:** wxmdld-wrapped-lg-mem-first-fit-fix.md
+- **Summary:** Reproduced the post-fix default-work-dir black frame as a same-length but mostly zero SKY left by the pre-fix crash, proved single-file removal invokes the application's normal rebuild without clearing other state, restored the exact user command and full-color title, and passed the final 22-file/43-test E2E suite.
+
+## [2026-07-17T15:08:48+08:00] complete
+- **Pages:** op6120-independent-scrram-4m-startup-fix.md
+- **Summary:** Traced the 4M-only progress stall to a 10 MiB MR_MALLOC_SCRRAM request incorrectly sharing the main ARM bump heap, implemented an independent 0x50000000 guest mapping with explicit lifecycle semantics, proved the fixed 4M PPM matches successful 1M byte-for-byte, and passed the final 24-file/45-test E2E suite without Xvfb.

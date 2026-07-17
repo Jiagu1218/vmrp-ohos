@@ -137,6 +137,9 @@ uint32_t arm_addr(ArmExtModule *m, const void *ptr) {
     if (m && m->platform_mem && p >= m->platform_mem &&
         p < m->platform_mem + EXT_PLATFORM_MEM_SIZE)
         return (uint32_t)(p - m->platform_mem) + EXT_PLATFORM_MEM_ADDR;
+    if (m && m->scrram_mem && p >= m->scrram_mem &&
+        p < m->scrram_mem + EXT_SCRRAM_SIZE)
+        return (uint32_t)(p - m->scrram_mem) + EXT_SCRRAM_ADDR;
     if (m && m->platform_io_mem && p >= m->platform_io_mem &&
         p < m->platform_io_mem + EXT_PLATFORM_IO_MEM_SIZE)
         return (uint32_t)(p - m->platform_io_mem) + EXT_PLATFORM_IO_MEM_ADDR;
@@ -260,8 +263,47 @@ ArmExtNestedModule *arm_ext_resource_owner_for_lr(ArmExtModule *m,
     if (owner_helper) *owner_helper = 0;
     if (!m) return NULL;
 
-    p = arm_ext_p_for_code_addr(m, reg_read32(m->uc, UC_ARM_REG_LR), &helper);
+    uint32_t lr = reg_read32(m->uc, UC_ARM_REG_LR);
+    p = arm_ext_p_for_code_addr(m, lr, &helper);
     owner = arm_ext_find_nested_module_by_p(m, p);
+    if (!owner) {
+        uint32_t return_pc = lr & ~1u;
+        uint32_t sp = reg_read32(m->uc, UC_ARM_REG_SP);
+        /* Shared wrapper thunks hide the child caller from table bridges: LR
+         * names the thunk's instruction after BLX, while the thunk has saved
+         * the child's LR in its small stack frame.  Recover only a structurally
+         * valid Thumb call return into a registered child, and only when the
+         * direct return belongs to the wrapper.  The bounded scan avoids using
+         * unrelated active/foreground state as a resource-owner fallback. */
+        if (return_pc >= EXT_CODE_ADDR &&
+            return_pc < EXT_CODE_ADDR + m->code_len) {
+            for (uint32_t off = 0; off < 16u * 4u; off += 4u) {
+                uint32_t candidate = 0;
+                if (!arm_ptr_span(m, sp + off, 4u)) break;
+                memcpy(&candidate, arm_ptr(m, sp + off), 4u);
+                if (!(candidate & 1u) || (candidate & ~1u) < 2u) continue;
+
+                uint32_t caller_pc = candidate & ~1u;
+                uint32_t stack_helper = 0;
+                uint32_t stack_p = arm_ext_p_for_code_addr(
+                    m, candidate, &stack_helper);
+                ArmExtNestedModule *stack_owner =
+                    arm_ext_find_nested_module_by_p(m, stack_p);
+                if (!stack_owner) continue;
+                if (!arm_ptr_span(m, caller_pc - 2u, 2u)) continue;
+                uint16_t call = 0;
+                memcpy(&call, arm_ptr(m, caller_pc - 2u), 2u);
+                /* Private children enter wrapper bridges through BLX Rm.  A
+                 * matching return address proves this stack word is a call
+                 * frame, rather than data that happens to fall in code RAM. */
+                if ((call & 0xFF87u) != 0x4780u) continue;
+                p = stack_p;
+                helper = stack_helper;
+                owner = stack_owner;
+                break;
+            }
+        }
+    }
     if (owner_p) *owner_p = p;
     if (owner_helper) *owner_helper = helper;
     return owner;
@@ -521,15 +563,6 @@ static void sync_internal_state_to_arm(ArmExtModule *m) {
     internal_slot_write(m, m->mr_timer_state_slot, (uint32_t)mr_timer_state);
 }
 
-void sync_origin_mem_slots(ArmExtModule *m) {
-    if (m->origin_mem_left_slot)
-        memcpy(arm_ptr(m, m->origin_mem_left_slot), &m->origin_mem_left, 4);
-    if (m->origin_mem_min_slot)
-        memcpy(arm_ptr(m, m->origin_mem_min_slot), &m->origin_mem_min, 4);
-    if (m->origin_mem_top_slot)
-        memcpy(arm_ptr(m, m->origin_mem_top_slot), &m->origin_mem_top, 4);
-}
-
 /*
  * Guest 侧 LG_mem first-fit 分配器,链表操作逐语句对应 src/mythroad/mem.c
  * 的 mr_malloc/mr_free。原生 ABI 中 table[0]/[1]/[2] 就是这三个函数,且
@@ -553,6 +586,11 @@ void sync_origin_mem_slots(ArmExtModule *m) {
  * - LG_mem_left/min/top 统计沿用 note_origin_mem_alloc/free 的既有账本
  *   (所有 table[0]/[1] 调用无论落在池内或 bump 都记账),与修复前的
  *   ARM 可见值一致,不影响依赖该预算的游戏(见 origin_mem_len 注释)。
+ * - 部分旧 wrapper 会临时把 0x40000000 映射带的 arena 接到 free-list,
+ *   并直接改 table[108]/[110]/[136] 和 table[146] 指向的链表。
+ *   table bridge 每次从这些 ARM 可见 slot 读取当前 base/end/head/统计,
+ *   不能继续使用 init_table 时的固定副本;
+ *   否则 host 与 guest 会遍历两个不同的链表边界并在 teardown 中成环。
  * 验证:talkcat.mrp 主界面 PPM 无花屏;e2e 全量回归与基线一致。
  */
 
@@ -2701,6 +2739,7 @@ void arm_ext_unload(ArmExtModule *m) {
     arm_ext_free_row_spans(&m->foreground_cover);
     free(m->low_table);
     free(m->platform_mem);
+    free(m->scrram_mem);
     free(m->platform_io_mem);
     free(m->platform_alt_mem);
     free(m->executor_meta_mem);
