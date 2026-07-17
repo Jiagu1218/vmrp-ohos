@@ -48,14 +48,7 @@ const BRIGHTNESS_DEFAULT: number = 0.0;
 const CONTRAST_DEFAULT: number = 1.0;
 const SATURATION_DEFAULT: number = 1.0;
 
-const ACCENT = '#E94560';
-const LABEL_COLOR = '#E0E0EC';
-const DESC_COLOR = '#7A7A9E';
-const VALUE_COLOR = '#E94560';
-const DIVIDER_CLR = '#1AFFFFFF';
 const CARD_RADIUS = 20;
-const CARD_BG = '#1A1A2EB3';
-const CARD_BORDER = '#2A2A4E';
 const ROW_H = 56;
 const PAD_H = 20;
 const SEC_TOP = 20;
@@ -67,7 +60,7 @@ struct SectionHeader {
   build() {
     Text(this.title)
       .fontSize(14)
-      .fontColor(DESC_COLOR)
+      .fontColor($r('app.color.settings_desc_color'))
       .fontWeight(FontWeight.Medium)
       .width('100%')
       .padding({ left: 4, top: SEC_TOP, bottom: SEC_BOT })
@@ -80,7 +73,7 @@ struct SDivider {
     Row()
       .width('100%')
       .height(0.5)
-      .backgroundColor(DIVIDER_CLR)
+      .backgroundColor($r('app.color.settings_divider_color'))
       .margin({ left: PAD_H, right: 0 })
   }
 }
@@ -91,7 +84,7 @@ struct SDesc {
   build() {
     Text(this.text)
       .fontSize(12)
-      .fontColor(DESC_COLOR)
+      .fontColor($r('app.color.settings_desc_color'))
       .width('100%')
       .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 12 })
   }
@@ -105,7 +98,7 @@ struct SRow {
     Row() {
       Text(this.label)
         .fontSize(16)
-        .fontColor(LABEL_COLOR)
+        .fontColor($r('app.color.settings_label_color'))
         .layoutWeight(1)
       this.content()
     }
@@ -124,7 +117,7 @@ struct SSliderLabel {
     Row() {
       Text(this.label)
         .fontSize(16)
-        .fontColor(LABEL_COLOR)
+        .fontColor($r('app.color.settings_label_color'))
         .layoutWeight(1)
       Text(this.valueText)
         .fontSize(13)
@@ -132,7 +125,7 @@ struct SSliderLabel {
         .fontWeight(FontWeight.Medium)
         .padding({ left: 8, right: 8, top: 2, bottom: 2 })
         .borderRadius(8)
-        .backgroundColor('#1AE94560')
+        .backgroundColor($r('app.color.settings_slider_value_bg'))
     }
     .width('100%')
     .padding({ left: PAD_H, right: PAD_H, top: 12, bottom: 4 })
@@ -150,8 +143,8 @@ struct SSlider {
     Row() {
       Slider({ value: this.value, min: this.min, max: this.max, step: this.step, style: SliderStyle.InSet })
         .width('100%')
-        .trackColor('#1AFFFFFF')
-        .selectedColor(ACCENT)
+        .trackColor($r('app.color.settings_slider_track'))
+        .selectedColor($r('app.color.accent_color'))
         .blockColor('#FFFFFF')
         .blockSize({ width: 20, height: 20 })
         .trackBorderRadius(10)
@@ -174,16 +167,16 @@ struct SSelect {
       .selected(this.selected)
       .value(this.value)
       .font({ size: 14 })
-      .fontColor('#FFFFFF')
+      .fontColor($r('app.color.settings_label_color'))
       .selectedOptionFont({ size: 15, weight: FontWeight.Bold })
       .selectedOptionFontColor('#FFFFFF')
-      .selectedOptionBgColor(ACCENT)
+      .selectedOptionBgColor($r('app.color.accent_color'))
       .optionFont({ size: 14 })
-      .optionFontColor('#CCCCCC')
-      .optionBgColor('#0D0D1A')
-      .menuBackgroundColor('#0D0D1AB3')
+      .optionFontColor($r('app.color.settings_desc_color'))
+      .optionBgColor($r('app.color.settings_select_option_bg'))
+      .menuBackgroundColor($r('app.color.settings_select_menu_bg'))
       .menuBackgroundBlurStyle(BlurStyle.COMPONENT_THIN)
-      .backgroundColor('#16213E')
+      .backgroundColor($r('app.color.settings_select_bg'))
       .borderRadius(8)
       .onSelect((index: number) => { this.onSelect(index); })
   }
@@ -361,7 +354,7 @@ export struct SettingsPage {
       primaryButton: { value: '取消', action: () => {} },
       secondaryButton: {
         value: '清空',
-        fontColor: '#E94560',
+        fontColor: '#D63B55',
         action: () => {
           try { this.engine.stop(); } catch (_e) {}
           const ctx = this.getUIContext().getHostContext();
@@ -422,7 +415,7 @@ export struct SettingsPage {
       primaryButton: { value: '取消', action: () => {} },
       secondaryButton: {
         value: '选择备份文件',
-        fontColor: '#E94560',
+        fontColor: '#D63B55',
         action: async () => {
           try {
             const opt = new picker.DocumentSelectOptions();
@@ -478,7 +471,7 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '模拟器' })
-            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: CARD_BG, blurRadius: 30 }) {
+            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SRow({ label: '内存大小' }) {
                   SSelect({
@@ -502,7 +495,7 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '画面' })
-            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: CARD_BG, blurRadius: 30 }) {
+            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SRow({ label: '缩放滤镜' }) {
                   SSelect({
@@ -565,10 +558,10 @@ export struct SettingsPage {
                     .width('100%')
                     .height(40)
                     .fontSize(14)
-                    .fontColor(ACCENT)
+                    .fontColor($r('app.color.accent_color'))
                     .backgroundColor(Color.Transparent)
                     .borderRadius(8)
-                    .border({ width: 1, color: ACCENT })
+                    .border({ width: 1, color: $r('app.color.settings_reset_btn_border') })
                     .onClick(() => {
                       this.displayFilterIndex = 0;
                       this.screenEffectIndex = 0;
@@ -590,11 +583,11 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '交互' })
-            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: CARD_BG, blurRadius: 30 }) {
+            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SRow({ label: '按键震动' }) {
                   Toggle({ type: ToggleType.Switch, isOn: this.hapticEnabled })
-                    .selectedColor(ACCENT)
+                    .selectedColor($r('app.color.accent_color'))
                     .switchPointColor('#FFFFFF')
                     .onChange((isOn: boolean) => { this.saveHaptic(isOn); })
                 }
@@ -602,7 +595,7 @@ export struct SettingsPage {
                 Row() {
                   Text('震动强度')
                     .fontSize(16)
-                    .fontColor(this.hapticEnabled ? LABEL_COLOR : '#555566')
+                    .fontColor(this.hapticEnabled ? $r('app.color.settings_label_color') : $r('app.color.settings_haptic_disabled'))
                     .layoutWeight(1)
                   SSelect({
                     opts: STRENGTH_OPTIONS,
@@ -628,7 +621,7 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '游戏震动' })
-            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: CARD_BG, blurRadius: 30 }) {
+            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SRow({ label: '震动强度' }) {
                   SSelect({
@@ -649,7 +642,7 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '动感' })
-            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: CARD_BG, blurRadius: 30 }) {
+            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SSliderLabel({ label: '灵敏度', valueText: `${this.sensitivity.toFixed(1)}x` })
                 SSlider({
@@ -667,16 +660,16 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '关于' })
-            GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: CARD_BORDER, panelBgColor: CARD_BG, panelBorderWidth: 0.5 }) {
+            GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {
                   Text('VMRP')
                     .fontSize(20)
-                    .fontColor('#FFFFFF')
+                    .fontColor($r('app.color.settings_about_title'))
                     .fontWeight(FontWeight.Bold)
                   Text('MRP 模拟器')
                     .fontSize(13)
-                    .fontColor(DESC_COLOR)
+                    .fontColor($r('app.color.settings_about_subtitle'))
                     .margin({ top: 2 })
                 }
                 .width('100%')
@@ -684,7 +677,7 @@ export struct SettingsPage {
                 .padding({ left: PAD_H, right: PAD_H, top: 16, bottom: 8 })
                 Text('VMRP 是一款基于 Mythroad 平台的 MRP 应用模拟器，可在 HarmonyOS 设备上运行经典的 MRP 小游戏与应用。')
                   .fontSize(14)
-                  .fontColor(DESC_COLOR)
+                  .fontColor($r('app.color.settings_desc_color'))
                   .lineHeight(22)
                   .width('100%')
                   .padding({ left: PAD_H, right: PAD_H, bottom: 16 })
@@ -698,39 +691,39 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '数据管理' })
-            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: CARD_BG, blurRadius: 30 }) {
+            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 Column() {
                   Button('备份数据')
                     .width('100%').height(44).fontSize(16)
-                    .fontColor('#FFFFFF').backgroundColor('#0A0A1EB3').borderRadius(12)
+                    .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
                     .onClick(() => { this.doBackup(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 10, bottom: 0 })
                 Text('将游戏、存档和缓存打包为 zip 保存到下载目录')
-                  .fontSize(12).fontColor(DESC_COLOR)
+                  .fontSize(12).fontColor($r('app.color.settings_desc_color'))
                   .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 0 })
                 SDivider()
                 Column() {
                   Button('恢复数据')
                     .width('100%').height(44).fontSize(16)
-                    .fontColor('#FFFFFF').backgroundColor('#0A0A1EB3').borderRadius(12)
+                    .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
                     .onClick(() => { this.confirmRestore(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
                 Text('从 zip 文件导入文件到内存卡(沙箱),同名覆盖')
-                  .fontSize(12).fontColor(DESC_COLOR)
+                  .fontSize(12).fontColor($r('app.color.settings_desc_color'))
                   .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 0 })
                 SDivider()
                 Column() {
                   Button('导入游戏')
                     .width('100%').height(44).fontSize(16)
-                    .fontColor('#FFFFFF').backgroundColor('#0A0A1EB3').borderRadius(12)
+                    .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
                     .onClick(() => { this.doImportMrp(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
                 Text('批量导入 .mrp 游戏文件到内存卡')
-                  .fontSize(12).fontColor(DESC_COLOR)
+                  .fontSize(12).fontColor($r('app.color.settings_desc_color'))
                   .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 10 })
               }
             }
@@ -742,12 +735,12 @@ export struct SettingsPage {
         ListItem() {
           Column() {
             SectionHeader({ title: '' })
-            GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: CARD_BORDER, panelBgColor: CARD_BG, panelBorderWidth: 0.5 }) {
+            GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {
                   Button('清空游戏文件')
                     .width('100%').height(48).fontSize(16)
-                    .fontColor(ACCENT).backgroundColor('#2A0A12B3').borderRadius(12)
+                    .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
                     .onClick(() => { this.confirmClearFiles(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 8, bottom: 4 })
@@ -755,7 +748,7 @@ export struct SettingsPage {
                 Column() {
                   Button('恢复默认设置')
                     .width('100%').height(48).fontSize(16)
-                    .fontColor(ACCENT).backgroundColor('#2A0A12B3').borderRadius(12)
+                    .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
                     .onClick(() => { this.resetDefaults(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 8 })
@@ -790,6 +783,7 @@ export struct SettingsPage {
       enableComponentSafeArea: true,
       avoidLayoutSafeArea: true
     })
+    .backgroundColor($r('app.color.immersive_bg'))
     .bindToScrollable([this.listScroller])
     .onReady((context: NavDestinationContext) => {
       this.navPathStack = context.pathStack;
@@ -813,29 +807,29 @@ function BackupNameDialogBuilder($$: BackupNameDialogParams) {
   Column() {
     Text('备份文件名')
       .fontSize(17)
-      .fontColor('#FFFFFF')
+      .fontColor($r('app.color.settings_about_title'))
       .fontWeight(FontWeight.Medium)
       .margin({ top: 20, bottom: 6 })
     Text('将保存为 zip 文件到下载目录，同名文件将被覆盖')
       .fontSize(12)
-      .fontColor(DESC_COLOR)
+      .fontColor($r('app.color.settings_desc_color'))
       .margin({ bottom: 14 })
     TextInput({ text: $$.fileName })
       .onChange((v: string) => { $$.fileName = v; })
       .width('85%')
       .height(44)
       .fontSize(15)
-      .backgroundColor('#1A1A2EB3')
-      .fontColor('#FFFFFF')
+      .backgroundColor($r('app.color.settings_dialog_input_bg'))
+      .fontColor($r('app.color.settings_about_title'))
       .borderRadius(10)
     Row() {
       Button('取消')
         .width(100).height(40)
-        .backgroundColor('#333355').fontColor('#CCCCCC')
+        .backgroundColor($r('app.color.settings_cancel_btn_bg')).fontColor($r('app.color.settings_cancel_btn_fg'))
         .onClick(() => { $$.onCancel(); })
       Button('备份')
         .width(100).height(40)
-        .backgroundColor(ACCENT).fontColor('#FFFFFF')
+        .backgroundColor($r('app.color.accent_color')).fontColor('#FFFFFF')
         .onClick(() => { $$.onConfirm($$.fileName); })
     }
     .width('100%')
@@ -843,6 +837,6 @@ function BackupNameDialogBuilder($$: BackupNameDialogParams) {
     .margin({ top: 16, bottom: 20 })
   }
   .width('82%')
-  .backgroundColor('#16213E')
+  .backgroundColor($r('app.color.settings_dialog_bg'))
   .borderRadius(16)
 }

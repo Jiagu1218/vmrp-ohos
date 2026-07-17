@@ -185,7 +185,7 @@ struct DPadWithFunc {
 
   build() {
     Column({ space: 14 }) {
-      Row() {
+      Row({ space: 12 }) {
         SoftKeyBtn({ chipLabel: '左软', keyVal: MR_KEY_SOFTLEFT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
 
         DPadBtn({

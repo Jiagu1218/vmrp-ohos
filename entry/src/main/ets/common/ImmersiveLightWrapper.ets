@@ -55,7 +55,7 @@ export struct ImmersiveLightWrapper {
     }
     .clip(true)
     .clipShape(new RectShape({ width: '100%', height: '100%', radius: this.radius }))
-    .shadow({ radius: 36, color: '#10000000' })
+    .shadow({ radius: 36, color: $r('app.color.immersive_shadow') })
     .backgroundColor(this.bgColor)
     .visualEffect(
       new hdsEffect.HdsEffectBuilder()
@@ -66,7 +66,7 @@ export struct ImmersiveLightWrapper {
     )
     .backdropBlur(this.blurRadius)
     .borderRadius(this.radius)
-    .border({ width: this.isDark ? 0.5 : 1, color: this.isDark ? '#65FFFFFF' : '#FFFFFF' })
+    .border({ width: this.isDark ? 0.5 : 1, color: $r('app.color.immersive_border_dark') })
     .overlay(this.lightTracker())
     .onTouch((event: TouchEvent) => {
       if (event.type === TouchType.Down) {

@@ -1,28 +1,40 @@
 {
   "color": [
-    {
-      "name": "start_window_background",
-      "value": "#0D0D1A"
-    },
-    {
-      "name": "shell_color",
-      "value": "#1A1A2E"
-    },
-    {
-      "name": "accent_color",
-      "value": "#E94560"
-    },
-    {
-      "name": "hinge_color",
-      "value": "#2D2D44"
-    },
-    {
-      "name": "dpad_bg",
-      "value": "#16213E"
-    },
-    {
-      "name": "softkey_bg",
-      "value": "#0F3460"
-    }
+    { "name": "start_window_background", "value": "#0D0D1A" },
+    { "name": "shell_color", "value": "#1A1A2E" },
+    { "name": "accent_color", "value": "#E94560" },
+    { "name": "hinge_color", "value": "#2D2D44" },
+    { "name": "dpad_bg", "value": "#16213E" },
+    { "name": "softkey_bg", "value": "#0F3460" },
+    { "name": "glass_bg", "value": "#12FFFFFF" },
+    { "name": "glass_border_dark", "value": "#65FFFFFF" },
+    { "name": "immersive_bg", "value": "#0D0D1A" },
+    { "name": "control_panel_bg", "value": "#1A1A2E" },
+    { "name": "status_dot_run", "value": "#4ADE80" },
+    { "name": "status_dot_idle", "value": "#555577" },
+    { "name": "settings_label_color", "value": "#E0E0EC" },
+    { "name": "settings_desc_color", "value": "#7A7A9E" },
+    { "name": "settings_value_color", "value": "#E94560" },
+    { "name": "settings_divider_color", "value": "#1AFFFFFF" },
+    { "name": "settings_card_bg", "value": "#1A1A2EB3" },
+    { "name": "settings_card_border", "value": "#2A2A4E" },
+    { "name": "settings_select_bg", "value": "#16213E" },
+    { "name": "settings_select_option_bg", "value": "#0D0D1A" },
+    { "name": "settings_select_menu_bg", "value": "#0D0D1AB3" },
+    { "name": "settings_slider_track", "value": "#1AFFFFFF" },
+    { "name": "settings_slider_value_bg", "value": "#1AE94560" },
+    { "name": "settings_danger_bg", "value": "#2A0A12B3" },
+    { "name": "settings_btn_deep_bg", "value": "#0A0A1EB3" },
+    { "name": "settings_reset_btn_border", "value": "#E94560" },
+    { "name": "settings_dialog_bg", "value": "#16213E" },
+    { "name": "settings_dialog_input_bg", "value": "#1A1A2EB3" },
+    { "name": "settings_about_title", "value": "#FFFFFF" },
+    { "name": "settings_about_subtitle", "value": "#7A7A9E" },
+    { "name": "settings_haptic_disabled", "value": "#555566" },
+    { "name": "settings_cancel_btn_bg", "value": "#333355" },
+    { "name": "settings_cancel_btn_fg", "value": "#CCCCCC" },
+    { "name": "immersive_border_dark", "value": "#65FFFFFF" },
+    { "name": "immersive_shadow", "value": "#10000000" },
+    { "name": "status_bar_content", "value": "#FFFFFF" }
   ]
 }
