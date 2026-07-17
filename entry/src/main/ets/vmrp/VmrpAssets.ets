@@ -11,7 +11,8 @@
  * vmrp 的工作目录即 MRP 文件所在目录（vmrp/docs/flutter-integration.md）。
  */
 import { common } from '@kit.AbilityKit';
-import { fileIo as fs } from '@kit.CoreFileKit';
+import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
+import { zlib } from '@kit.BasicServicesKit';
 
 const TAG = 'VmrpAssets';
 // rawfile 中 mythroad 资源根目录（相对 rawfile，无前后斜杠）。
@@ -144,6 +145,36 @@ export class VmrpAssets {
     return VmrpAssets.getWorkDir(ctx);
   }
 
+  // 清空 mythroad 工作目录（files/mythroad），含游戏、缓存、.installed 标记。
+  // 下次 ensureRuntime 会重新从 rawfile 解压基础资源。用户导入的 mrp 和游戏
+  // 生成的缓存（如 sky.bmp、avm_cache）都会被清除。返回 true 表示成功。
+  static clearWorkDir(ctx: common.Context): boolean {
+    const mythroadDir = VmrpAssets.getMythroadDir(ctx);
+    try {
+      if (!fs.accessSync(mythroadDir)) return true;
+      // rmdirSync 不能删非空目录，需先递归删除所有内容。
+      VmrpAssets.removeRecursive(mythroadDir);
+    } catch (e) {
+      console.error(`${TAG}: clearWorkDir failed: ${JSON.stringify(e)}`);
+      return false;
+    }
+    return true;
+  }
+
+  // 递归删除目录及其所有内容（rmdirSync 只删空目录，需先清文件再删子目录）。
+  private static removeRecursive(dir: string): void {
+    const names: string[] = fs.listFileSync(dir);
+    for (const name of names) {
+      const child = `${dir}/${name}`;
+      if (fs.statSync(child).isDirectory()) {
+        VmrpAssets.removeRecursive(child);
+      } else {
+        fs.unlinkSync(child);
+      }
+    }
+    fs.rmdirSync(dir);
+  }
+
   // 把用户选择的 MRP 文件复制到 mythroad 目录，返回目标路径。
   static async importMrp(ctx: common.Context, srcUri: string): Promise<string> {
     const mythroadDir = VmrpAssets.getMythroadDir(ctx);
@@ -159,5 +190,124 @@ export class VmrpAssets {
       console.error(`${TAG}: importMrp failed: ${JSON.stringify(e)}`);
     }
     return dst;
+  }
+
+  // 递归收集目录下所有文件路径（不含目录本身）。
+  private static collectFiles(dir: string, out: string[]): void {
+    const names: string[] = fs.listFileSync(dir);
+    for (const name of names) {
+      const child = `${dir}/${name}`;
+      if (fs.statSync(child).isDirectory()) {
+        VmrpAssets.collectFiles(child, out);
+      } else {
+        out.push(child);
+      }
+    }
+  }
+
+  // 递归复制目录（保留结构）。dstDir 不存在会自动创建。
+  private static copyDirRecursive(srcDir: string, dstDir: string): void {
+    try { fs.mkdirSync(dstDir, true); } catch (e) { /* may exist */ }
+    const names: string[] = fs.listFileSync(srcDir);
+    for (const name of names) {
+      const src = `${srcDir}/${name}`;
+      const dst = `${dstDir}/${name}`;
+      if (fs.statSync(src).isDirectory()) {
+        VmrpAssets.copyDirRecursive(src, dst);
+      } else {
+        const sf = fs.openSync(src, fs.OpenMode.READ_ONLY);
+        const df = fs.openSync(dst, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
+        fs.copyFile(sf.fd, df.fd);
+        fs.closeSync(sf);
+        fs.closeSync(df);
+      }
+    }
+  }
+
+  // 递归删除目录（清空临时目录用）。
+  private static removeDirRecursive(dir: string): void {
+    const names: string[] = fs.listFileSync(dir);
+    for (const name of names) {
+      const child = `${dir}/${name}`;
+      if (fs.statSync(child).isDirectory()) {
+        VmrpAssets.removeDirRecursive(child);
+      } else {
+        fs.unlinkSync(child);
+      }
+    }
+    fs.rmdirSync(dir);
+  }
+
+  // 备份 filesDir 到 zip 文件，通过 picker 写入 destUri（下载目录 URI）。
+  // fileName 为用户自定义文件名（不含 .zip 后缀），传空则用默认名。
+  // 用 compressFile 压缩整个目录（保留子目录结构）；compressFiles 会扁平化。
+  static async backupToZip(ctx: common.Context, destUri: string,
+                           fileName: string): Promise<boolean> {
+    const cacheDir = ctx.cacheDir;
+    const filesDir = ctx.filesDir;
+    const zipPath = `${cacheDir}/vmrp_backup_tmp.zip`;
+    // 确保文件名以 .zip 结尾
+    const zipName = fileName.trim().length > 0
+      ? (fileName.toLowerCase().endsWith('.zip') ? fileName : `${fileName}.zip`)
+      : 'vmrp_backup.zip';
+    try {
+      try { fs.unlinkSync(zipPath); } catch (e) {}
+      // 压缩整个 filesDir 目录（保留子目录结构）
+      const options: zlib.Options = {
+        level: zlib.CompressLevel.COMPRESS_LEVEL_DEFAULT_COMPRESSION
+      };
+      await zlib.compressFile(filesDir, zipPath, options);
+      // DOWNLOAD 模式返回的是目录 URI，需拼接文件名再用 fileUri 转成路径。
+      // 若 picker 已返回文件 URI（以 .zip 结尾）则直接用。
+      const destPath = destUri.toLowerCase().endsWith('.zip')
+        ? new fileUri.FileUri(destUri).path
+        : new fileUri.FileUri(`${destUri}/${zipName}`).path;
+      // 把 zip 复制到 picker 选定的目标位置（同名覆盖）
+      const srcFile = fs.openSync(zipPath, fs.OpenMode.READ_ONLY);
+      const dstFile = fs.openSync(destPath,
+        fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      await fs.copyFile(srcFile.fd, dstFile.fd);
+      fs.closeSync(srcFile);
+      fs.closeSync(dstFile);
+      console.info(`${TAG}: backup OK -> ${destPath}`);
+      return true;
+    } catch (e) {
+      console.error(`${TAG}: backup failed: ${JSON.stringify(e)}`);
+      return false;
+    } finally {
+      try { fs.unlinkSync(zipPath); } catch (e) {}
+    }
+  }
+
+  // 从 srcUri（picker 返回的 zip URI）恢复到 filesDir，覆盖同名文件。
+  static async restoreFromZip(ctx: common.Context, srcUri: string): Promise<boolean> {
+    const cacheDir = ctx.cacheDir;
+    const filesDir = ctx.filesDir;
+    const zipPath = `${cacheDir}/vmrp_restore.zip`;
+    const tmpDir = `${cacheDir}/_vmrp_restore`;
+    try {
+      // 把用户选的 zip 复制到沙箱（zlib 只能操作沙箱路径）
+      try { fs.unlinkSync(zipPath); } catch (e) {}
+      const srcFile = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
+      const dstFile = fs.openSync(zipPath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
+      await fs.copyFile(srcFile.fd, dstFile.fd);
+      fs.closeSync(srcFile);
+      fs.closeSync(dstFile);
+      // 清理旧的临时解压目录
+      try { VmrpAssets.removeDirRecursive(tmpDir); } catch (e) {}
+      fs.mkdirSync(tmpDir, true);
+      // 解压到临时目录（保留相对结构）
+      await zlib.decompressFile(zipPath, tmpDir);
+      // 覆盖复制到 filesDir（decompressFile 已会覆盖同名，但目标可能在不同根，这里手动覆盖确保）
+      VmrpAssets.copyDirRecursive(tmpDir, filesDir);
+      console.info(`${TAG}: restore OK`);
+      return true;
+    } catch (e) {
+      console.error(`${TAG}: restore failed: ${JSON.stringify(e)}`);
+      return false;
+    } finally {
+      try { VmrpAssets.removeDirRecursive(tmpDir); } catch (e) {}
+      try { fs.unlinkSync(zipPath); } catch (e) {}
+    }
   }
 }

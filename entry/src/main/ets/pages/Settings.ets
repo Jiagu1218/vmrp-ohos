@@ -1,8 +1,11 @@
-import { AppStorageV2 } from '@kit.ArkUI';
+import { AppStorageV2, ComponentContent } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
+import { picker } from '@kit.CoreFileKit';
 import { AvoidData } from '../common/AvoidData';
 import { HapticManager, HapticState, HapticStrength } from '../common/HapticManager';
 import { VmrpEngineTs } from '../vmrp/VmrpEngine';
+import { VmrpAssets } from '../vmrp/VmrpAssets';
 
 const PREF_NAME = 'vmrp_settings';
 const KEY_MEMORY = 'memory_mb';
@@ -202,6 +205,125 @@ export struct SettingsPage {
       HapticManager.saveEnabledPref(ctx, true);
       HapticManager.saveStrengthPref(ctx, HapticStrength.MEDIUM);
     }
+  }
+
+  // 清空游戏文件二次确认。删除 mythroad 工作目录（含游戏、缓存、导入的 mrp），
+  // 基础资源下次启动从 rawfile 重新解压。需停止引擎后再清空，避免运行时写冲突。
+  confirmClearFiles(): void {
+    this.getUIContext().showAlertDialog({
+      title: '清空游戏文件',
+      message: '将删除所有游戏、存档与缓存（含导入的 MRP），基础资源会在下次启动时自动恢复。此操作不可撤销，确定继续吗？',
+      alignment: DialogAlignment.Center,
+      autoCancel: true,
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '清空',
+        fontColor: '#E94560',
+        action: () => {
+          // 先停引擎，避免运行中删除文件导致崩溃。
+          try { this.engine.stop(); } catch (e) {}
+          const ctx = this.getUIContext().getHostContext();
+          if (!ctx) return;
+          const ok = VmrpAssets.clearWorkDir(ctx);
+          this.getUIContext().getPromptAction().showToast({
+            message: ok ? '已清空，重启应用后生效' : '清空失败',
+            duration: 2500
+          });
+        }
+      }
+    });
+  }
+
+  // 备份沙箱数据到 zip。先弹文件名输入框，再走 picker 选保存位置。
+  async doBackup(): Promise<void> {
+    const uiCtx = this.getUIContext();
+    const ctx = uiCtx.getHostContext();
+    if (!ctx) return;
+    // 默认文件名：vmrp_back_yyyyMMddHHmmss
+    const now = new Date();
+    const p = (n: number) => n.toString().padStart(2, '0');
+    const defaultName = `vmrp_backup_${now.getFullYear()}${p(now.getMonth() + 1)}${p(now.getDate())}${p(now.getHours())}${p(now.getMinutes())}${p(now.getSeconds())}`;
+    // 弹出文件名输入对话框
+    const prompt = uiCtx.getPromptAction();
+    const params: BackupNameDialogParams = {
+      fileName: defaultName,
+      onConfirm: async (name: string) => {
+        prompt.closeCustomDialog(contentNode);
+        await this.executeBackup(ctx, name);
+      },
+      onCancel: () => { prompt.closeCustomDialog(contentNode); }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(BackupNameDialogBuilder), params);
+    prompt.openCustomDialog(contentNode, {
+      alignment: DialogAlignment.Center,
+      autoCancel: true
+    });
+  }
+
+  private async executeBackup(ctx: common.Context, fileName: string): Promise<void> {
+    try {
+      const opt = new picker.DocumentSaveOptions();
+      opt.newFileNames = [fileName.toLowerCase().endsWith('.zip') ? fileName : `${fileName}.zip`];
+      opt.pickerMode = picker.DocumentPickerMode.DOWNLOAD;
+      const docPicker = new picker.DocumentViewPicker();
+      const uris = await docPicker.save(opt);
+      if (!uris || uris.length === 0) return; // 用户取消
+      const destUri = uris[0];
+      this.getUIContext().getPromptAction().showToast({ message: '正在备份...' });
+      const ok = await VmrpAssets.backupToZip(ctx, destUri, fileName);
+      this.getUIContext().getPromptAction().showToast({
+        message: ok ? '备份成功' : '备份失败',
+        duration: 2500
+      });
+    } catch (e) {
+      console.error(`doBackup failed: ${JSON.stringify(e)}`);
+      this.getUIContext().getPromptAction().showToast({ message: '备份失败', duration: 2500 });
+    }
+  }
+
+  // 恢复数据二次确认。从 zip 解压覆盖到沙箱，会覆盖当前数据。
+  confirmRestore(): void {
+    this.getUIContext().showAlertDialog({
+      title: '恢复数据',
+      message: '将从备份文件恢复数据，当前的游戏、存档和缓存将被覆盖。确定继续吗？',
+      alignment: DialogAlignment.Center,
+      autoCancel: true,
+      primaryButton: {
+        value: '取消',
+        action: () => {}
+      },
+      secondaryButton: {
+        value: '选择备份文件',
+        fontColor: '#E94560',
+        action: async () => {
+          try {
+            const opt = new picker.DocumentSelectOptions();
+            opt.maxSelectNumber = 1;
+            opt.fileSuffixFilters = ['.zip'];
+            const docPicker = new picker.DocumentViewPicker();
+            const uris = await docPicker.select(opt);
+            if (!uris || uris.length === 0) return; // 用户取消
+            const srcUri = uris[0];
+            // 停引擎，避免恢复时文件冲突。
+            try { this.engine.stop(); } catch (e) {}
+            const ctx = this.getUIContext().getHostContext();
+            if (!ctx) return;
+            this.getUIContext().getPromptAction().showToast({ message: '正在恢复...' });
+            const ok = await VmrpAssets.restoreFromZip(ctx, srcUri);
+            this.getUIContext().getPromptAction().showToast({
+              message: ok ? '恢复成功，重启应用后生效' : '恢复失败',
+              duration: 2500
+            });
+          } catch (e) {
+            console.error(`doRestore failed: ${JSON.stringify(e)}`);
+            this.getUIContext().getPromptAction().showToast({ message: '恢复失败', duration: 2500 });
+          }
+        }
+      }
+    });
   }
 
   @Builder
@@ -686,7 +808,70 @@ export struct SettingsPage {
           .backgroundColor('#1A1A2E')
           .borderRadius(16)
 
+          ListItemGroup({ header: this.sectionHeader('数据管理') }) {
+            ListItem() {
+              Column() {
+                Button('备份数据')
+                  .width('100%')
+                  .height(44)
+                  .fontSize(16)
+                  .fontColor('#FFFFFF')
+                  .backgroundColor('#1A1A2E')
+                  .borderRadius(12)
+                  .onClick(() => {
+                    this.doBackup();
+                  })
+                Text('将游戏、存档和缓存打包为 zip 保存到下载目录')
+                  .fontSize(12)
+                  .fontColor('#6666AA')
+                  .margin({ top: 6 })
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
+            }
+            .padding({ left: 16, right: 16, top: 10, bottom: 4 })
+
+            ListItem() {
+              Column() {
+                Button('恢复数据')
+                  .width('100%')
+                  .height(44)
+                  .fontSize(16)
+                  .fontColor('#FFFFFF')
+                  .backgroundColor('#1A1A2E')
+                  .borderRadius(12)
+                  .onClick(() => {
+                    this.confirmRestore();
+                  })
+                Text('从 zip 文件导入文件到内存卡(沙箱),同名覆盖')
+                  .fontSize(12)
+                  .fontColor('#6666AA')
+                  .margin({ top: 6 })
+              }
+              .width('100%')
+              .alignItems(HorizontalAlign.Start)
+            }
+            .padding({ left: 16, right: 16, top: 4, bottom: 10 })
+          }
+          .divider({ strokeWidth: 0.5, color: '#2A2A4E', startMargin: 16, endMargin: 16 })
+          .backgroundColor('#1A1A2E')
+          .borderRadius(16)
+
           ListItemGroup({ header: this.sectionHeader('') }) {
+            ListItem() {
+              Button('清空游戏文件')
+                .width('100%')
+                .height(48)
+                .fontSize(16)
+                .fontColor('#E94560')
+                .backgroundColor('#1A1A2E')
+                .borderRadius(12)
+                .onClick(() => {
+                  this.confirmClearFiles();
+                })
+            }
+            .padding({ left: 16, right: 16, top: 8, bottom: 4 })
+
             ListItem() {
               Button('恢复默认设置')
                 .width('100%')
@@ -699,7 +884,7 @@ export struct SettingsPage {
                   this.resetDefaults();
                 })
             }
-            .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+            .padding({ left: 16, right: 16, top: 4, bottom: 8 })
           }
           .backgroundColor(Color.Transparent)
         }
@@ -724,4 +909,54 @@ export struct SettingsPage {
 @Builder
 export function SettingsBuilder() {
   SettingsPage()
+}
+
+// === 备份文件名输入对话框 ===
+interface BackupNameDialogParams {
+  fileName: string;
+  onConfirm: (name: string) => void;
+  onCancel: () => void;
+}
+
+@Builder
+function BackupNameDialogBuilder($$: BackupNameDialogParams) {
+  Column() {
+    Text('备份文件名')
+      .fontSize(17)
+      .fontColor('#FFFFFF')
+      .fontWeight(FontWeight.Medium)
+      .margin({ top: 20, bottom: 6 })
+    Text('将保存为 zip 文件到下载目录，同名文件将被覆盖')
+      .fontSize(12)
+      .fontColor('#8888AA')
+      .margin({ bottom: 14 })
+    TextInput({ text: $$.fileName })
+      .onChange((v: string) => { $$.fileName = v; })
+      .width('85%')
+      .height(44)
+      .fontSize(15)
+      .backgroundColor('#1A1A2E')
+      .fontColor('#FFFFFF')
+      .borderRadius(10)
+    Row() {
+      Button('取消')
+        .width(100)
+        .height(40)
+        .backgroundColor('#333355')
+        .fontColor('#CCCCCC')
+        .onClick(() => { $$.onCancel(); })
+      Button('备份')
+        .width(100)
+        .height(40)
+        .backgroundColor('#E94560')
+        .fontColor('#FFFFFF')
+        .onClick(() => { $$.onConfirm($$.fileName); })
+    }
+    .width('100%')
+    .justifyContent(FlexAlign.SpaceEvenly)
+    .margin({ top: 16, bottom: 20 })
+  }
+  .width('82%')
+  .backgroundColor('#16213E')
+  .borderRadius(16)
 }
