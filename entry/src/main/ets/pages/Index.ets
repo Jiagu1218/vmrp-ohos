@@ -1,8 +1,11 @@
 import { picker } from '@kit.CoreFileKit';
 import { abilityAccessCtrl } from '@kit.AbilityKit';
-import { NodeContent, ComponentContent, AppStorageV2 } from '@kit.ArkUI';
-import { display } from '@kit.ArkUI';
+import { NodeContent, ComponentContent, AppStorageV2, display } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
+import {
+  HdsNavigation, HdsNavigationTitleMode,
+  ScrollEffectType, hdsMaterial
+} from '@kit.UIDesignKit';
 import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
   MR_KEY_UP, MR_KEY_DOWN, MR_KEY_LEFT, MR_KEY_RIGHT,
@@ -13,6 +16,8 @@ import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { gAbilityContext } from '../entryability/EntryAbility';
 import { AvoidData } from '../common/AvoidData';
 import { HapticManager } from '../common/HapticManager';
+import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
+import { GlassPanel } from '../common/GlassPanel';
 
 interface ScreenShellParam {
   isTop: boolean;
@@ -40,9 +45,19 @@ interface GridRowBreakpoints {
   reference: BreakpointsReference;
 }
 
+interface EditDialogContentBuilderParams {
+  editText: string;
+  onTextChange: (v: string) => void;
+  onSubmit: (text: string) => void;
+  onCancel: () => void;
+}
+
+interface EditDialogOptions {
+  alignment: DialogAlignment;
+  autoCancel: boolean;
+}
+
 const SHELL_COLOR = '#1A1A2E';
-const HINGE_COLOR = '#2D2D44';
-const ACCENT_COLOR = '#E94560';
 const SCREEN_BG = '#000000';
 const DPAD_BG = '#16213E';
 const DPAD_ARROW = '#E94560';
@@ -52,6 +67,7 @@ const NUMKEY_TEXT = '#A7A7C4';
 const STATUS_TEXT = '#8888AA';
 const RUN_DOT = '#4ADE80';
 const SHELL_BORDER = '#2A2A4E';
+const ACCENT_COLOR = '#E94560';
 
 @ComponentV2
 struct EditDialogContent {
@@ -108,6 +124,60 @@ struct EditDialogContent {
 }
 
 @ComponentV2
+struct DPadBtn {
+  @Param label: string = '';
+  @Param labelFontSize: number = 14;
+  @Param labelFontColor: ResourceColor = DPAD_ARROW;
+  @Param btnSize: number = 44;
+  @Param isRound: boolean = false;
+  @Param keyVal: number = 0;
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+
+  build() {
+    Column() {
+      ImmersiveLightWrapper({ radius: this.isRound ? this.btnSize / 2 : 8, lightHeight: 80 }) {
+        Stack() {
+          Text(this.label)
+            .fontSize(this.labelFontSize)
+            .fontColor(this.labelFontColor)
+            .fontWeight(FontWeight.Bold)
+        }
+        .width(this.btnSize)
+        .height(this.btnSize)
+        .borderRadius(this.isRound ? this.btnSize / 2 : 8)
+        .backgroundColor(Color.Transparent)
+      }
+    }
+    .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
+  }
+}
+
+@ComponentV2
+struct SoftKeyBtn {
+  @Param chipLabel: string = '';
+  @Param keyVal: number = 0;
+  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
+  @Param softKeyH: number = 28;
+
+  build() {
+    Column() {
+      ImmersiveLightWrapper({ radius: this.softKeyH / 2, lightHeight: 80 }) {
+        Stack() {
+          Text(this.chipLabel)
+            .fontSize(12)
+            .fontColor('#CCCCCC')
+            .fontWeight(FontWeight.Medium)
+        }
+        .height(this.softKeyH)
+        .padding({ left: 16, right: 16 })
+        .backgroundColor(Color.Transparent)
+      }
+    }
+    .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
+  }
+}
+
+@ComponentV2
 struct DPadWithFunc {
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
   @Param dpadSize: number = 130;
@@ -115,99 +185,48 @@ struct DPadWithFunc {
 
   build() {
     Column({ space: 14 }) {
-      Row() {
-        Stack() {
-          Text('左软')
-            .fontSize(12)
-            .fontColor('#CCCCCC')
-            .fontWeight(FontWeight.Medium)
-        }
-        .height(this.softKeyH)
-        .padding({ left: 16, right: 16 })
-        .borderRadius(this.softKeyH / 2)
-        .backgroundColor(SOFTKEY_BG)
-        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e))
+      Row({ space: 12 }) {
+        SoftKeyBtn({ chipLabel: '左软', keyVal: MR_KEY_SOFTLEFT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
 
-        Stack() {
-          Text('▲')
-            .fontSize(this.dpadSize * 0.2)
-            .fontColor(DPAD_ARROW)
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(this.dpadSize * 0.36)
-        .height(this.dpadSize * 0.36)
-        .borderRadius(8)
-        .backgroundColor(DPAD_BG)
-        .margin({ left: 24, right: 24 })
-        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_UP, e))
+        DPadBtn({
+          label: '▲', labelFontSize: this.dpadSize * 0.2, labelFontColor: DPAD_ARROW,
+          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_UP,
+          onKeyTouch: this.onKeyTouch
+        })
 
-        Stack() {
-          Text('右软')
-            .fontSize(12)
-            .fontColor('#CCCCCC')
-            .fontWeight(FontWeight.Medium)
-        }
-        .height(this.softKeyH)
-        .padding({ left: 16, right: 16 })
-        .borderRadius(this.softKeyH / 2)
-        .backgroundColor(SOFTKEY_BG)
-        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e))
+        SoftKeyBtn({ chipLabel: '右软', keyVal: MR_KEY_SOFTRIGHT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
       }
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
 
       Row({ space: 16 }) {
-        Stack() {
-          Text('◀')
-            .fontSize(this.dpadSize * 0.17)
-            .fontColor(DPAD_ARROW)
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(this.dpadSize * 0.36)
-        .height(this.dpadSize * 0.36)
-        .borderRadius(8)
-        .backgroundColor(DPAD_BG)
-        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_LEFT, e))
+        DPadBtn({
+          label: '◀', labelFontSize: this.dpadSize * 0.17, labelFontColor: DPAD_ARROW,
+          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_LEFT,
+          onKeyTouch: this.onKeyTouch
+        })
 
-        Stack() {
-          Text('OK')
-            .fontSize(14)
-            .fontColor('#FFFFFF')
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(this.dpadSize * 0.28)
-        .height(this.dpadSize * 0.28)
-        .borderRadius(this.dpadSize * 0.14)
-        .backgroundColor(ACCENT_COLOR)
-        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SELECT, e))
+        DPadBtn({
+          label: 'OK', labelFontSize: 14, labelFontColor: '#FFFFFF',
+          btnSize: this.dpadSize * 0.28,
+          isRound: true, keyVal: MR_KEY_SELECT, onKeyTouch: this.onKeyTouch
+        })
 
-        Stack() {
-          Text('▶')
-            .fontSize(this.dpadSize * 0.17)
-            .fontColor(DPAD_ARROW)
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(this.dpadSize * 0.36)
-        .height(this.dpadSize * 0.36)
-        .borderRadius(8)
-        .backgroundColor(DPAD_BG)
-        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_RIGHT, e))
+        DPadBtn({
+          label: '▶', labelFontSize: this.dpadSize * 0.17, labelFontColor: DPAD_ARROW,
+          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_RIGHT,
+          onKeyTouch: this.onKeyTouch
+        })
       }
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
 
       Row() {
-        Stack() {
-          Text('▼')
-            .fontSize(this.dpadSize * 0.2)
-            .fontColor(DPAD_ARROW)
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(this.dpadSize * 0.36)
-        .height(this.dpadSize * 0.36)
-        .borderRadius(8)
-        .backgroundColor(DPAD_BG)
-        .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_DOWN, e))
+        DPadBtn({
+          label: '▼', labelFontSize: this.dpadSize * 0.2, labelFontColor: DPAD_ARROW,
+          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_DOWN,
+          onKeyTouch: this.onKeyTouch
+        })
       }
       .justifyContent(FlexAlign.Center)
     }
@@ -216,60 +235,39 @@ struct DPadWithFunc {
 }
 
 @ComponentV2
-struct SoftKeys {
+struct NumPadItem {
+  @Param itemKey: number = 0;
+  @Param btnSizeVal: number = 36;
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
 
   build() {
-    Row({ space: 10 }) {
-      Stack() {
-        Text('左软')
-          .fontSize(12)
-          .fontColor('#CCCCCC')
-          .fontWeight(FontWeight.Medium)
+    Column() {
+      ImmersiveLightWrapper({ radius: this.btnSizeVal / 2, lightHeight: 60 }) {
+        Stack() {
+          Text(`${this.itemKey === MR_KEY_STAR ? '✱' : this.itemKey === MR_KEY_POUND ? '#' : this.itemKey}`)
+            .fontSize(this.btnSizeVal * 0.4)
+            .fontColor(NUMKEY_TEXT)
+            .fontWeight(FontWeight.Medium)
+        }
+        .width(this.btnSizeVal)
+        .height(this.btnSizeVal)
+        .backgroundColor(Color.Transparent)
       }
-      .height(26)
-      .padding({ left: 16, right: 16 })
-      .borderRadius(13)
-      .backgroundColor(SOFTKEY_BG)
-      .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTLEFT, e))
-
-      Stack() {
-        Text('右软')
-          .fontSize(12)
-          .fontColor('#CCCCCC')
-          .fontWeight(FontWeight.Medium)
-      }
-      .height(26)
-      .padding({ left: 16, right: 16 })
-      .borderRadius(13)
-      .backgroundColor(SOFTKEY_BG)
-      .onTouch((e: TouchEvent) => this.onKeyTouch(MR_KEY_SOFTRIGHT, e))
     }
-    .justifyContent(FlexAlign.Center)
+    .onTouch((e: TouchEvent) => this.onKeyTouch(this.itemKey, e))
   }
 }
 
 @ComponentV2
 struct NumPad {
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param btnSize: number = 36;
+  @Param btnSizeVal: number = 36;
 
   build() {
     Grid() {
       ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, MR_KEY_STAR, 0, MR_KEY_POUND], (k: number) => {
         GridItem() {
-          Stack() {
-            Text(`${k === MR_KEY_STAR ? '✱' : k === MR_KEY_POUND ? '#' : k}`)
-              .fontSize(this.btnSize * 0.4)
-              .fontColor(NUMKEY_TEXT)
-              .fontWeight(FontWeight.Medium)
-          }
-          .width(this.btnSize)
-          .height(this.btnSize)
-          .borderRadius(this.btnSize / 2)
-          .backgroundColor(NUMKEY_BG)
-          .border({ width: 1, color: SHELL_BORDER })
-          .onTouch((e: TouchEvent) => this.onKeyTouch(k, e))
+          NumPadItem({ itemKey: k, btnSizeVal: this.btnSizeVal, onKeyTouch: this.onKeyTouch })
         }
       }, (k: number) => `num-${k}`)
     }
@@ -278,44 +276,47 @@ struct NumPad {
     .columnsGap(10)
     .rowsGap(10)
     .width('45%')
-    .height(this.btnSize * 4 + 50)
+    .height(this.btnSizeVal * 4 + 50)
   }
 }
 
 @ComponentV2
 struct TopScreen {
   @Param nodeContent: NodeContent = new NodeContent();
-  @Param status: string = '';
-  @Param running: boolean = false;
+  @Param statusText: string = '';
+  @Param runningState: boolean = false;
   @Param scaleVal: number = 1;
 
   build() {
     Column() {
       Stack() {
         Stack() {
-          ContentSlot(this.nodeContent)
+          Stack() {
+            ContentSlot(this.nodeContent)
+          }
+          .width(240)
+          .height(320)
+          .backgroundColor(SCREEN_BG)
+          .borderRadius(6)
+          .clip(true)
+          .scale({ x: this.scaleVal, y: this.scaleVal })
+          .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
         }
-        .width(240)
-        .height(320)
-        .backgroundColor(SCREEN_BG)
-        .borderRadius(6)
+        .width(240 * this.scaleVal)
+        .height(320 * this.scaleVal)
+        .alignContent(Alignment.Center)
         .clip(true)
-        .scale({ x: this.scaleVal, y: this.scaleVal })
-        .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
       }
-      .width(240 * this.scaleVal)
-      .height(320 * this.scaleVal)
-      .alignContent(Alignment.Center)
-      .clip(true)
+      .width('100%')
 
       Row() {
         Row()
           .width(6)
           .height(6)
           .borderRadius(3)
-          .backgroundColor(this.running ? RUN_DOT : '#555577')
+          .backgroundColor(this.runningState ? RUN_DOT : '#555577')
           .margin({ right: 6 })
-        Text(this.status)
+        Text(this.statusText)
           .fontSize(10)
           .fontColor(STATUS_TEXT)
           .maxLines(1)
@@ -331,45 +332,73 @@ struct TopScreen {
 }
 
 @ComponentV2
+struct ActionChip {
+  @Param chipLabel: string = '';
+  @Param onChipClick: () => void = () => {};
+
+  build() {
+    Column() {
+      ImmersiveLightWrapper({ radius: 13, lightHeight: 80 }) {
+        Stack() {
+          Text(this.chipLabel)
+            .fontSize(11)
+            .fontColor('#CCCCCC')
+        }
+        .height(26)
+        .padding({ left: 14, right: 14 })
+        .backgroundColor(Color.Transparent)
+      }
+    }
+    .onClick(() => { HapticManager.performClick(); this.onChipClick(); })
+  }
+}
+
+@ComponentV2
+struct StatusBarChip {
+  @Param chipLabel: string = '';
+  @Param chipFontColor: ResourceColor = NUMKEY_TEXT;
+  @Param chipBgColor: ResourceColor = NUMKEY_BG;
+  @Param onChipClick: () => void = () => {};
+
+  build() {
+    Column() {
+      ImmersiveLightWrapper({ radius: 9, lightHeight: 60 }) {
+        Stack() {
+          Text(this.chipLabel)
+            .fontSize(9)
+            .fontColor(this.chipFontColor)
+        }
+        .height(18)
+        .padding({ left: 6, right: 6 })
+        .backgroundColor(Color.Transparent)
+      }
+    }
+    .margin({ right: 4 })
+    .onClick(() => { HapticManager.performClick(); this.onChipClick(); })
+  }
+}
+
+@ComponentV2
 struct BottomControls {
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
   @Param onPickMrp: () => void = () => {};
   @Param onStartDefault: () => void = () => {};
-  @Param running: boolean = false;
-  @Param dpadSize: number = 110;
-  @Param btnSize: number = 30;
-  @Param showNumPad: boolean = true;
+  @Param runningState: boolean = false;
+  @Param dpadSizeVal: number = 110;
+  @Param btnSizeVal: number = 30;
+  @Param showNumPadVal: boolean = true;
 
   build() {
     Column() {
-      DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: this.dpadSize })
+      DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: this.dpadSizeVal })
 
-      if (this.showNumPad) {
-        NumPad({ onKeyTouch: this.onKeyTouch, btnSize: this.btnSize })
+      if (this.showNumPadVal) {
+        NumPad({ onKeyTouch: this.onKeyTouch, btnSizeVal: this.btnSizeVal })
       }
 
       Row({ space: 8 }) {
-        Stack() {
-          Text('选择MRP')
-            .fontSize(11)
-            .fontColor('#CCCCCC')
-        }
-        .height(26)
-        .padding({ left: 14, right: 14 })
-        .borderRadius(13)
-        .backgroundColor(SOFTKEY_BG)
-        .onClick(() => { HapticManager.performClick(); this.onPickMrp(); })
-
-        Stack() {
-          Text('启动默认')
-            .fontSize(11)
-            .fontColor('#CCCCCC')
-        }
-        .height(26)
-        .padding({ left: 14, right: 14 })
-        .borderRadius(13)
-        .backgroundColor(SOFTKEY_BG)
-        .onClick(() => { HapticManager.performClick(); this.onStartDefault(); })
+        ActionChip({ chipLabel: '选择MRP', onChipClick: this.onPickMrp })
+        ActionChip({ chipLabel: '启动默认', onChipClick: this.onStartDefault })
       }
       .padding({ top: 4, bottom: 4 })
     }
@@ -383,16 +412,16 @@ struct BottomControls {
 @ComponentV2
 struct PhoneControls {
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param running: boolean = false;
-  @Param showNumPad: boolean = true;
+  @Param runningState: boolean = false;
+  @Param showNumPadVal: boolean = true;
 
   build() {
     Column({ space: 6 }) {
       Row() {
         DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: 110 })
 
-        if (this.showNumPad) {
-          NumPad({ onKeyTouch: this.onKeyTouch, btnSize: 30 })
+        if (this.showNumPadVal) {
+          NumPad({ onKeyTouch: this.onKeyTouch, btnSizeVal: 30 })
         }
       }
       .width('100%')
@@ -407,12 +436,12 @@ struct PhoneControls {
 @Entry
 @ComponentV2
 struct Index {
-  @Local status: string = '未启动';
-  @Local running: boolean = false;
+  @Local statusText: string = '未启动';
+  @Local runningState: boolean = false;
   @Local editText: string = '';
   @Local currentBp: string = 'sm';
   @Local showControls: boolean = true;
-  @Local showNumPad: boolean = true;
+  @Local showNumPadVal: boolean = true;
   @Local isFoldable: boolean = false;
   @Local foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
   @Local screenAreaW: number = 240;
@@ -466,21 +495,21 @@ struct Index {
 
   async bootstrap(): Promise<void> {
     try {
-      this.status = '正在加载...';
+      this.statusText = '正在加载...';
       await this.engine.init();
       const ctx = gAbilityContext ?? this.getUIContext().getHostContext();
       if (!ctx) {
-        this.status = '初始化失败';
+        this.statusText = '初始化失败';
         return;
       }
-      this.status = '准备资源...';
+      this.statusText = '准备资源...';
       const workDir = await VmrpAssets.ensureRuntime(ctx);
       let ok = this.engine.loadLib('libvmrp.so');
       if (!ok) {
         ok = this.engine.loadLib(`${ctx.bundleCodeDir}/lib/arm64/libvmrp.so`);
       }
       if (!ok) {
-        this.status = '加载失败';
+        this.statusText = '加载失败';
         return;
       }
       this.engine.setScreen(240, 320);
@@ -503,7 +532,6 @@ struct Index {
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }
-      // 预请求加速度传感器权限，C 侧 OH_Sensor_Subscribe 需要此权限。
       try {
         const atManager = abilityAccessCtrl.createAtManager();
         await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.ACCELEROMETER']);
@@ -515,11 +543,11 @@ struct Index {
         this.openEditDialog();
       });
       this.engine.createSurfaceNode(this.nodeContent);
-      this.status = '启动中...';
+      this.statusText = '启动中...';
       await this.startDefault();
     } catch (e) {
       const err = e as Error;
-      this.status = `失败: ${err?.message ?? String(e)}`;
+      this.statusText = `失败: ${err?.message ?? String(e)}`;
     }
   }
 
@@ -550,18 +578,18 @@ struct Index {
     try {
       const ctx = this.getUIContext().getHostContext();
       if (!ctx) {
-        this.status = '无法获取上下文';
+        this.statusText = '无法获取上下文';
         return;
       }
       const workDir = await VmrpAssets.ensureRuntime(ctx);
       const dst = `${VmrpAssets.getMythroadDir(ctx)}/dsm_gm.mrp`;
-      this.status = '启动中';
+      this.statusText = '启动中';
       const r = this.engine.start(dst, 'start.mr', '_dsm');
-      this.running = this.engine.isRunning();
-      this.status = `${r}, ${this.running ? '运行中' : '已停止'}`;
+      this.runningState = this.engine.isRunning();
+      this.statusText = `${r}, ${this.runningState ? '运行中' : '已停止'}`;
     } catch (e) {
       const err = e as Error;
-      this.status = `失败: ${err?.message ?? String(e)}`;
+      this.statusText = `失败: ${err?.message ?? String(e)}`;
     }
   }
 
@@ -575,16 +603,16 @@ struct Index {
       if (!uris || uris.length === 0) return;
       const ctx = this.getUIContext().getHostContext();
       if (!ctx) {
-        this.status = '无法获取上下文';
+        this.statusText = '无法获取上下文';
         return;
       }
       const dst = await VmrpAssets.importMrp(ctx, uris[0]);
-      this.status = `启动: ${dst}`;
+      this.statusText = `启动: ${dst}`;
       const r = this.engine.start(dst, 'start.mr', '_dsm');
-      this.running = this.engine.isRunning();
-      this.status = `${r}, ${this.running ? '运行中' : '已停止'}`;
+      this.runningState = this.engine.isRunning();
+      this.statusText = `${r}, ${this.runningState ? '运行中' : '已停止'}`;
     } catch (e) {
-      this.status = `选择失败: ${JSON.stringify(e)}`;
+      this.statusText = `选择失败: ${JSON.stringify(e)}`;
     }
   }
 
@@ -609,8 +637,8 @@ struct Index {
       if ($$.isTop) {
         TopScreen({
           nodeContent: this.nodeContent,
-          status: this.status,
-          running: this.running,
+          statusText: this.statusText,
+          runningState: this.runningState,
           scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / 240, (this.dualAreaH * 0.5 - 36) / 320)
         })
       } else {
@@ -620,10 +648,10 @@ struct Index {
               onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
               onPickMrp: () => this.pickAndStart(),
               onStartDefault: () => this.startDefault(),
-              running: this.running,
-              dpadSize: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
-              btnSize: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36),
-              showNumPad: this.showNumPad
+              runningState: this.runningState,
+              dpadSizeVal: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
+              btnSizeVal: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36),
+              showNumPadVal: this.showNumPadVal
             })
           }
         }
@@ -636,10 +664,6 @@ struct Index {
     .height('100%')
     .alignItems(HorizontalAlign.Center)
     .justifyContent(FlexAlign.Center)
-    .backgroundColor(SHELL_COLOR)
-    .borderRadius(16)
-    .padding(12)
-    .border({ width: 1, color: SHELL_BORDER })
   }
 
   @Builder
@@ -671,94 +695,62 @@ struct Index {
           .width(6)
           .height(6)
           .borderRadius(3)
-          .backgroundColor(this.running ? RUN_DOT : '#555577')
+          .backgroundColor(this.runningState ? RUN_DOT : '#555577')
           .margin({ right: 6 })
-        Text(this.status)
+        Text(this.statusText)
           .fontSize(10)
           .fontColor(STATUS_TEXT)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        Stack() {
-          Text('MRP')
-            .fontSize(9)
-            .fontColor(NUMKEY_TEXT)
-        }
-        .height(18)
-        .padding({ left: 6, right: 6 })
-        .borderRadius(9)
-        .backgroundColor(NUMKEY_BG)
-        .margin({ right: 4 })
-        .onClick(() => { HapticManager.performClick(); this.pickAndStart(); })
-        Stack() {
-          Text('默认')
-            .fontSize(9)
-            .fontColor(NUMKEY_TEXT)
-        }
-        .height(18)
-        .padding({ left: 6, right: 6 })
-        .borderRadius(9)
-        .backgroundColor(NUMKEY_BG)
-        .margin({ right: 4 })
-        .onClick(() => { HapticManager.performClick(); this.startDefault(); })
-        Stack() {
-          Text('设置')
-            .fontSize(9)
-            .fontColor(NUMKEY_TEXT)
-        }
-        .height(18)
-        .padding({ left: 6, right: 6 })
-        .borderRadius(9)
-        .backgroundColor(NUMKEY_BG)
-        .margin({ right: 4 })
-        .onClick(() => { HapticManager.performClick(); this.navPathStack.pushPathByName('Settings', null); })
-        Stack() {
-          Text(this.showNumPad ? '数字' : '数字')
-            .fontSize(9)
-            .fontColor(this.showNumPad ? DPAD_ARROW : NUMKEY_TEXT)
-        }
-        .height(18)
-        .padding({ left: 6, right: 6 })
-        .borderRadius(9)
-        .backgroundColor(this.showNumPad ? DPAD_BG : NUMKEY_BG)
-        .margin({ right: 4 })
-        .onClick(() => { HapticManager.performClick(); this.showNumPad = !this.showNumPad; })
-        Stack() {
-          Text(this.showControls ? '收起' : '按键')
-            .fontSize(9)
-            .fontColor(DPAD_ARROW)
-        }
-        .height(18)
-        .padding({ left: 8, right: 8 })
-        .borderRadius(9)
-        .backgroundColor(DPAD_BG)
-        .onClick(() => { HapticManager.performClick(); this.showControls = !this.showControls; })
+        StatusBarChip({ chipLabel: 'MRP', onChipClick: () => this.pickAndStart() })
+        StatusBarChip({ chipLabel: '默认', onChipClick: () => this.startDefault() })
+        StatusBarChip({ chipLabel: '设置', onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
+        StatusBarChip({
+          chipLabel: '数字',
+          chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
+          onChipClick: () => { this.showNumPadVal = !this.showNumPadVal; }
+        })
+        StatusBarChip({
+          chipLabel: this.showControls ? '收起' : '按键',
+          chipFontColor: DPAD_ARROW,
+          onChipClick: () => { this.showControls = !this.showControls; }
+        })
       }
       .width('100%')
       .padding({ left: 8, right: 8, top: 4, bottom: 4 })
 
       if (this.showControls) {
-        Scroll() {
-          Column() {
-            PhoneControls({
-              onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
-              running: this.running,
-              showNumPad: this.showNumPad
-            })
+        Column() {
+          GlassPanel({
+            blurRadius: 30,
+            panelBorderRadius: 16,
+            panelBorderColor: SHELL_BORDER,
+            panelBgColor: '#0A0A1ECC',
+            panelBorderWidth: 1
+          }) {
+            Scroll() {
+              Column() {
+                PhoneControls({
+                  onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+                  runningState: this.runningState,
+                  showNumPadVal: this.showNumPadVal
+                })
+              }
+              .width('100%')
+              .padding({ top: 4, bottom: 4 })
+            }
+            .constraintSize({ maxHeight: '46%' })
+            .width('100%')
+            .scrollBar(BarState.Off)
           }
-          .width('100%')
-          .backgroundColor(SHELL_COLOR)
-          .borderRadius({ topLeft: 16, topRight: 16 })
-          .border({ width: 1, color: SHELL_BORDER })
-          .padding({ top: 4, bottom: 4 })
         }
-        .constraintSize({ maxHeight: '46%' })
         .width('100%')
-        .scrollBar(BarState.Off)
       }
     }
     .width('100%')
     .height('100%')
+    .padding({ bottom: this.avoidData.bottomVp })
   }
 
   @Builder
@@ -789,9 +781,9 @@ struct Index {
             .width(6)
             .height(6)
             .borderRadius(3)
-            .backgroundColor(this.running ? RUN_DOT : '#555577')
+            .backgroundColor(this.runningState ? RUN_DOT : '#555577')
             .margin({ right: 6 })
-          Text(this.status)
+          Text(this.statusText)
             .fontSize(10)
             .fontColor(STATUS_TEXT)
             .maxLines(1)
@@ -810,65 +802,56 @@ struct Index {
         this.screenAreaH = newVal.height as number;
       })
 
-      Scroll() {
-        Column() {
-          Row() {
-            DPadWithFunc({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), dpadSize: Math.min(this.screenAreaW * 0.22, 120) })
+      Column() {
+        GlassPanel({
+          blurRadius: 30,
+          panelBorderRadius: 16,
+          panelBorderColor: SHELL_BORDER,
+          panelBgColor: '#0A0A1ECC',
+          panelBorderWidth: 1
+        }) {
+          Scroll() {
+            Column() {
+              Row() {
+                DPadWithFunc({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), dpadSize: Math.min(this.screenAreaW * 0.22, 120) })
 
-            if (this.showNumPad) {
-              NumPad({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), btnSize: Math.min(this.screenAreaW * 0.07, 34) })
+                if (this.showNumPadVal) {
+                  NumPad({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), btnSizeVal: Math.min(this.screenAreaW * 0.07, 34) })
+                }
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .alignItems(VerticalAlign.Center)
+
+              Row({ space: 8 }) {
+                ActionChip({ chipLabel: '选择MRP', onChipClick: () => this.pickAndStart() })
+                ActionChip({ chipLabel: '启动默认', onChipClick: () => this.startDefault() })
+                Column() {
+                  ImmersiveLightWrapper({ radius: 13, lightHeight: 80 }) {
+                    Stack() {
+                      Text(this.showNumPadVal ? '收起数字' : '数字')
+                        .fontSize(11)
+                        .fontColor(this.showNumPadVal ? DPAD_ARROW : '#CCCCCC')
+                    }
+                    .height(26)
+                    .padding({ left: 14, right: 14 })
+                    .backgroundColor(Color.Transparent)
+                  }
+                }
+                .onClick(() => { HapticManager.performClick(); this.showNumPadVal = !this.showNumPadVal; })
+              }
+              .padding({ top: 4, bottom: 4 })
             }
+            .width('100%')
+            .alignItems(HorizontalAlign.Center)
+            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
           }
           .width('100%')
-          .justifyContent(FlexAlign.Center)
-          .alignItems(VerticalAlign.Center)
-
-          Row({ space: 8 }) {
-            Stack() {
-              Text('选择MRP')
-                .fontSize(11)
-                .fontColor('#CCCCCC')
-            }
-            .height(26)
-            .padding({ left: 14, right: 14 })
-            .borderRadius(13)
-            .backgroundColor(SOFTKEY_BG)
-            .onClick(() => { HapticManager.performClick(); this.pickAndStart(); })
-
-            Stack() {
-              Text('启动默认')
-                .fontSize(11)
-                .fontColor('#CCCCCC')
-            }
-            .height(26)
-            .padding({ left: 14, right: 14 })
-            .borderRadius(13)
-            .backgroundColor(SOFTKEY_BG)
-            .onClick(() => { HapticManager.performClick(); this.startDefault(); })
-
-            Stack() {
-              Text(this.showNumPad ? '收起数字' : '数字')
-                .fontSize(11)
-                .fontColor(this.showNumPad ? DPAD_ARROW : '#CCCCCC')
-            }
-            .height(26)
-            .padding({ left: 14, right: 14 })
-            .borderRadius(13)
-            .backgroundColor(this.showNumPad ? DPAD_BG : SOFTKEY_BG)
-            .onClick(() => { HapticManager.performClick(); this.showNumPad = !this.showNumPad; })
-          }
-          .padding({ top: 4, bottom: 4 })
+          .layoutWeight(1)
+          .scrollBar(BarState.Off)
         }
-        .width('100%')
-        .alignItems(HorizontalAlign.Center)
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
       }
       .width('100%')
-      .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .backgroundColor(SHELL_COLOR)
-      .borderRadius({ topLeft: 16, topRight: 16 })
-      .border({ width: 1, color: SHELL_BORDER })
     }
     .width('100%')
     .height('100%')
@@ -883,7 +866,19 @@ struct Index {
     }) {
       GridCol({ span: this.topSpan }) {
         Column() {
-          this.screenShell({ isTop: true })
+          Column() {
+            GlassPanel({
+              blurRadius: 20,
+              panelBorderRadius: 16,
+              panelBorderColor: SHELL_BORDER,
+              panelBgColor: '#0A0A1ECC',
+              panelBorderWidth: 1
+            }) {
+              this.screenShell({ isTop: true })
+            }
+          }
+          .width('100%')
+          .height('100%')
         }
         .width('100%')
         .height('100%')
@@ -892,7 +887,19 @@ struct Index {
 
       GridCol({ span: this.bottomSpan }) {
         Column() {
-          this.screenShell({ isTop: false })
+          Column() {
+            GlassPanel({
+              blurRadius: 20,
+              panelBorderRadius: 16,
+              panelBorderColor: SHELL_BORDER,
+              panelBgColor: '#0A0A1ECC',
+              panelBorderWidth: 1
+            }) {
+              this.screenShell({ isTop: false })
+            }
+          }
+          .width('100%')
+          .height('100%')
         }
         .width('100%')
         .height('100%')
@@ -911,7 +918,7 @@ struct Index {
   }
 
   build() {
-    Navigation(this.navPathStack) {
+    HdsNavigation(this.navPathStack) {
       Column() {
         if (this.isFoldable && (this.foldStatus === display.FoldStatus.FOLD_STATUS_EXPANDED ||
           this.foldStatus === display.FoldStatus.FOLD_STATUS_HALF_FOLDED)) {
@@ -925,13 +932,11 @@ struct Index {
       .width('100%')
       .height('100%')
       .backgroundColor('#0D0D1A')
-      .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP])
-      .padding({ bottom: this.avoidData.bottomVp })
     }
     .width('100%')
     .height('100%')
     .hideTitleBar(true)
-    .hideToolBar(true)
+    .titleMode(HdsNavigationTitleMode.MINI)
     .mode(NavigationMode.Stack)
   }
 }
@@ -944,16 +949,4 @@ function EditDialogContentBuilder($$: EditDialogContentBuilderParams) {
     onSubmit: $$.onSubmit,
     onCancel: $$.onCancel
   })
-}
-
-interface EditDialogContentBuilderParams {
-  editText: string;
-  onTextChange: (v: string) => void;
-  onSubmit: (text: string) => void;
-  onCancel: () => void;
-}
-
-interface EditDialogOptions {
-  alignment: DialogAlignment;
-  autoCancel: boolean;
 }
