@@ -8,6 +8,8 @@ export struct ImmersiveLightWrapper {
   @Param lightHeight: number = 100;
   @Param lightColor: ResourceColor = Color.White;
   @Param radius: number = 0;
+  @Param bgColor: ResourceColor = '#12FFFFFF';
+  @Param blurRadius: number = 24;
   @Local currentIntensity: number = 0;
   @Local lightIntensity: number = 2.5;
   @Local private fingerX: number = 0;
@@ -54,7 +56,7 @@ export struct ImmersiveLightWrapper {
     .clip(true)
     .clipShape(new RectShape({ width: '100%', height: '100%', radius: this.radius }))
     .shadow({ radius: 36, color: '#10000000' })
-    .backgroundColor('#12FFFFFF')
+    .backgroundColor(this.bgColor)
     .visualEffect(
       new hdsEffect.HdsEffectBuilder()
         .pointLight({
@@ -62,7 +64,7 @@ export struct ImmersiveLightWrapper {
         })
         .buildEffect()
     )
-    .backdropBlur(24)
+    .backdropBlur(this.blurRadius)
     .borderRadius(this.radius)
     .border({ width: this.isDark ? 0.5 : 1, color: this.isDark ? '#65FFFFFF' : '#FFFFFF' })
     .overlay(this.lightTracker())
