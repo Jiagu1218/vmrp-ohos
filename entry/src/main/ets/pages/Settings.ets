@@ -20,6 +20,9 @@ const KEY_SCREEN_EFFECT_STRENGTH = 'screen_effect_strength';
 const KEY_BRIGHTNESS = 'brightness';
 const KEY_CONTRAST = 'contrast';
 const KEY_SATURATION = 'saturation';
+const KEY_SUBPIXEL_RENDER = 'subpixel_render';
+const KEY_GAMMA_CORRECT = 'gamma_correct';
+const KEY_DITHER = 'dither';
 const SENSITIVITY_DEFAULT = 1.0;
 const MEMORY_OPTIONS: SelectOption[] = [
   { value: '1 MB' }, { value: '2 MB' }, { value: '4 MB' },
@@ -36,17 +39,20 @@ const SHAKE_INTENSITY_OPTIONS: SelectOption[] = [
 ];
 const SHAKE_INTENSITY_VALUES: number[] = [0, 1, 2];
 const DISPLAY_FILTER_OPTIONS: SelectOption[] = [
-  { value: '原汁原味' }, { value: '柔和平滑' }, { value: '边缘抗锯齿' }, { value: '高级抗锯齿' }
+  { value: '原汁原味' }, { value: '柔和平滑' }, { value: '边缘抗锯齿' }, { value: '高级抗锯齿' }, { value: 'AI 超分' }
 ];
-const DISPLAY_FILTER_VALUES: number[] = [0, 1, 2, 3];
+const DISPLAY_FILTER_VALUES: number[] = [0, 1, 2, 3, 4];
 const SCREEN_EFFECT_OPTIONS: SelectOption[] = [
-  { value: '关闭' }, { value: 'CRT 扫描线' }, { value: 'LCD 网格' }
+  { value: '关闭' }, { value: '完整 CRT' }, { value: 'LCD 网格' }, { value: '仅扫描线' }
 ];
-const SCREEN_EFFECT_VALUES: number[] = [0, 1, 2];
+const SCREEN_EFFECT_VALUES: number[] = [0, 1, 2, 3];
 const SCREEN_EFFECT_STRENGTH_DEFAULT: number = 0.5;
 const BRIGHTNESS_DEFAULT: number = 0.0;
 const CONTRAST_DEFAULT: number = 1.0;
 const SATURATION_DEFAULT: number = 1.0;
+const SUBPIXEL_RENDER_DEFAULT: number = 0;
+const GAMMA_CORRECT_DEFAULT: number = 1;
+const DITHER_DEFAULT: number = 1;
 
 const CARD_RADIUS = 20;
 const ROW_H = 56;
@@ -196,6 +202,9 @@ export struct SettingsPage {
   @Local brightnessVal: number = BRIGHTNESS_DEFAULT;
   @Local contrastVal: number = CONTRAST_DEFAULT;
   @Local saturationVal: number = SATURATION_DEFAULT;
+  @Local subpixelRender: number = SUBPIXEL_RENDER_DEFAULT;
+  @Local gammaCorrect: number = GAMMA_CORRECT_DEFAULT;
+  @Local ditherEnabled: number = DITHER_DEFAULT;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -230,6 +239,9 @@ export struct SettingsPage {
       this.brightnessVal = pref.getSync(KEY_BRIGHTNESS, BRIGHTNESS_DEFAULT) as number;
       this.contrastVal = pref.getSync(KEY_CONTRAST, CONTRAST_DEFAULT) as number;
       this.saturationVal = pref.getSync(KEY_SATURATION, SATURATION_DEFAULT) as number;
+      this.subpixelRender = pref.getSync(KEY_SUBPIXEL_RENDER, SUBPIXEL_RENDER_DEFAULT) as number;
+      this.gammaCorrect = pref.getSync(KEY_GAMMA_CORRECT, GAMMA_CORRECT_DEFAULT) as number;
+      this.ditherEnabled = pref.getSync(KEY_DITHER, DITHER_DEFAULT) as number;
     } catch (_e) {
     }
   }
@@ -251,7 +263,10 @@ export struct SettingsPage {
       this.screenEffectStrength,
       this.brightnessVal,
       this.contrastVal,
-      this.saturationVal
+      this.saturationVal,
+      this.subpixelRender,
+      this.gammaCorrect,
+      this.ditherEnabled
     );
   }
 
@@ -264,6 +279,9 @@ export struct SettingsPage {
     pref.putSync(KEY_BRIGHTNESS, this.brightnessVal);
     pref.putSync(KEY_CONTRAST, this.contrastVal);
     pref.putSync(KEY_SATURATION, this.saturationVal);
+    pref.putSync(KEY_SUBPIXEL_RENDER, this.subpixelRender);
+    pref.putSync(KEY_GAMMA_CORRECT, this.gammaCorrect);
+    pref.putSync(KEY_DITHER, this.ditherEnabled);
     pref.flush();
     this.applyDisplayFilter();
   }
@@ -325,6 +343,9 @@ export struct SettingsPage {
     this.brightnessVal = BRIGHTNESS_DEFAULT;
     this.contrastVal = CONTRAST_DEFAULT;
     this.saturationVal = SATURATION_DEFAULT;
+    this.subpixelRender = SUBPIXEL_RENDER_DEFAULT;
+    this.gammaCorrect = GAMMA_CORRECT_DEFAULT;
+    this.ditherEnabled = DITHER_DEFAULT;
     const pref = this.getPref();
     if (!pref) return;
     pref.putSync(KEY_MEMORY, 1);
@@ -336,6 +357,9 @@ export struct SettingsPage {
     pref.putSync(KEY_BRIGHTNESS, BRIGHTNESS_DEFAULT);
     pref.putSync(KEY_CONTRAST, CONTRAST_DEFAULT);
     pref.putSync(KEY_SATURATION, SATURATION_DEFAULT);
+    pref.putSync(KEY_SUBPIXEL_RENDER, SUBPIXEL_RENDER_DEFAULT);
+    pref.putSync(KEY_GAMMA_CORRECT, GAMMA_CORRECT_DEFAULT);
+    pref.putSync(KEY_DITHER, DITHER_DEFAULT);
     pref.flush();
     this.applyDisplayFilter();
     const ctx = this.getUIContext().getHostContext();
@@ -508,7 +532,7 @@ export struct SettingsPage {
                     }
                   })
                 }
-                SDesc({ text: '原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线。即时生效。' })
+                SDesc({ text: '原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线，AI超分使用 FSRCNNX 锐化上采样。即时生效。' })
 
                 SDivider()
                 SRow({ label: '屏幕效果' }) {
@@ -522,7 +546,7 @@ export struct SettingsPage {
                     }
                   })
                 }
-                SDesc({ text: 'CRT扫描线模拟老式显像管电视，LCD网格模拟老式手机屏幕竖条纹。' })
+                SDesc({ text: '完整CRT模拟显像管电视（磷光余辉+荫罩+扫描线+桶形畸变），LCD网格模拟老式手机屏幕竖条纹，仅扫描线只加扫描线效果。' })
 
                 SDivider()
                 SSliderLabel({ label: '效果强度', valueText: `${this.screenEffectStrength.toFixed(2)}` })
@@ -553,6 +577,33 @@ export struct SettingsPage {
                 })
 
                 SDivider()
+                SRow({ label: '子像素渲染' }) {
+                  Toggle({ type: ToggleType.Switch, isOn: this.subpixelRender === 1 })
+                    .selectedColor($r('app.color.accent_color'))
+                    .switchPointColor('#FFFFFF')
+                    .onChange((isOn: boolean) => { this.subpixelRender = isOn ? 1 : 0; this.saveDisplayFilter(); })
+                }
+                SDesc({ text: '利用 LCD 子像素 RGB 排列提升文字和边缘的清晰度，在高分辨率屏幕上效果明显。' })
+
+                SDivider()
+                SRow({ label: 'Gamma 校正' }) {
+                  Toggle({ type: ToggleType.Switch, isOn: this.gammaCorrect === 1 })
+                    .selectedColor($r('app.color.accent_color'))
+                    .switchPointColor('#FFFFFF')
+                    .onChange((isOn: boolean) => { this.gammaCorrect = isOn ? 1 : 0; this.saveDisplayFilter(); })
+                }
+                SDesc({ text: '将 sRGB 伽马曲线应用于亮度/对比度/饱和度调整前，避免色彩偏移。建议保持开启。' })
+
+                SDivider()
+                SRow({ label: 'RGB565 抖动' }) {
+                  Toggle({ type: ToggleType.Switch, isOn: this.ditherEnabled === 1 })
+                    .selectedColor($r('app.color.accent_color'))
+                    .switchPointColor('#FFFFFF')
+                    .onChange((isOn: boolean) => { this.ditherEnabled = isOn ? 1 : 0; this.saveDisplayFilter(); })
+                }
+                SDesc({ text: 'RGB565 转 RGBA 时施加 Bayer 抖动，减少色带过渡的阶梯感。建议保持开启。' })
+
+                SDivider()
                 Column() {
                   Button('重置画面设置')
                     .width('100%')
@@ -563,13 +614,16 @@ export struct SettingsPage {
                     .borderRadius(8)
                     .border({ width: 1, color: $r('app.color.settings_reset_btn_border') })
                     .onClick(() => {
-                      this.displayFilterIndex = 0;
-                      this.screenEffectIndex = 0;
-                      this.screenEffectStrength = SCREEN_EFFECT_STRENGTH_DEFAULT;
-                      this.brightnessVal = BRIGHTNESS_DEFAULT;
-                      this.contrastVal = CONTRAST_DEFAULT;
-                      this.saturationVal = SATURATION_DEFAULT;
-                      this.saveDisplayFilter();
+                       this.displayFilterIndex = 0;
+                       this.screenEffectIndex = 0;
+                       this.screenEffectStrength = SCREEN_EFFECT_STRENGTH_DEFAULT;
+                       this.brightnessVal = BRIGHTNESS_DEFAULT;
+                       this.contrastVal = CONTRAST_DEFAULT;
+                       this.saturationVal = SATURATION_DEFAULT;
+                       this.subpixelRender = SUBPIXEL_RENDER_DEFAULT;
+                       this.gammaCorrect = GAMMA_CORRECT_DEFAULT;
+                       this.ditherEnabled = DITHER_DEFAULT;
+                       this.saveDisplayFilter();
                     })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 12 })

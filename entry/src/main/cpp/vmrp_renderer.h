@@ -1,11 +1,13 @@
 /*
- * vmrp_renderer.h - XComponent + EGL/GLES 屏幕渲染器
+ * vmrp_renderer.h - XComponent + EGL/GLES 多pass屏幕渲染器
  *
- * 把 vmrp 的 RGB565 屏幕缓冲（默认 240x320）转成 RGBA8888 纹理，通过
- * OpenGL ES 渲染到 XComponent 提供的 native window（EGLSurface）上。
+ * 3-pass FBO 渲染管线：
+ *   Pass1 (缩放): 源纹理 → FBO_A (含 Nearest/Bilinear/EPX/xBRZ/FSRCNNX)
+ *   Pass2 (后处理): FBO_A → FBO_B (亮度/对比度/饱和度/gamma/子像素/CRT/LCD)
+ *   Pass3 (输出): FBO_B → 屏幕 (copy + barrel distortion)
  *
- * 渲染时机：每次引擎线程 StepTimer/SendEvent 之后，若 ScreenDirty() 为真，
- * 则调用 Render() 重新上传纹理并绘制一帧。
+ * 源缓冲为 RGB565（默认 240x320），CPU 转 RGBA8888 后上传 GL 纹理。
+ * 渲染时机：引擎线程 StepTimer/SendEvent 后，若 ScreenDirty() 为真则调用 Render()。
  */
 #ifndef VMRP_RENDERER_H
 #define VMRP_RENDERER_H
@@ -19,65 +21,103 @@ public:
     VmrpRenderer() = default;
     ~VmrpRenderer();
 
-    // window 由 SurfaceHolder 的 OnSurfaceCreated 回调传入（OHNativeWindow*）。
-    // Created 时布局可能未完成（尺寸不可靠），只建 EGL context/surface；
-    // 最终尺寸由 OnSurfaceChanged → RebuildSurface 兜底（官方双回调分工）。
     int OnSurfaceCreated(void *window);
-    // OnSurfaceChanged(w,h) 回调时调用：重设 native window buffer geometry
-    // 并重建 EGL surface，纠正 Created 时拿到的布局中间态尺寸（如 384x384）。
-    // 必须在渲染线程（帧回调线程）调用，配合 g_render_mtx 保护。
     void RebuildSurface(int32_t w, int32_t h);
     void OnSurfaceDestroyed();
 
-    // 渲染一帧。src 是 RGB565 缓冲（screen_w * screen_h 个 uint16）。
-    // 若 src 为空或未就绪则返回 -1。
+    // RGB565 路径：src 是 screen_w * screen_h 个 uint16
     int Render(const uint16_t *src, int32_t screen_w, int32_t screen_h);
-    // 渲染一帧（RGBA8888 路径，src 已是 RGBA8888，直接上传纹理，无需转换）。
-    // 用于 async worker 模型：vmrp 内部 screen_lock 保证读屏线程安全。
+    // RGBA8888 路径：直接上传纹理
     int Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h);
 
     bool Ready() const { return egl_display_ != EGL_NO_DISPLAY && texture_ != 0; }
-    // 当前 EGL surface 像素尺寸（触屏坐标归一化用）。0 表示尚未就绪。
     int32_t SurfaceWidth() const { return surface_w_; }
     int32_t SurfaceHeight() const { return surface_h_; }
 
-    // 画面滤镜设置：运行时即时生效，无需重启引擎。
-    // filterType: 0=Nearest, 1=Bilinear, 2=EPX, 3=xBRZ
-    // screenEffect: 0=关闭, 1=CRT扫描线, 2=LCD网格
+    // 画面滤镜设置，运行时即时生效。
+    // filterType: 0=Nearest, 1=Bilinear, 2=EPX, 3=xBRZ, 4=FSRCNNX
+    // screenEffect: 0=关闭, 1=完整CRT, 2=LCD网格, 3=仅扫描线
     // screenEffectStrength: 0.0~1.0
     // brightness: -0.3~0.3, contrast: 0.5~2.0, saturation: 0.0~2.0
+    // subpixelRender: 0=关, 1=开
+    // gammaCorrect: 0=关, 1=开
+    // dither: 0=关, 1=开
     void SetDisplayFilter(int filterType, int screenEffect, float screenEffectStrength,
-                          float brightness, float contrast, float saturation);
+                          float brightness, float contrast, float saturation,
+                          int subpixelRender, int gammaCorrect, int dither);
 
 private:
-    int InitGL();   // 编译 shader、生成纹理/vao
+    int InitGL();
     void DestroyGL();
-    void ApplyFilterUniforms();  // 每帧渲染前设置滤镜 uniform + texture filter
-    void UpdateTextureFilter();  // 根据 filter_type_ 切换 GL_NEAREST/LINEAR
+    void CreateFBOs(int32_t w, int32_t h);
+    void DestroyFBOs();
+    void ApplyUpscaleUniforms();
+    void ApplyPostprocUniforms();
+    void ApplyOutputUniforms();
+    void UpdateTextureFilter();
+    // RGB565→RGBA CPU 转换（含可选 Bayer 抖动）
+    void ConvertRgb565ToRgba(const uint16_t *src, uint32_t *dst, int32_t pixels);
 
+    // EGL
     EGLDisplay egl_display_ = EGL_NO_DISPLAY;
     EGLConfig  egl_config_  = nullptr;
     EGLContext egl_context_ = EGL_NO_CONTEXT;
     EGLSurface egl_surface_ = EGL_NO_SURFACE;
-    // EGLNativeWindowType 在 OHOS 上是 unsigned long（窗口句柄），不能用 nullptr。
     EGLNativeWindowType native_window_ = 0;
 
-    GLuint program_  = 0;
+    // 源纹理
     GLuint texture_  = 0;
     GLuint vao_      = 0;
-    int32_t tex_w_   = 0;   // 纹理已分配的宽度（用于判断是否需重建）
+    int32_t tex_w_   = 0;
     int32_t tex_h_   = 0;
-    int32_t surface_w_ = 0; // EGL surface 实际像素宽（绘制视口，铺满用）
+    int32_t surface_w_ = 0;
     int32_t surface_h_ = 0;
 
-    // 滤镜参数（NAPI线程写，渲染线程读，int/float原子性足够）。
-    int   filter_type_             = 0;    // 0=Nearest,1=Bilinear,2=EPX,3=xBRZ
-    int   screen_effect_           = 0;    // 0=关闭,1=CRT扫描线,2=LCD网格
+    // 3-pass FBO
+    GLuint fbo_a_ = 0, fbo_tex_a_ = 0;
+    GLuint fbo_b_ = 0, fbo_tex_b_ = 0;
+    GLuint fbo_prev_ = 0, fbo_tex_prev_ = 0;  // phosphor glow 前帧
+    int32_t fbo_w_ = 0, fbo_h_ = 0;
+
+    // 3-pass shader programs
+    GLuint prog_upscale_  = 0;
+    GLuint prog_postproc_ = 0;
+    GLuint prog_output_   = 0;
+
+    // 滤镜参数
+    int   filter_type_             = 0;
+    int   screen_effect_           = 0;
     float screen_effect_strength_  = 0.5f;
     float brightness_              = 0.0f;
     float contrast_                = 1.0f;
     float saturation_              = 1.0f;
-    int   prev_filter_type_        = -1;   // 上一次设置的 filter_type，用于检测变化切换 texture filter
+    int   subpixel_render_         = 0;
+    int   gamma_correct_           = 1;
+    int   dither_enabled_          = 1;
+    int   prev_filter_type_        = -1;
+
+    // uniform locations - upscale pass
+    GLint ul_up_u_tex_ = -1;
+    GLint ul_up_u_texture_size_ = -1;
+    GLint ul_up_u_filter_ = -1;
+
+    // uniform locations - postproc pass
+    GLint ul_pp_u_tex_ = -1;
+    GLint ul_pp_u_prev_tex_ = -1;
+    GLint ul_pp_u_texture_size_ = -1;
+    GLint ul_pp_u_brightness_ = -1;
+    GLint ul_pp_u_contrast_ = -1;
+    GLint ul_pp_u_saturation_ = -1;
+    GLint ul_pp_u_screen_effect_ = -1;
+    GLint ul_pp_u_screen_effect_strength_ = -1;
+    GLint ul_pp_u_gamma_correct_ = -1;
+    GLint ul_pp_u_subpixel_render_ = -1;
+
+    // uniform locations - output pass
+    GLint ul_out_u_tex_ = -1;
+    GLint ul_out_u_screen_effect_ = -1;
+    GLint ul_out_u_screen_effect_strength_ = -1;
+    GLint ul_out_u_barrel_k_ = -1;
 };
 
 #endif // VMRP_RENDERER_H

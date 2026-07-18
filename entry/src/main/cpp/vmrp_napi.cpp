@@ -356,12 +356,13 @@ static napi_value SetShakeIntensity(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
-// setDisplayFilter(filterType, screenEffect, screenEffectStrength, brightness, contrast, saturation)
-// filterType: 0=Nearest,1=Bilinear,2=EPX,3=xBRZ
-// screenEffect: 0=关闭,1=CRT扫描线,2=LCD网格; 即时生效。
+// setDisplayFilter(filterType, screenEffect, screenEffectStrength, brightness, contrast, saturation, subpixelRender, gammaCorrect, dither)
+// filterType: 0=Nearest,1=Bilinear,2=EPX,3=xBRZ,4=FSRCNNX
+// screenEffect: 0=关闭,1=完整CRT,2=LCD网格,3=仅扫描线
+// subpixelRender: 0=关,1=开; gammaCorrect: 0=关,1=开; dither: 0=关,1=开
 static napi_value SetDisplayFilter(napi_env env, napi_callback_info info) {
-    size_t argc = 6;
-    napi_value args[6];
+    size_t argc = 9;
+    napi_value args[9];
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     int32_t filterType = 0;
     int32_t screenEffect = 0;
@@ -369,17 +370,24 @@ static napi_value SetDisplayFilter(napi_env env, napi_callback_info info) {
     double brightness = 0.0;
     double contrast = 1.0;
     double saturation = 1.0;
+    int32_t subpixelRender = 0;
+    int32_t gammaCorrect = 1;
+    int32_t dither = 1;
     if (argc > 0) napi_get_value_int32(env, args[0], &filterType);
     if (argc > 1) napi_get_value_int32(env, args[1], &screenEffect);
     if (argc > 2) napi_get_value_double(env, args[2], &screenEffectStrength);
     if (argc > 3) napi_get_value_double(env, args[3], &brightness);
     if (argc > 4) napi_get_value_double(env, args[4], &contrast);
     if (argc > 5) napi_get_value_double(env, args[5], &saturation);
+    if (argc > 6) napi_get_value_int32(env, args[6], &subpixelRender);
+    if (argc > 7) napi_get_value_int32(env, args[7], &gammaCorrect);
+    if (argc > 8) napi_get_value_int32(env, args[8], &dither);
     g_renderer.SetDisplayFilter(filterType, screenEffect,
                                 static_cast<float>(screenEffectStrength),
                                 static_cast<float>(brightness),
                                 static_cast<float>(contrast),
-                                static_cast<float>(saturation));
+                                static_cast<float>(saturation),
+                                subpixelRender, gammaCorrect, dither);
     return nullptr;
 }
 

@@ -103,9 +103,11 @@ export class VmrpEngineTs {
   }
 
   setDisplayFilter(filterType: number, screenEffect: number, screenEffectStrength: number,
-                   brightness: number, contrast: number, saturation: number): void {
+                   brightness: number, contrast: number, saturation: number,
+                   subpixelRender: number, gammaCorrect: number, dither: number): void {
     nativeSetDisplayFilter(filterType, screenEffect, screenEffectStrength,
-                           brightness, contrast, saturation);
+                           brightness, contrast, saturation,
+                           subpixelRender, gammaCorrect, dither);
   }
 
   // 外部移植接口: mr_start_dsmB — entry 含 *A(固化应用)/%QQ.mrp(根目录mrp)前缀

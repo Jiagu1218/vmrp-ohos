@@ -527,8 +527,11 @@ struct Index {
         const brightness = (await pref.get('brightness', 0.0)) as number;
         const contrast = (await pref.get('contrast', 1.0)) as number;
         const saturation = (await pref.get('saturation', 1.0)) as number;
+        const subpixelRender = (await pref.get('subpixel_render', 0)) as number;
+        const gammaCorrect = (await pref.get('gamma_correct', 1)) as number;
+        const dither = (await pref.get('dither', 1)) as number;
         this.engine.setDisplayFilter(displayFilter, screenEffect, screenEffectStrength,
-          brightness, contrast, saturation);
+          brightness, contrast, saturation, subpixelRender, gammaCorrect, dither);
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }
