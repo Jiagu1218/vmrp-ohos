@@ -71,11 +71,17 @@ VMRP_EXPORT int vmrp_api_set_dns_map(const char *map);
 VMRP_EXPORT int vmrp_api_event(int code, int p0, int p1);
 
 /*
- * 重力感应：写入三轴加速度（mG）并投递 MR_MOTION_EVENT。
- * 仅当 MRP 应用已调用 mr_plat(4004/4005) 开启监听时才实际投递事件。
+ * 重力感应：写入三轴加速度（mG），由 worker 线程投递 MR_MOTION_EVENT。
+ * 上游 651e421 轮询模型：仅在 vmrp_api_motion_active() >= 0 时才上送。
  * 静止平放参考值：x=0, y=0, z=1000。
  */
-VMRP_EXPORT int vmrp_api_motion_event(int x_mg, int y_mg, int z_mg);
+VMRP_EXPORT int vmrp_api_motion(int x_mg, int y_mg, int z_mg);
+/* guest 的动感监听状态：-1=未监听, 0=晃动模式, 1=倾斜模式。 */
+VMRP_EXPORT int vmrp_api_motion_active(void);
+/* 取走 guest 的震动请求：0=无, >0=震动 N 毫秒, -1=停止。 */
+VMRP_EXPORT int vmrp_api_take_shake(void);
+/* 当前 LCD 旋转（0=正常,1=90°,2=180°,3=270°）。 */
+VMRP_EXPORT int vmrp_api_get_screen_rotation(void);
 
 /*
  * Timer: shared-library builds run the VM timer on a native worker thread so

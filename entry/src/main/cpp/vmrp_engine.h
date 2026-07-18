@@ -29,7 +29,7 @@ struct VmrpApi {
     int (*set_dns_map)(const char *map);
 
     int (*event)(int code, int p0, int p1);
-    int (*motion_event)(int x_mg, int y_mg, int z_mg);
+    int (*motion)(int x_mg, int y_mg, int z_mg);
     int (*timer)(void);
     int (*get_timer_interval)(void);
 
@@ -56,10 +56,10 @@ struct VmrpApi {
     int (*set_edit_text)(const char *text);
     int (*cancel_edit)(void);
 
-    void (*set_motion_power_cb)(void (*cb)(int on));
-    void (*set_motion_sensitivity)(float sensitivity);
-
-    void (*set_shake_cb)(void (*start)(int ms), void (*stop)(void));
+    // 上游轮询式 motion/shake API（651e421/4fbb0b4）
+    int (*motion_active)(void);     // -1=未监听, 0=晃动, 1=倾斜
+    int (*take_shake)(void);        // 0=无请求, >0=震动N毫秒, -1=停止
+    int (*get_screen_rotation)(void); // 0=正常,1=90°,2=180°,3=270°
 
     void (*set_media_cb)(void (*pause_cb)(void), void (*resume_cb)(void));
 
@@ -142,7 +142,7 @@ public:
     int SetEditText(const std::string &text);
     int CancelEdit();
 
-    // 加速度传感器：由 MRP 上电/断电回调驱动启停。
+    // 加速度传感器：由 TimerLoop 轮询 motion_active() 驱动启停。
     void StartSensor();
     void StopSensor();
     void SetMotionSensitivity(float s);
@@ -151,6 +151,11 @@ public:
     // 震动强度：0=轻, 1=中(默认), 2=强。影响 OH_Vibrator_PlayVibration 的 duration 和 usage。
     void SetShakeIntensity(int level);
     int GetShakeIntensity() const { return shake_intensity_; }
+
+    // 轮询上游 motion/shake 状态。由 TimerLoop 每 tick 调一次：
+    // - take_shake() 返回震动请求时驱动 OH_Vibrator
+    // - motion_active() 变化时启停加速度传感器
+    void PollMotionShake();
 
     const VmrpApi *Api() const { return &api_; }
 

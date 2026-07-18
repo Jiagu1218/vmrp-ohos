@@ -192,6 +192,15 @@ typedef _vmrp_api_get_screen_width_Dart = int Function();
 typedef _vmrp_api_get_screen_height_C = Int32 Function();
 typedef _vmrp_api_get_screen_height_Dart = int Function();
 
+typedef _vmrp_api_get_screen_rotation_C = Int32 Function();
+typedef _vmrp_api_get_screen_rotation_Dart = int Function();
+
+typedef _vmrp_api_motion_C = Int32 Function(Int32, Int32, Int32);
+typedef _vmrp_api_motion_Dart = int Function(int, int, int);
+
+typedef _vmrp_api_motion_active_C = Int32 Function();
+typedef _vmrp_api_motion_active_Dart = int Function();
+
 typedef _vmrp_api_is_edit_active_C = Int32 Function();
 typedef _vmrp_api_is_edit_active_Dart = int Function();
 
@@ -214,6 +223,9 @@ class VmrpBindings {
   late final _vmrp_api_get_screen_dirty_Dart getScreenDirty;
   late final _vmrp_api_get_screen_width_Dart getScreenWidth;
   late final _vmrp_api_get_screen_height_Dart getScreenHeight;
+  late final _vmrp_api_get_screen_rotation_Dart getScreenRotation;
+  late final _vmrp_api_motion_Dart motion;
+  late final _vmrp_api_motion_active_Dart motionActive;
   late final _vmrp_api_is_edit_active_Dart isEditActive;
   late final _vmrp_api_set_edit_text_Dart setEditText;
   late final _vmrp_api_cancel_edit_Dart cancelEdit;
@@ -233,6 +245,9 @@ class VmrpBindings {
     getScreenDirty = _lib.lookupFunction<_vmrp_api_get_screen_dirty_C, _vmrp_api_get_screen_dirty_Dart>('vmrp_api_get_screen_dirty');
     getScreenWidth = _lib.lookupFunction<_vmrp_api_get_screen_width_C, _vmrp_api_get_screen_width_Dart>('vmrp_api_get_screen_width');
     getScreenHeight = _lib.lookupFunction<_vmrp_api_get_screen_height_C, _vmrp_api_get_screen_height_Dart>('vmrp_api_get_screen_height');
+    getScreenRotation = _lib.lookupFunction<_vmrp_api_get_screen_rotation_C, _vmrp_api_get_screen_rotation_Dart>('vmrp_api_get_screen_rotation');
+    motion = _lib.lookupFunction<_vmrp_api_motion_C, _vmrp_api_motion_Dart>('vmrp_api_motion');
+    motionActive = _lib.lookupFunction<_vmrp_api_motion_active_C, _vmrp_api_motion_active_Dart>('vmrp_api_motion_active');
     isEditActive = _lib.lookupFunction<_vmrp_api_is_edit_active_C, _vmrp_api_is_edit_active_Dart>('vmrp_api_is_edit_active');
     setEditText = _lib.lookupFunction<_vmrp_api_set_edit_text_C, _vmrp_api_set_edit_text_Dart>('vmrp_api_set_edit_text');
     cancelEdit = _lib.lookupFunction<_vmrp_api_cancel_edit_C, _vmrp_api_cancel_edit_Dart>('vmrp_api_cancel_edit');
@@ -732,9 +747,110 @@ VMRP 的工作目录（文件 I/O 根目录）是 MRP 文件所在的目录。
 
 通过 `vmrp_api_init(width, height)` 设置。分辨率必须在 `start()` 之前设定。
 
+### 屏幕旋转（横屏游戏）
+部分游戏（如 gtcm/贪吃猫，面向 320x480 竖屏真机）运行期经
+`mr_plat(101, param)` 请求 LCD 旋转（`MR_LCD_ROTATE_*`：0=正常，1=90°，
+2=180°，3=270°），并可在进入付费/下载等插件界面前撤销旋转再恢复。
+旋转是**运行期状态**，宿主需在每次 dirty 帧后复查：
+
+- `vmrp_api_get_screen_rotation()`：返回当前旋转（0..3）
+- `vmrp_api_get_screen_width()` / `vmrp_api_get_screen_height()`：**旋转感知**，
+  奇数旋转（90°/270°）时返回 `init` 面板尺寸的转置（如 320x480 → 480x320），
+  屏幕缓冲区行宽同步按该宽度解释
+- 总像素数在转置下不变，`getScreenBuffer()` 指针保持有效，无需重新 `init`
+
+Dart FFI 绑定：
+
+```dart
+typedef _vmrp_api_get_screen_rotation_C = Int32 Function();
+typedef _vmrp_api_get_screen_rotation_Dart = int Function();
+// ...
+getScreenRotation = _lib.lookupFunction<_vmrp_api_get_screen_rotation_C,
+    _vmrp_api_get_screen_rotation_Dart>('vmrp_api_get_screen_rotation');
+```
+
+VmrpEngine 轮询处（每次 dirty 帧后）：
+
+```dart
+if (_bindings.getScreenDirty() != 0) {
+  final w = _bindings.getScreenWidth();
+  final h = _bindings.getScreenHeight();
+  if (w != _lastW || h != _lastH) {
+    // 旋转发生:按新尺寸重建 Image/纹理与触摸坐标映射,
+    // 触摸坐标始终以当前 w x h 画布为准(1:1,无需变换)。
+    _lastW = w; _lastH = h;
+    _rebuildTexture(w, h);
+  }
+  _presentFrame(w, h);
+}
+```
+
+### 动感芯片（加速度传感器）
+部分游戏（如 gtdgdq）经 `mr_plat(4001~4006)` 使用动感芯片（SKYENGINE
+《动感芯片接口》），监听开启后由 `MR_MOTION_EVENT` 上送加速度样本：
+
+- `vmrp_api_motion_active()`：guest 监听状态，-1=未监听（**应关闭平台传感
+  器省电**），0=晃动模式，1=倾斜模式；轮询风格同 `getScreenDirty()`
+- `vmrp_api_motion(x, y, z)`：注入重力加速度分量，取值 **±1000**
+  （plat(4006) 向游戏通告的量程）；guest 未监听时样本被忽略
+
+坐标系（设备坐标，见《动感芯片接口》）：手机平放屏幕朝上 → +Z 最大；屏幕
+向左横立 → +X 最大；屏幕背向自己竖立 → +Y 最大。Android/iOS 传感器数据换
+算：`x = accel_x / 9.8 * 1000` 依次类推（注意平台轴向差异需按上述定义映射）。
+
+```dart
+// 传感器推送(示例:sensors_plus 包)
+StreamSubscription? _accelSub;
+void _pollMotionState() {
+  final mode = _bindings.motionActive();
+  if (mode >= 0 && _accelSub == null) {
+    _accelSub = accelerometerEventStream().listen((e) {
+      // 按《动感芯片接口》轴向定义换算到 ±1000
+      _bindings.motion(
+        (e.x / 9.8 * 1000).round(),
+        (e.y / 9.8 * 1000).round(),
+        (e.z / 9.8 * 1000).round(),
+      );
+    });
+  } else if (mode < 0 && _accelSub != null) {
+    _accelSub!.cancel();
+    _accelSub = null;
+  }
+}
+```
+
+### 震动马达
+游戏经 `mr_startShake(ms)` / `mr_stopShake()` 控制振动器（SKYENGINE 手册
+mr_startShake.md）。C 侧只记录最新请求，嵌入端轮询取走后调平台振动器：
+
+- `vmrp_api_take_shake()`：取走并清除请求（轮询风格同 `getScreenDirty()`，
+  建议随 dirty 帧/timer 后复查）
+  - `0`：无新请求
+  - `>0`：开始震动 N 毫秒
+  - `-1`：停止震动
+- 连续 start/stop 只保留最后一次（与真机马达"后到指令决定状态"一致）
+
+```dart
+// FFI 绑定
+typedef _vmrp_api_take_shake_C = Int32 Function();
+typedef _vmrp_api_take_shake_Dart = int Function();
+// takeShake = _lib.lookupFunction<...>('vmrp_api_take_shake');
+
+// 轮询处(示例:vibration 包;HapticFeedback 仅短促反馈不支持时长)
+void _pollShake() {
+  final req = _bindings.takeShake();
+  if (req > 0) {
+    Vibration.vibrate(duration: req);
+  } else if (req < 0) {
+    Vibration.cancel();
+  }
+}
+```
+
 ### 屏幕缓冲区格式
 - RGB565，16-bit per pixel，little-endian
-- 行优先存储，大小 = `width * height * 2` 字节
+- 行优先存储，大小 = `width * height * 2` 字节（width/height 为旋转感知
+  getter 的当前返回值）
 - 上面的 `getScreenRGBA()` 示例中已包含 RGB565 → RGBA8888 转换
 
 ### 定时器模型

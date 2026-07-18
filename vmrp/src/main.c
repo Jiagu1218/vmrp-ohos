@@ -209,6 +209,13 @@ static int e2e_dump_screen_ppm_hook(const char *path, void *userdata) {
     return dump_screen_ppm(path);
 }
 
+/* MOTION 命令注入动感样本(主线程回投后执行,见 e2e_control.c)。
+ * 返回 0=已上送至 guest,非 0=guest 未开启动感监听。 */
+static int e2e_motion_input_hook(int32_t x, int32_t y, int32_t z, void *userdata) {
+    (void)userdata;
+    return vmrp_motion_input(x, y, z) == MR_SUCCESS ? 0 : 1;
+}
+
 static int e2e_dump_draw_frame_ppm_hook(int draw_count, const char *path,
                                         void *userdata) {
     (void)userdata;
@@ -302,8 +309,17 @@ void saveEditText(char *str) {
     holdEditText[len] = '\0';
 }
 
-int32_t editCreate(const char *title, const char *text, int32_t type, int32_t max_size) {
-    isEditMode = true;
+/* 震动马达 bridge(mr_startShake/mr_stopShake):SDL 桌面前端没有振动器
+ * 硬件,仅日志记录;真实震动由 Flutter 前端经 vmrp_api_take_shake 对接。 */
+void guiStartShake(int32_t ms) {
+    SDL_Log("guiStartShake(%d ms)", ms);
+}
+
+void guiStopShake(void) {
+    SDL_Log("guiStopShake()");
+}
+
+int32_t editCreate(const char *title, const char *text, int32_t type, int32_t max_size) {    isEditMode = true;
     editMaxSize = max_size;
     SDL_Log("title: '%s', text: '%s', type: %d, max_size: %d", title, text, type, max_size);
     /* Opening an editor must not replace text that the user copied before
@@ -341,6 +357,19 @@ void guiDrawBitmapWithStride(uint16_t *bmp, int32_t x, int32_t y,
      * VMRP_PPM is set, the caller has explicitly requested verification, so
      * keep the configured PPM path equal to the most recent rendered frame. */
     int should_dump_ppm = getenv("VMRP_PPM") || draw_count == 5;
+    /* LCD 旋转(plat(101))后的横屏自动翻转:显示尺寸与窗口不一致时调整窗口。
+     * VM 全部在 SDL 主循环线程执行(定时器回调仅 SDL_PushEvent),此处调
+     * SDL_SetWindowSize 线程安全;resize 使旧 surface 失效,须在取 surface
+     * 之前完成。rotation==0 时显示尺寸恒等于窗口创建尺寸,行为不变。 */
+    int display_w = vmrp_display_width();
+    int display_h = vmrp_display_height();
+    {
+        int win_w = 0, win_h = 0;
+        SDL_GetWindowSize(window, &win_w, &win_h);
+        if (win_w != display_w || win_h != display_h) {
+            SDL_SetWindowSize(window, display_w, display_h);
+        }
+    }
     SDL_Surface *surface = SDL_GetWindowSurface(window);
     if (!surface) return;
     if (SDL_MUSTLOCK(surface)) {
@@ -350,7 +379,8 @@ void guiDrawBitmapWithStride(uint16_t *bmp, int32_t x, int32_t y,
         for (int32_t i = 0; i < w; i++) {
             int32_t xx = x + i;
             int32_t yy = y + j;
-            if (xx < 0 || yy < 0 || xx >= vmrp_config.screen_width || yy >= vmrp_config.screen_height) {
+            /* 裁剪按旋转后的显示尺寸(rotation==0 时即面板尺寸) */
+            if (xx < 0 || yy < 0 || xx >= display_w || yy >= display_h) {
                 continue;
             }
             int32_t sx = source_x + i;
@@ -376,9 +406,11 @@ void guiDrawBitmap(uint16_t *bmp, int32_t x, int32_t y, int32_t w, int32_t h) {
      * coordinates are absolute screen coordinates.  Keep this legacy full-screen
      * stride path and let ARM EXT local bitmap presents opt into
      * guiDrawBitmapWithStride().
+     * 行宽取旋转后的显示宽度:plat(101) 横屏后全屏缓冲行宽即显示宽,
+     * rotation==0 时与面板宽度相同。
      */
     guiDrawBitmapWithStride(bmp, x, y, w, h,
-                            vmrp_config.screen_width, x, y);
+                            vmrp_display_width(), x, y);
 }
 
 #ifdef __EMSCRIPTEN__
@@ -947,6 +979,7 @@ int main(int argc, char *args[]) {
     e2e_hooks.timer_pending_generation = e2e_timer_pending_generation_hook;
     e2e_hooks.timer_dispatch_in_progress = e2e_timer_dispatch_in_progress_hook;
     e2e_hooks.runtime_exited = e2e_runtime_exited_hook;
+    e2e_hooks.motion_input = e2e_motion_input_hook;
     e2eControl = vmrp_e2e_control_create(e2eEventType, &e2e_hooks);
 
     if (startVmrp(&vmrp_args) != MR_SUCCESS) {

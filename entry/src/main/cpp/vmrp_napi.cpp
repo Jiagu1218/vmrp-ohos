@@ -163,7 +163,7 @@ void TryRenderForce() {
 // 渲染驱动循环。
 // vmrp_api.c 在 VMRP_API_ASYNC_RUNNER=1 下采用 async worker 模型：vmrp_api_start
 // 成功后自动起 worker 线程自驱 timer()/event()。本循环不再调 StepTimer()，
-// 只做两件事：1) 周期请求渲染；2) 检测引擎退出。
+// 只做三件事：1) 周期请求渲染；2) 检测引擎退出；3) 轮询 motion/shake。
 static void TimerLoop() {
     LOGI("timer loop started (async: render-only)");
     while (g_timer_running.load()) {
@@ -173,6 +173,8 @@ static void TimerLoop() {
         }
         RequestRender();
         NotifyEditIfNeeded();
+        // 轮询上游 motion/shake：take_shake 驱动振动器，motion_active 启停传感器
+        VmrpEngine::Instance().PollMotionShake();
         if (!VmrpEngine::Instance().IsRunning()) {
             g_engine_running.store(false);
             break;
