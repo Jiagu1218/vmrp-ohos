@@ -80,6 +80,28 @@ VMRP_EXPORT int vmrp_api_set_dns_map(const char *map);
 VMRP_EXPORT int vmrp_api_event(int code, int p0, int p1);
 
 /*
+ * Motion chip (accelerometer, SKYENGINE mr_plat(4001~4006) 动感芯片接口):
+ * x/y/z are gravity components in ±1000 (the range advertised by plat(4006)).
+ * Axis convention (device coordinates): phone flat face-up -> +Z max; screen
+ * facing left, held sideways -> +X max; screen facing away, upright -> +Y max.
+ * Samples are dropped while the guest has no active listener; poll
+ * vmrp_api_motion_active() and only push platform sensor data when it
+ * returns >= 0 (-1 = idle, 0 = shake mode, 1 = tilt mode).
+ */
+VMRP_EXPORT int vmrp_api_motion(int x, int y, int z);
+VMRP_EXPORT int vmrp_api_motion_active(void);
+
+/*
+ * Vibration motor (mr_startShake/mr_stopShake, SKYENGINE 手册
+ * mr_startShake.md).  Pull-based like get_screen_dirty: the guest's latest
+ * request is held until taken.  Return value: 0 = no new request,
+ * >0 = start vibrating for N milliseconds (call the platform vibrator),
+ * -1 = stop vibrating.  Consecutive start/stop requests collapse to the
+ * last one (matches real motor behavior).  Poll after events/timer ticks.
+ */
+VMRP_EXPORT int vmrp_api_take_shake(void);
+
+/*
  * Timer: shared-library builds run the VM timer on a native worker thread so
  * Flutter hosts do not need to schedule it on the UI isolate. These functions
  * are kept for ABI compatibility with hosts that still use manual scheduling.
@@ -109,6 +131,15 @@ VMRP_EXPORT const uint8_t *vmrp_api_get_screen_rgba_buffer(void);
 VMRP_EXPORT int vmrp_api_get_screen_dirty(void);
 VMRP_EXPORT int vmrp_api_get_screen_width(void);
 VMRP_EXPORT int vmrp_api_get_screen_height(void);
+/*
+ * Current LCD rotation requested by the guest via mr_plat(101, param)
+ * (MR_LCD_ROTATE_*: 0=normal, 1=90°, 2=180°, 3=270°).  For odd rotations the
+ * width/height getters above return the transposed panel size and the screen
+ * buffer rows use that width as stride.  Poll after each dirty frame and
+ * rebuild the texture/layout when width/height/rotation changed
+ * (总像素数在转置下不变,buffer 指针保持有效).
+ */
+VMRP_EXPORT int vmrp_api_get_screen_rotation(void);
 
 /*
  * Audio stream: the runtime decodes/synthesizes MRP sound into signed

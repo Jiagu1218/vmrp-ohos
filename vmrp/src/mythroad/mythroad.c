@@ -21,6 +21,7 @@
 #include "./include/printf.h"
 #include "./include/string.h"
 #include "./luadec/luadec.h"
+#include "./include/dsm.h" /* dsm_motion_listening_mode:动感芯片监听状态 */
 #include "../include/arm_ext_executor.h"
 
 /* FULL Mythroad exposes the Lua-runtime startup ABI.  MINI uses version 2011;
@@ -4268,18 +4269,17 @@ int32 mr_event(int16 type, int32 param1, int32 param2) {
             if (status != MR_IGNORE)
                 return status;
         }
-        if (native_ext) {
-            mr_c_event_st event = {0};
-            event.code = type;
-            event.param0 = param1;
-            event.param1 = param2;
-            int32 status = native_ext_event(1, &event, sizeof(event));
-            if (status != MR_IGNORE)
-                return status;
-        }
-
         mrp_getglobal(vm_state, "dealevent");
         if (mrp_isfunction(vm_state, -1)) {
+            /* 原版平台的 mr_event 只有两级:显式注册的 mr_event_function
+             * (对应上面的 native_event_function),然后 Lua dealevent;
+             * 原始事件从不直接投递给 C ext——ext 只经 dealevent 打包转发
+             * (_strCom 801)收到事件。20-byte native_ext_event 是 vmrp 为
+             * 无 Lua hook 的 EXT-only runtime 补的兼容入口。若在 dealevent
+             * 存在时也先调它,同一按键会两次进入 wrapper,且 MR_IGNORE 语义
+             * 变得含混:重放会双重处理,强制消费又截断 Lua 路径。因此与
+             * 原生语义及 suspend/resume 的 Lua-owner 契约保持一致:有
+             * dealevent 时由 Lua 独占普通事件。 */
             mrp_pushnumber(vm_state, type);
             mrp_pushnumber(vm_state, param1);
             mrp_pushnumber(vm_state, param2);
@@ -4302,6 +4302,15 @@ int32 mr_event(int16 type, int32 param1, int32 param2) {
         } else { /* no dealevent function */
             MRDBGPRINTF("dealevent is nil!");
             mrp_pop(vm_state, 1); /* remove dealevent */
+            if (native_ext) {
+                mr_c_event_st event = {0};
+                event.code = type;
+                event.param0 = param1;
+                event.param1 = param2;
+                int32 status = native_ext_event(1, &event, sizeof(event));
+                if (status != MR_IGNORE)
+                    return status;
+            }
         }
         // mrp_setgcthreshold(vm_state, 0);
 
@@ -4309,6 +4318,26 @@ int32 mr_event(int16 type, int32 param1, int32 param2) {
         return MR_SUCCESS;  // deal
     }
     return MR_IGNORE;  // didnot deal
+}
+
+/*
+ * 动感芯片样本注入入口(宿主侧传感器驱动):x/y/z 为重力加速度分量,取值
+ * ±DSM_MOTION_ACC_MAX(与 plat(4006) 返回的量程契约一致),坐标系按
+ * 《动感芯片接口》文档(平放 Z 正最大、屏幕向左横立 X 正最大等)。
+ *
+ * guest 经 plat(4004/4005) 开启监听后才上送;事件按文档契约为
+ * mr_event(MR_MOTION_EVENT, MR_MOTION_EVENT_SHAKE|TILT, T_MOTION_ACC*)。
+ * 第三参数是 guest 可读指针:EXT 游戏运行在 unicorn 独立地址空间,样本写入
+ * 模块的持久槽位(arm_ext_host_motion_acc_slot)后传 guest 地址;无 EXT 模块
+ * 时(纯 Lua 应用)没有已知的动感消费方,不上送。
+ */
+int32 mr_motion_input(int32 x, int32 y, int32 z) {
+    int32 mode = dsm_motion_listening_mode();
+    if (mode < 0) return MR_IGNORE;
+    if (!native_ext) return MR_IGNORE;
+    uint32 slot = arm_ext_host_motion_acc_slot(native_ext, x, y, z);
+    if (!slot) return MR_IGNORE;
+    return mr_event(MR_MOTION_EVENT, mode, (int32)slot);
 }
 
 int32 mr_timer(void) {

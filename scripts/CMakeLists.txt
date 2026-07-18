@@ -229,19 +229,14 @@ ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/native_dsm_funcs.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/src/lib/mr_strlib.c")
 
 # --- Patch arm_ext_internal.h: 添加 OHOS 需要的额外字段 ---
-# 上游重构后的 ArmExtModule 缺少 OHOS 特有字段:
-# - motion_acc_addr: T_MOTION_ACC 缓冲区 ARM 地址(12字节三轴加速度)
+# 上游 651e421 已添加 motion_acc_addr(与上游 mr_motion_input 共用),不再注入。
+# OHOS 特有字段:
 # - screen_buf_addr/len: platEx(1001) 分配的离屏渲染缓冲(第二内存)
 # - iram_addr/len: platEx(1012) 分配的内部 cache
 set(_VMRP_INT_H "${VMRP_SRC_DIR}/src/include/arm_ext_internal.h")
 if(EXISTS "${_VMRP_INT_H}")
     file(READ "${_VMRP_INT_H}" _inth)
-    if(NOT _inth MATCHES "OHOS_MOTION_ACC_FIELD")
-        # motion_acc_addr: 插在 screen_h_slot 之后
-        string(REPLACE
-            "    uint32_t screen_h_slot;\n    uint32_t char_bitmap_addr;"
-            "    uint32_t screen_h_slot;\n    /* OHOS_MOTION_ACC_FIELD: T_MOTION_ACC 三轴加速度缓冲\n     * ARM 地址(12 字节: 3×int32 x/y/z)。mr_event(MR_MOTION_EVENT)\n     * 的 param2 携带此地址,ARM 代码通过 32 位虚拟地址读取。 */\n    uint32_t motion_acc_addr;\n    uint32_t char_bitmap_addr;"
-            _inth "${_inth}")
+    if(NOT _inth MATCHES "OHOS_PLATEX_SCREEN_BUF")
         # screen_buf_addr/len: 插在 screen_cap 之后
         string(REPLACE
             "    uint32_t screen_cap;\n    /* ARM 可见 mr_screen_w/h"
@@ -253,77 +248,31 @@ if(EXISTS "${_VMRP_INT_H}")
             "    uint32_t exram_len;\n    /* OHOS_PLATEX_IRAM: platEx(1012) 分配的内部 cache 缓冲。 */\n    uint32_t iram_addr;\n    uint32_t iram_len;\n    uint32_t internal_table_addr;"
             _inth "${_inth}")
         file(WRITE "${_VMRP_INT_H}" "${_inth}")
-        message(STATUS "[OHOS] Patched arm_ext_internal.h: added motion_acc_addr, screen_buf_addr/len, iram_addr/len")
+        message(STATUS "[OHOS] Patched arm_ext_internal.h: added screen_buf_addr/len, iram_addr/len")
     endif()
 endif()
 
-# --- Patch vmrp_api.c: 添加 vmrp_api_motion_power 传感器电源控制 ---
-# dsm.c case 4002/4003 通过 extern 调用此函数通知宿主启停传感器。
-# vmrp_api.c 属于 :restore_patched,用 CMake patch 保证幂等。
+# --- Patch vmrp_api.c: 添加 vmrp_api_start_dsmB/C/ex 外部移植接口 ---
+# 上游 651e421/4fbb0b4 已实现 motion/shake(vmrp_api_motion/take_shake 等),
+# OHOS 不再注入 motion/shake 代码。仅保留上游没有的 dsmB/C/ex 热启动接口。
 set(_VMRP_API_MOTION "${VMRP_SRC_DIR}/src/vmrp_api.c")
 if(EXISTS "${_VMRP_API_MOTION}")
     file(READ "${_VMRP_API_MOTION}" _api_m)
-    if(NOT _api_m MATCHES "OHOS_MOTION_POWER")
+    if(NOT _api_m MATCHES "OHOS_DSM_BC_EX")
+        # OHOS_DSM_BC_EX — vmrp_api_start_dsmB/C/ex 导出
+        # 锚点: vmrp_api_take_shake 函数末尾(上游 4fbb0b4 新增,稳定存在)
         string(REPLACE
-            "    return event(6, 1, 0);\n#endif\n}"
-            "    return event(6, 1, 0);\n#endif\n}\n\n/* OHOS_MOTION_POWER: 传感器电源控制。\n * dsm.c mr_plat(4002/4003) 调用此函数通知宿主启停重力感应传感器。\n * power_cb 由宿主在 vmrp_init 时注册。\n * 未注册时为空操作,不影响非 OHOS 构建。 */\nstatic int (*motion_power_cb)(int on) = NULL;\nVMRP_EXPORT void vmrp_api_motion_power(int on) {\n    if (motion_power_cb) {\n        motion_power_cb(on);\n    }\n}\nVMRP_EXPORT void vmrp_api_set_motion_power_cb(void (*cb)(int on)) {\n    motion_power_cb = (int (*)(int))cb;\n}\n\n/* OHOS_MOTION_EVENT: 投递加速度数据到 DSM 层缓存并\n * 入队 API_CMD_MOTION，由 worker 线程消费时调\n * dsm_dispatch_motion_event() 驱动 mr_event(MR_MOTION_EVENT,mode,arm_addr)。\n * 不依赖 mr_timer()（ARM ext 模式下 timer 不由宿主驱动）。\n * x/y/z 单位 mG,静止平放 z≈1000。 */\nstatic float motion_sensitivity = 1.0f;\nVMRP_EXPORT int vmrp_api_motion_event(int x, int y, int z) {\n    extern void dsm_set_motion_acc(int32 x, int32 y, int32 z);\n    dsm_set_motion_acc((int32)(x * motion_sensitivity),\n                       (int32)(y * motion_sensitivity),\n                       (int32)(z * motion_sensitivity));\n    ApiCommand cmd;\n    memset(&cmd, 0, sizeof(cmd));\n    cmd.type = API_CMD_MOTION;\n    return api_queue_command(cmd);\n}\nVMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}"
-            _api_m "${_api_m}")
-        # 子补丁1: ApiCommandType enum 加 API_CMD_MOTION
-        string(REPLACE
-            "    API_CMD_CANCEL_EDIT\n} ApiCommandType;"
-            "    API_CMD_CANCEL_EDIT,\n    API_CMD_MOTION  /* OHOS: 动感芯片事件投递 */\n} ApiCommandType;"
-            _api_m "${_api_m}")
-        # 子补丁2: worker switch 加 API_CMD_MOTION 分支
-        string(REPLACE
-            "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;"
-            "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;\n                case API_CMD_MOTION: /* OHOS: 投递动感芯片事件 */\n                    { extern void dsm_dispatch_motion_event(void); dsm_dispatch_motion_event(); }\n                    break;"
-            _api_m "${_api_m}")
-        # 子补丁3: OHOS_SHAKE 震动回调。native_startShake/stopShake 通过 extern 调用
-        # vmrp_api_start_shake/stop_shake,内部调宿主注册的回调。
-        string(REPLACE
-            "VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}"
-            "VMRP_EXPORT void vmrp_api_set_motion_sensitivity(float s) {\n    motion_sensitivity = s;\n}\n\n/* OHOS_SHAKE: 震动回调。native_dsm_funcs.c 的 native_startShake/stopShake\n * 通过 extern 调用这两个函数,内部调宿主注册的回调驱动真机振动马达。\n * 未注册时为空操作,不影响非 OHOS 构建。 */\nstatic void (*shake_start_cb)(int ms) = NULL;\nstatic void (*shake_stop_cb)(void) = NULL;\nVMRP_EXPORT void vmrp_api_start_shake(int ms) {\n    if (shake_start_cb) shake_start_cb(ms);\n}\nVMRP_EXPORT void vmrp_api_stop_shake(void) {\n    if (shake_stop_cb) shake_stop_cb();\n}\nVMRP_EXPORT void vmrp_api_set_shake_cb(void (*start)(int ms), void (*stop)(void)) {\n    shake_start_cb = start;\n    shake_stop_cb = stop;\n}"
-            _api_m "${_api_m}")
-        # 子补丁4: OHOS_DSM_BC_EX — vmrp_api_start_dsmB/C/ex 导出
-        string(REPLACE
-            "VMRP_EXPORT void vmrp_api_set_shake_cb(void (*start)(int ms), void (*stop)(void)) {\n    shake_start_cb = start;\n    shake_stop_cb = stop;\n}"
-            "VMRP_EXPORT void vmrp_api_set_shake_cb(void (*start)(int ms), void (*stop)(void)) {\n    shake_start_cb = start;\n    shake_stop_cb = stop;\n}\n\n/* OHOS_DSM_BC_EX: 外部移植接口 vmrp_api_start_dsmB/C/ex。\n * 宿主通过这些函数以简化参数启动 MRP 应用:\n *   vmrp_api_start_dsmB(entry)   — entry 含 *A/%QQ.mrp 前缀\n *   vmrp_api_start_dsmC(entry)   — 同 dsmB(引擎已初始化)\n *   vmrp_api_start_dsm_ex(path, entry) — 显式 path+entry\n * 内部调 mythroad 层实现,需在引擎运行中调用(热切换)。\n */\nVMRP_EXPORT int vmrp_api_start_dsmB(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmB(const char *entry);\n    return mr_start_dsmB(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsmC(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmC(const char *entry);\n    return mr_start_dsmC(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsm_ex(const char *path, const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsm_ex(const char *path, const char *entry);\n    return mr_start_dsm_ex(path, entry);\n}"
+            "VMRP_EXPORT int vmrp_api_take_shake(void) {\n#if VMRP_API_ASYNC_RUNNER\n    api_lock();\n#endif\n    int req = shake_request;\n    shake_request = 0;\n#if VMRP_API_ASYNC_RUNNER\n    api_unlock();\n#endif\n    return req;\n}"
+            "VMRP_EXPORT int vmrp_api_take_shake(void) {\n#if VMRP_API_ASYNC_RUNNER\n    api_lock();\n#endif\n    int req = shake_request;\n    shake_request = 0;\n#if VMRP_API_ASYNC_RUNNER\n    api_unlock();\n#endif\n    return req;\n}\n\n/* OHOS_DSM_BC_EX: 外部移植接口 vmrp_api_start_dsmB/C/ex。\n * 宿主通过这些函数以简化参数启动 MRP 应用:\n *   vmrp_api_start_dsmB(entry)   — entry 含 *A/%QQ.mrp 前缀\n *   vmrp_api_start_dsmC(entry)   — 同 dsmB(引擎已初始化)\n *   vmrp_api_start_dsm_ex(path, entry) — 显式 path+entry\n * 内部调 mythroad 层实现,需在引擎运行中调用(热切换)。\n */\nVMRP_EXPORT int vmrp_api_start_dsmB(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmB(const char *entry);\n    return mr_start_dsmB(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsmC(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmC(const char *entry);\n    return mr_start_dsmC(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsm_ex(const char *path, const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsm_ex(const char *path, const char *entry);\n    return mr_start_dsm_ex(path, entry);\n}"
             _api_m "${_api_m}")
         file(WRITE "${_VMRP_API_MOTION}" "${_api_m}")
-        message(STATUS "[OHOS] Patched vmrp_api motion + shake + dsmB/C/ex functions (OHOS_MOTION_POWER/EVENT/SENSITIVITY/SHAKE/DSM_BC_EX)")
+        message(STATUS "[OHOS] Patched vmrp_api dsmB/C/ex functions (OHOS_DSM_BC_EX)")
     endif()
 endif()
 
-# --- Patch dsm.c: 重力感应(Motion Chip)OHOS 适配 ---
-# 上游删除了所有 motion 支持,OHOS 本地功能需要保留:
-# - 静态变量: motion_enabled/motion_powered/motion_mode/加速度缓存
-# - dsm_set_motion_acc()/dsm_get_motion_acc(): 缓存读写
-# - dsm_dispatch_motion_event(): 投递 MR_MOTION_EVENT 到 mr_event
-# - mr_plat case 4001~4006: 停止/上电/断电/晃动/倾斜/获取范围
-# dsm.c 属于 :restore_patched,用 CMake patch 保证幂等。
-set(_VMRP_DSM_MOTION "${VMRP_SRC_DIR}/src/mythroad/dsm.c")
-if(EXISTS "${_VMRP_DSM_MOTION}")
-    file(READ "${_VMRP_DSM_MOTION}" _dsm_m)
-    if(NOT _dsm_m MATCHES "OHOS_MOTION_CHIP")
-        # 1) 在 dsmInFuncs 后插入 motion 静态变量
-        string(REPLACE
-            "static DSM_REQUIRE_FUNCS *dsmInFuncs;\nstatic uint32 dsmStartTime;"
-            "static DSM_REQUIRE_FUNCS *dsmInFuncs;\nstatic uint32 dsmStartTime;\n/* OHOS_MOTION_CHIP: 重力感应状态与加速度缓存 */\nstatic int32 motion_enabled = 0;\nstatic int32 motion_powered = 0;\nstatic int32 motion_mode = 0;\nstatic int32 motion_acc_x = 0, motion_acc_y = 0, motion_acc_z = 0;"
-            _dsm_m "${_dsm_m}")
-        # 2) 在 mr_plat default case 前插入 motion cases
-        string(REPLACE
-            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        default:"
-            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        /* OHOS_MOTION_CHIP: 重力感应 mr_plat 命令 */\n        case 4001:  /* 停止监听 */\n            motion_enabled = 0;\n            return MR_SUCCESS;\n        case 4002:  /* 上电 */\n            motion_powered = 1;\n            { extern void vmrp_api_motion_power(int on); vmrp_api_motion_power(1); }\n            return MR_SUCCESS;\n        case 4003:  /* 断电 */\n            motion_powered = 0; motion_enabled = 0;\n            { extern void vmrp_api_motion_power(int on); vmrp_api_motion_power(0); }\n            return MR_SUCCESS;\n        case 4004:  /* 晃动模式: MR_MOTION_EVENT_SHAKE=0 */\n            motion_enabled = 1; motion_mode = 0;\n            return MR_SUCCESS;\n        case 4005:  /* 倾斜模式: MR_MOTION_EVENT_TILT=1 */\n            motion_enabled = 1; motion_mode = 1;\n            return MR_SUCCESS;\n        case 4006:  /* 获取范围 */\n            return MR_PLAT_VALUE_BASE + 3000;\n        default:"
-            _dsm_m "${_dsm_m}")
-        # 3) 在文件末尾(dsm_init 之前)插入 motion 函数
-        string(REPLACE
-            "int32 dsm_init(DSM_REQUIRE_FUNCS *inFuncs) {"
-            "/* OHOS_MOTION_CHIP: 加速度缓存读写与事件投递 */\nvoid dsm_set_motion_acc(int32 x, int32 y, int32 z) {\n    motion_acc_x = x; motion_acc_y = y; motion_acc_z = z;\n}\nvoid dsm_get_motion_acc(int32 *x, int32 *y, int32 *z) {\n    if (x) *x = motion_acc_x;\n    if (y) *y = motion_acc_y;\n    if (z) *z = motion_acc_z;\n}\nvoid dsm_dispatch_motion_event(void) {\n    if (!motion_enabled) return;\n    extern uint32 dsm_write_motion_acc_to_arm(void);\n    uint32 arm_addr = dsm_write_motion_acc_to_arm();\n    if (!arm_addr) return;\n    extern int32 mr_event(int16 type, int32 param1, int32 param2);\n    mr_event(MR_MOTION_EVENT, motion_mode, (int32)arm_addr);\n}\n\nint32 dsm_init(DSM_REQUIRE_FUNCS *inFuncs) {"
-            _dsm_m "${_dsm_m}")
-        file(WRITE "${_VMRP_DSM_MOTION}" "${_dsm_m}")
-        message(STATUS "[OHOS] Patched dsm.c motion chip support (OHOS_MOTION_CHIP)")
-    endif()
-endif()
+# --- Patch dsm.c: 重力感应(Motion Chip) ---
+# 上游 651e421 已实现完整的动感芯片支持(dsmMotion* + case 4001-4006 +
+# dsm_motion_listening_mode),OHOS 不再注入 motion 代码。
 
 # --- Patch vmrp native_dsm_funcs.c: MAP_32BIT is x86-glibc only, musl lacks it ---
 # native_mem_get() uses mmap(... MAP_32BIT) on x86_64 to place the DSM memory in
@@ -333,8 +282,8 @@ endif()
 # and only the low-address hint is lost on x86_64. arm64 is unaffected (the
 # block is already guarded by #ifdef __x86_64__).
 #
-# Also patches native_startShake/stopShake to call vmrp_api_start_shake/stop_shake
-# so that MRP vibration requests reach the OHOS Vibrator C API.
+# 上游 4fbb0b4 已重构 native_startShake/stopShake 为调 guiStartShake/guiStopShake
+# (轮询模型,嵌入端经 vmrp_api_take_shake 取走请求),OHOS 不再注入 shake 转发代码。
 set(_VMRP_DSM "${VMRP_SRC_DIR}/src/native_dsm_funcs.c")
 if(EXISTS "${_VMRP_DSM}")
     file(READ "${_VMRP_DSM}" _dsm_text)
@@ -346,17 +295,9 @@ if(EXISTS "${_VMRP_DSM}")
                        _dsm_text "${_dsm_text}")
         set(_dsm_patched TRUE)
     endif()
-    # 子补丁2: native_startShake → 调 vmrp_api_start_shake (OHOS_SHAKE)
-    if(NOT _dsm_text MATCHES "OHOS_SHAKE")
-        string(REPLACE
-            "static int32 native_startShake(int32 ms) {\n    (void)ms;\n    return MR_SUCCESS;\n}\n\nstatic int32 native_stopShake(void) {\n    return MR_SUCCESS;\n}"
-            "/* OHOS_SHAKE: 转发 MRP 震动请求到宿主(vmrp_api_start_shake),由宿主调 OH_Vibrator C API。 */\nstatic int32 native_startShake(int32 ms) {\n    extern void vmrp_api_start_shake(int ms);\n    vmrp_api_start_shake(ms);\n    return MR_SUCCESS;\n}\n\nstatic int32 native_stopShake(void) {\n    extern void vmrp_api_stop_shake(void);\n    vmrp_api_stop_shake();\n    return MR_SUCCESS;\n}"
-            _dsm_text "${_dsm_text}")
-        set(_dsm_patched TRUE)
-    endif()
     if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
-        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_SHAKE)")
+        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT)")
     endif()
     # 子补丁3: OHOS_MEDIA_CTRL — NativeAudioState 扩展 + pause/resume/seek/position/duration
     if(NOT _dsm_text MATCHES "OHOS_MEDIA_CTRL")
@@ -398,7 +339,7 @@ if(EXISTS "${_VMRP_DSM}")
     endif()
     if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
-        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_SHAKE + OHOS_MEDIA_CTRL)")
+        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_MEDIA_CTRL)")
     endif()
 endif()
 
@@ -524,51 +465,13 @@ if(EXISTS "${_VMRP_ARMEXT2}")
     endif()
 endif()
 
-# --- Patch arm_ext_executor.c: T_MOTION_ACC 缓冲区 + arm_ext_write_motion_acc ---
-# 在 Unicorn 虚拟内存中分配 12 字节给三轴加速度数据(x/y/z int32)，
-# 并导出 arm_ext_write_motion_acc() 供 mythroad.c 将宿主缓存的加速度
-# 写入 ARM 可见地址。MRP 应用的 dealevent 通过 mr_event param2 读取
-# 该地址，在 Unicorn 模拟环境中 ARM 代码只能访问 32 位虚拟地址，
-# 不能解引用宿主 64 位 &motion_acc 指针（截断后 SIGBUS）。
-#
-# 分两步：
-# 1) 在 table[91] 分配后插入 motion_acc_addr = arm_alloc(m, 12)
-# 2) 在文件末尾（arm_ext_unload 之前）追加 arm_ext_write_motion_acc 函数
-set(_VMRP_ARMEXT3 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_ARMEXT3}")
-    file(READ "${_VMRP_ARMEXT3}" _aet3)
-    if(NOT _aet3 MATCHES "arm_ext_write_motion_acc")
-        # Step 1: 在 write_table_entry(m, 91, ...) 之后分配 motion_acc_addr
-        string(REPLACE
-            "    write_table_entry(m, 91, alloc_u32_slot(m, m->screen_addr));\n"
-            "    write_table_entry(m, 91, alloc_u32_slot(m, m->screen_addr));\n    /* OHOS_MOTION_ACC: T_MOTION_ACC 缓冲区（12 字节: 3×int32 x/y/z）。\n     * ARM 代码通过 mr_event(MR_MOTION_EVENT, mode, addr) param2 读取。\n     * 必须在 Unicorn 虚拟内存中分配，ARM 无法访问宿主 64 位地址。 */\n    m->motion_acc_addr = arm_alloc(m, 12);\n"
-            _aet3 "${_aet3}")
-        # Step 2: 在 arm_ext_unload 之前追加 arm_ext_write_motion_acc
-        string(REPLACE
-            "void arm_ext_unload(ArmExtModule *m) {"
-            "/* OHOS_MOTION_ACC: 将三轴加速度(mG)写入 Unicorn 虚拟内存中的 T_MOTION_ACC 缓冲区，\n * 返回 ARM 可见的 32 位地址；MRP 代码通过 mr_event param2 读取该地址。\n * 必须在 worker 线程（与 Unicorn 串行）调用。 */\nuint32_t arm_ext_write_motion_acc(ArmExtModule *m, int32 x, int32 y, int32 z) {\n    if (!m || !m->motion_acc_addr) return 0;\n    int32 data[3] = {x, y, z};\n    void *dst = arm_ptr(m, m->motion_acc_addr);\n    if (!dst) return 0;\n    memcpy(dst, data, sizeof(data));\n    return m->motion_acc_addr;\n}\n\nvoid arm_ext_unload(ArmExtModule *m) {"
-            _aet3 "${_aet3}")
-        file(WRITE "${_VMRP_ARMEXT3}" "${_aet3}")
-        message(STATUS "[OHOS] Patched arm_ext_write_motion_acc + motion_acc_addr allocation")
-    endif()
-endif()
+# --- Patch arm_ext_executor.c: T_MOTION_ACC 缓冲区 ---
+# 上游 651e421 已实现 arm_ext_host_motion_acc_slot() + motion_acc_addr 字段,
+# OHOS 不再注入 motion acc 分配/写入代码。
 
 # --- Patch mythroad.c: dsm_write_motion_acc_to_arm ---
-# 桥接函数：从 dsm.c 读取缓存的加速度数据，调用 arm_ext_write_motion_acc
-# 写入 Unicorn 内存，返回 ARM 可见 32 位地址。dsm_dispatch_motion_event()
-# 用此地址作为 mr_event param2，替代截断的宿主 64 位 &motion_acc。
-set(_VMRP_MOTION "${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
-if(EXISTS "${_VMRP_MOTION}")
-    file(READ "${_VMRP_MOTION}" _motion)
-    if(NOT _motion MATCHES "OHOS_MOTION_ACC_BRIDGE")
-        string(REPLACE
-            "int32 mr_event(int16 type, int32 param1, int32 param2) {"
-            "/* OHOS_MOTION_ACC_BRIDGE: 将 DSM 层缓存的加速度数据写入 Unicorn ARM 内存，\n * 返回 ARM 可见的 32 位地址作为 mr_event param2 使用。\n * 在 Unicorn 模拟环境中，ARM 代码只能通过 32 位虚拟地址\n * 访问 T_MOTION_ACC，不能解引用宿主 64 位指针。 */\nextern void dsm_get_motion_acc(int32 *x, int32 *y, int32 *z);\nuint32 dsm_write_motion_acc_to_arm(void) {\n    if (!native_ext) return 0;\n    int32 x = 0, y = 0, z = 0;\n    dsm_get_motion_acc(&x, &y, &z);\n    return arm_ext_write_motion_acc(native_ext, x, y, z);\n}\n\nint32 mr_event(int16 type, int32 param1, int32 param2) {"
-            _motion "${_motion}")
-        file(WRITE "${_VMRP_MOTION}" "${_motion}")
-        message(STATUS "[OHOS] Patched dsm_write_motion_acc_to_arm bridge")
-    endif()
-endif()
+# 上游 651e421 已实现 mr_motion_input()(内部调 arm_ext_host_motion_acc_slot),
+# OHOS 不再注入 motion acc 桥接函数。
 
 # --- Patch mythroad.c: dofile 后显式调用 _mr_entry 入口（恢复 b82dd68 修复）---
 # 恢复 b82dd68 的修复（上游升级 d367585 时丢失）。幂等标记 OHOS_ENTRY_CALL。
@@ -610,25 +513,10 @@ endif()
 # 原来的 OHOS_CONNECT_TIMEOUT 正则补丁不再匹配上游函数结构。
 
 # --- Patch aex_table.c: case 38 memset 越界守卫 (OHOS_MEMSET_BOUNDS_GUARD) ---
-# 上游重构: arm_ext_executor.c 的 case 38 拆分为 aex_table.c 的 aex_t038()。
-# arm_alloc 上游已加 if (len > EXT_MEM_SIZE) return 0 长度守卫,覆盖 uint32
-# 溢出路径(EXT 地址空间仅 16MB,heap_top+len <= 32MB 不溢出 uint32),
-# 因此 OHOS_ARM_ALLOC_U64 补丁不再需要,已删除。
-# case 14 上游已改用 arm_ptr_span + GOT 修复,OHOS_MEMSET_NULL_GUARD 已删除。
-# 本补丁仍需保留: arm_alloc 长度守卫不覆盖 heap_top 被踩为异常小值场景
-# (0x00333638 + 0xA27B9C = 0xD5B1D4 < mem_end,检查通过但分配越界)。
-set(_VMRP_AEX_TABLE1 "${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
-if(EXISTS "${_VMRP_AEX_TABLE1}")
-    file(READ "${_VMRP_AEX_TABLE1}" _at1)
-    if(NOT _at1 MATCHES "OHOS_MEMSET_BOUNDS_GUARD")
-        string(REPLACE
-            "                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);"
-            "                            void *ep = arm_ptr(m, a);\n                            /* OHOS_MEMSET_BOUNDS_GUARD: 二次越界守卫,即使 arm_alloc\n                             * 的长度守卫被绕过(如 heap_top 损坏),也阻止 memset\n                             * 踩出 m->mem 16MB 缓冲。a-EXT_BASE_ADDR+want 必须\n                             * ≤ EXT_MEM_SIZE,否则跳过 memset(与 ep==NULL 同义)。 */\n                            if (ep && (uint64_t)(a - EXT_BASE_ADDR) + (uint64_t)want <= (uint64_t)EXT_MEM_SIZE) {\n                                memset(ep, 0, want);\n                            }"
-            _at1 "${_at1}")
-        file(WRITE "${_VMRP_AEX_TABLE1}" "${_at1}")
-        message(STATUS "[OHOS] Patched case 38 memset bounds guard in aex_table.c (OHOS_MEMSET_BOUNDS_GUARD)")
-    endif()
-endif()
+# 已移除: 上游重构 aex_t038 时移除了 void *ep = arm_ptr(m, a); if (ep) memset(ep,0,want);
+# 代码段(改用 arm_ext_scrram_acquire 独立映射),补丁锚点不存在,string(REPLACE) 静默失败。
+# 上游 arm_alloc 已有长度守卫(if len > EXT_MEM_SIZE return 0),SCRRAM 独立映射也
+# 不再走 arm_alloc,原 memset 越界场景已不存在,无需此补丁。
 
 # --- Patch arm_ext_executor.c: hook_invalid WRITE_UNMAPPED 黑洞 + READ_UNMAPPED graceful exit ---
 # v2: WRITE_UNMAPPED 动态 uc_mem_map 64K 黑洞页让写操作真正完成,
@@ -702,32 +590,10 @@ if(EXISTS "${_VMRP_AEX_TABLE2}")
 endif()
 
 # --- Patch arm_ext_executor.c: arm_ext_call_dispatch 中 mr_timerStart 不覆盖 ARM 侧已设的 timer ---
-# 问题：arm_ext_call_dispatch 的 post-dispatch 逻辑在 wrapper queue 还有节点时
-# 无条件调 mr_timerStart(timer_interval=50),覆盖了 ARM 代码在 dispatch 期间
-# 通过 table[31] 设的 mr_timerStart(T)。例如 MRP 设 timerStart(1000) 表示
-# 1秒后触发,但 50ms 覆盖后每 50ms 触发一次,1分钟计时只需约 3 秒完成。
-# arm_ext_call 中所有 mr_timerStart(50) 都有 !m->host_timer_pending 前置条件,
-# 但 arm_ext_call_dispatch 中的两处缺少此检查。
-# 修复：在 mr_timerStart 之前检查 sync_timer_state_from_arm 后的 host_timer_pending,
-# 如果 ARM 侧已通过 table[31] 设了自己的 timer(host_timer_pending==1),不覆盖。
-set(_VMRP_ARMEXT9 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_ARMEXT9}")
-    file(READ "${_VMRP_ARMEXT9}" _aet9)
-    if(NOT _aet9 MATCHES "OHOS_TIMER_NO_OVERRIDE")
-        # 修复第一处: wrapper_timer_owner + queue_live 路径
-        string(REPLACE
-            "        if (queue_live) {\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            /* ARM 侧可能未调用 table[31] timerStart 重新注册 SDL 定时器，\n             * 需要宿主主动启动一次以保证下一个 tick 到达 */\n            mr_timerStart((uint16)timer_interval);"
-            "        if (queue_live) {\n            /* OHOS_TIMER_NO_OVERRIDE: sync_timer_state_from_arm 后 host_timer_pending==1\n             * 说明 ARM 代码已通过 table[31] 设了自己的 timer interval(如 1000ms),\n             * 此时 mr_timerStart(50) 会覆盖 api_timer_due_ms 导致定时器过快。\n             * 只在 ARM 侧未设 timer 时补启 50ms tick 驱动 wrapper queue。 */\n            int _arm_set_timer = m->host_timer_pending;\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            if (!_arm_set_timer) {\n                mr_timerStart((uint16)timer_interval);\n            }"
-            _aet9 "${_aet9}")
-        # 修复第二处: chain_walker_owner + tc_after 路径
-        string(REPLACE
-            "        if (tc_after) {\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            mr_timerStart((uint16)timer_interval);"
-            "        if (tc_after) {\n            int _arm_set_timer_cw = m->host_timer_pending; /* OHOS_TIMER_NO_OVERRIDE */\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            if (!_arm_set_timer_cw) {\n                mr_timerStart((uint16)timer_interval);\n            }"
-            _aet9 "${_aet9}")
-        file(WRITE "${_VMRP_ARMEXT9}" "${_aet9}")
-        message(STATUS "[OHOS] Patched arm_ext_call_dispatch mr_timerStart no-override (OHOS_TIMER_NO_OVERRIDE)")
-    endif()
-endif()
+# 已移除: 上游重构了 arm_ext_call_dispatch,新增 arm_ext_call_primary_compact_dispatch
+# 路径并统一了 host_timer_pending 门控。旧补丁锚点(if (queue_live) / if (tc_after))
+# 已不存在,string(REPLACE) 静默失败,补丁无任何效果。上游已正确处理 ARM 侧 timer
+# 不被 50ms 覆盖的问题,无需此补丁。
 
 # --- Patch mythroad.c: mr_timer 末尾调用 ohos_gif_tick() 推进 GIF 动画帧 ---
 # 3011 创建的 GIF 动画需要定时器驱动逐帧绘制。ohos_gif_tick() 遍历
@@ -740,7 +606,7 @@ if(EXISTS "${_VMRP_GIFTICK}")
     if(NOT _gt MATCHES "OHOS_GIF_TICK")
         string(REPLACE
             "    // mrp_setgcthreshold(vm_state, 0);\n    return MR_SUCCESS;\n}"
-            "    // mrp_setgcthreshold(vm_state, 0);\n    /* OHOS_GIF_TICK: 推进 GIF 动画帧，\n     * 由 ohos_image_decode.cpp 提供，在 mr_timer 末尾调用确保\n     * 与 mr_screenBuf 写入串行。仅 __OHOS__ 构建生效。 */\n    { extern void ohos_gif_tick(void); ohos_gif_tick(); }\n    /* OHOS_MOTION_DISPATCH: 每个 timer tick 投递加速度数据到 ARM 侧。\n     * dsm_set_motion_acc() 仅写宿主缓存，mr_event(MR_MOTION_EVENT,mode,arm_addr) 才\n     * 触发 MRP 的 dealevent。必须在 worker/timer 线程调用（写 Unicorn 内存\n     * 和调 mr_event 都需要与 Unicorn 串行）。 */\n    { extern void dsm_dispatch_motion_event(void); dsm_dispatch_motion_event(); }\n    return MR_SUCCESS;\n}"
+            "    // mrp_setgcthreshold(vm_state, 0);\n    /* OHOS_GIF_TICK: 推进 GIF 动画帧，\n     * 由 ohos_image_decode.cpp 提供，在 mr_timer 末尾调用确保\n     * 与 mr_screenBuf 写入串行。仅 __OHOS__ 构建生效。 */\n    { extern void ohos_gif_tick(void); ohos_gif_tick(); }\n    return MR_SUCCESS;\n}"
             _gt "${_gt}")
         file(WRITE "${_VMRP_GIFTICK}" "${_gt}")
         message(STATUS "[OHOS] Patched mr_timer ohos_gif_tick (OHOS_GIF_TICK)")
@@ -773,9 +639,12 @@ set(_VMRP_DSM_VOL "${VMRP_SRC_DIR}/src/mythroad/dsm.c")
 if(EXISTS "${_VMRP_DSM_VOL}")
     file(READ "${_VMRP_DSM_VOL}" _dsm_vol)
     if(NOT _dsm_vol MATCHES "OHOS_SET_VOL")
+        # 锚点: 动感芯片 case 4006 之后、default 之前插入 MR_SET_VOL。
+        # 上游在 MR_SET_KEY_END 和 default 之间新增了 case 4001~4006(动感芯片),
+        # 旧锚点(MR_SET_KEY_END ... default)失效,改用 4006 作为锚点。
         string(REPLACE
-            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        default:"
-            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        case MR_SET_VOL: {  /* OHOS_SET_VOL: 1302 音量控制, param=0~10 */\n            extern void vmrp_api_set_volume(int level);\n            vmrp_api_set_volume(param);\n            return MR_SUCCESS;\n        }\n        default:"
+            "        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)\n            return 1000 + DSM_MOTION_ACC_MAX;\n        default:"
+            "        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)\n            return 1000 + DSM_MOTION_ACC_MAX;\n        case MR_SET_VOL: {  /* OHOS_SET_VOL: 1302 音量控制, param=0~10 */\n            extern void vmrp_api_set_volume(int level);\n            vmrp_api_set_volume(param);\n            return MR_SUCCESS;\n        }\n        default:"
             _dsm_vol "${_dsm_vol}")
         file(WRITE "${_VMRP_DSM_VOL}" "${_dsm_vol}")
         message(STATUS "[OHOS] Patched dsm.c MR_SET_VOL (OHOS_SET_VOL)")

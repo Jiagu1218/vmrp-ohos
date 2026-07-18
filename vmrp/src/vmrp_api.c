@@ -3,6 +3,7 @@
 #include "./include/bridge.h"
 #include "./include/memory.h"
 #include "./include/native_dsm_funcs.h"
+#include "./mythroad/include/dsm.h" /* dsm_get/set_lcd_rotation:plat(101) 旋转状态 */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,8 +44,16 @@ static int32_t edit_max_size = 0;
 static char *hold_edit_text = NULL;
 static char *edit_text_snapshot = NULL;
 
+/* 震动请求(mr_startShake/mr_stopShake,SKYENGINE 手册 mr_startShake.md)。
+ * 轮询模型:guest 请求记录在此,嵌入端经 vmrp_api_take_shake() 取走后调
+ * 平台振动器。取值:0=无新请求,>0=开始震动 N 毫秒,-1=停止震动;
+ * start/stop 相继发生时后者覆盖前者(last-action-wins,与真机马达一致——
+ * 后到的指令决定马达最终状态)。 */
+static int shake_request = 0;
+
 typedef enum {
     API_CMD_EVENT,
+    API_CMD_MOTION, /* 动感芯片样本:code/p0/p1 复用为 x/y/z 分量 */
     API_CMD_SET_EDIT_TEXT,
     API_CMD_CANCEL_EDIT
 } ApiCommandType;
@@ -201,8 +210,11 @@ void guiDrawBitmapWithStride(uint16_t *bmp, int32_t x, int32_t y,
                              int32_t source_x,
                              int32_t source_y) {
     if (!screen_buf || !bmp || source_stride <= 0 || w <= 0 || h <= 0) return;
-    int sw = vmrp_config.screen_width;
-    int sh = vmrp_config.screen_height;
+    /* LCD 旋转(plat(101))后 screen_buf 行宽/裁剪按显示尺寸;像素总数在转置
+     * 下不变(w*h 相等),无需重分配。嵌入端经 get_screen_width/height/
+     * rotation 读到同一显示尺寸,对 buffer 的行宽解释保持一致。 */
+    int sw = vmrp_display_width();
+    int sh = vmrp_display_height();
     int32_t min_x = x < 0 ? 0 : x;
     int32_t min_y = y < 0 ? 0 : y;
     int32_t max_x = x + w;
@@ -237,9 +249,10 @@ void guiDrawBitmap(uint16_t *bmp, int32_t x, int32_t y, int32_t w, int32_t h) {
      * Default DSM callers submit mr_screenBuf rectangles, so their source
      * coordinates remain absolute screen coordinates.  Local bitmap presents
      * use guiDrawBitmapWithStride() directly.
+     * 行宽取旋转后的显示宽度(rotation==0 时与面板宽度相同)。
      */
     guiDrawBitmapWithStride(bmp, x, y, w, h,
-                            vmrp_config.screen_width, x, y);
+                            vmrp_display_width(), x, y);
 }
 
 int32_t timerStart(uint16_t t) {
@@ -271,6 +284,28 @@ int32_t timerStop(void) {
 #else
     pending_timer_ms = 0;
     return 0;
+#endif
+}
+
+/* 震动马达 bridge:记录请求供嵌入端轮询,语义见 shake_request 声明处 */
+void guiStartShake(int32_t ms) {
+    if (ms <= 0) return;
+#if VMRP_API_ASYNC_RUNNER
+    api_lock();
+#endif
+    shake_request = (int)ms;
+#if VMRP_API_ASYNC_RUNNER
+    api_unlock();
+#endif
+}
+
+void guiStopShake(void) {
+#if VMRP_API_ASYNC_RUNNER
+    api_lock();
+#endif
+    shake_request = -1;
+#if VMRP_API_ASYNC_RUNNER
+    api_unlock();
 #endif
 }
 
@@ -493,6 +528,9 @@ static API_THREAD_RET api_worker_main(void *userdata) {
                 case API_CMD_EVENT:
                     event(cmd.code, cmd.p0, cmd.p1);
                     break;
+                case API_CMD_MOTION:
+                    vmrp_motion_input(cmd.code, cmd.p0, cmd.p1);
+                    break;
                 case API_CMD_SET_EDIT_TEXT:
                     api_apply_edit_text_command(cmd.text);
                     cmd.text = NULL;
@@ -563,6 +601,9 @@ VMRP_EXPORT int vmrp_api_init(int screen_w, int screen_h) {
     if (screen_h <= 0) screen_h = DEFAULT_SCREEN_HEIGHT;
     vmrp_config.screen_width = screen_w;
     vmrp_config.screen_height = screen_h;
+    /* LCD 旋转是 guest 运行期经 plat(101) 请求的状态,初始化时归零
+     * (dsm_init 也会归零,这里保证 start 之前 getter 即返回初始值) */
+    dsm_set_lcd_rotation(0);
 
     free(screen_buf);
     free(screen_rgba_buf);
@@ -580,6 +621,8 @@ VMRP_EXPORT int vmrp_api_init(int screen_w, int screen_h) {
 
     screen_dirty = 0;
     pending_timer_ms = 0;
+    /* 震动请求随初始化清空,避免上一会话的残留请求触发振动 */
+    shake_request = 0;
     image_processing_mode = VMRP_IMAGE_PROCESSING_NATIVE;
     api_dns_map[0] = '\0';
     api_dns_map_set = 0;
@@ -754,6 +797,56 @@ VMRP_EXPORT int vmrp_api_event(int code, int p0, int p1) {
 #endif
 }
 
+/* 动感芯片样本注入:x/y/z 为重力加速度分量,取值 ±1000(plat 4006 量程
+ * 契约),坐标系见《动感芯片接口》(平放 Z 正最大、屏幕向左横立 X 正最大、
+ * 屏幕背向自己竖立 Y 正最大)。guest 未开启监听时样本被忽略;嵌入端应
+ * 在 vmrp_api_motion_active() 返回 >=0 时才开启平台传感器推送。 */
+VMRP_EXPORT int vmrp_api_motion(int x, int y, int z) {
+    if (!api_running || vmrp_is_exited()) {
+        api_running = 0;
+        pending_timer_ms = 0;
+        return -1;
+    }
+#if VMRP_API_ASYNC_RUNNER
+    ApiCommand cmd;
+    memset(&cmd, 0, sizeof(cmd));
+    cmd.type = API_CMD_MOTION;
+    cmd.code = x;
+    cmd.p0 = y;
+    cmd.p1 = z;
+    return api_queue_command(cmd);
+#else
+    int ret = vmrp_motion_input((int32_t)x, (int32_t)y, (int32_t)z);
+    if (vmrp_is_exited()) {
+        api_running = 0;
+        pending_timer_ms = 0;
+    }
+    return ret;
+#endif
+}
+
+/* guest 的动感监听状态:-1=未监听(嵌入端应关闭传感器),
+ * 0=晃动模式(MR_MOTION_EVENT_SHAKE),1=倾斜模式(MR_MOTION_EVENT_TILT)。
+ * 轮询风格与 get_screen_dirty 一致,建议随 dirty 帧复查。 */
+VMRP_EXPORT int vmrp_api_motion_active(void) {
+    return (int)dsm_motion_listening_mode();
+}
+
+/* 取走并清除 guest 的震动请求(轮询风格同 get_screen_dirty,建议随
+ * dirty 帧/timer 后复查):0=无新请求,>0=开始震动 N 毫秒(嵌入端调平台
+ * 振动器),-1=停止震动(mr_stopShake)。 */
+VMRP_EXPORT int vmrp_api_take_shake(void) {
+#if VMRP_API_ASYNC_RUNNER
+    api_lock();
+#endif
+    int req = shake_request;
+    shake_request = 0;
+#if VMRP_API_ASYNC_RUNNER
+    api_unlock();
+#endif
+    return req;
+}
+
 VMRP_EXPORT int vmrp_api_timer(void) {
     if (!api_running || vmrp_is_exited()) {
         api_running = 0;
@@ -805,14 +898,22 @@ VMRP_EXPORT int vmrp_api_get_image_processing_mode(void) {
 }
 
 VMRP_EXPORT int vmrp_api_is_running(void) {
-    if (api_running && vmrp_is_exited()) {
 #if VMRP_API_ASYNC_RUNNER
-        api_stop_worker();
-#endif
+    int running;
+    /* A status query is called synchronously from Flutter's UI isolate. It
+     * must publish the exit state without waiting for the worker to unwind. */
+    api_finish_if_exited();
+    api_lock();
+    running = api_running;
+    api_unlock();
+    return running;
+#else
+    if (api_running && vmrp_is_exited()) {
         api_running = 0;
         pending_timer_ms = 0;
     }
     return api_running;
+#endif
 }
 
 VMRP_EXPORT int vmrp_api_pause(void) {
@@ -882,12 +983,21 @@ VMRP_EXPORT int vmrp_api_get_screen_dirty(void) {
     return d;
 }
 
+/* 返回旋转后的显示尺寸(rotation==0 时即 init 传入的面板尺寸)。guest 经
+ * plat(101) 请求横屏后这里读到转置尺寸,与 screen_buf 的行宽解释一致。 */
 VMRP_EXPORT int vmrp_api_get_screen_width(void) {
-    return vmrp_config.screen_width;
+    return vmrp_display_width();
 }
 
 VMRP_EXPORT int vmrp_api_get_screen_height(void) {
-    return vmrp_config.screen_height;
+    return vmrp_display_height();
+}
+
+/* 当前 LCD 旋转(MR_LCD_ROTATE_*: 0=正常,1=90°,2=180°,3=270°)。嵌入端在
+ * 每次 dirty 帧后复查 width/height/rotation,变化时按新尺寸重建纹理/布局
+ * (轮询风格与 get_screen_dirty 一致)。 */
+VMRP_EXPORT int vmrp_api_get_screen_rotation(void) {
+    return (int)dsm_get_lcd_rotation();
 }
 
 VMRP_EXPORT int vmrp_api_audio_sample_rate(void) {

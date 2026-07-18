@@ -8,6 +8,7 @@
  */
 #include "../include/arm_ext_priv.h"
 #include "../include/fileLib.h"
+#include "../mythroad/include/dsm.h" /* dsm_host_path_to_guest：包名别名转 guest(GBK) 编码 */
 
 #ifndef _MSC_VER
 #include <unistd.h>
@@ -402,8 +403,16 @@ void arm_ext_init_pack_names(ArmExtModule *m) {
     }
     snprintf(m->pack_host_path, sizeof(m->pack_host_path), "%s",
              host_path ? host_path : "");
-    snprintf(m->pack_alias, sizeof(m->pack_alias), "%s",
-             (alias && *alias) ? alias : m->pack_host_path);
+    /*
+     * 真机上 table[100] 的包名是 GBK 字节，而宿主文件系统给出的路径是
+     * UTF-8。EXT 代码会把该别名剥掉目录/.mrp 后拼进 cache/<包名> 等路径
+     * 再交回 get_filename()（按 GBK→UTF-8 还原），所以 ARM 可见的别名
+     * 必须存成 GBK：否则 UTF-8 字节被二次转换生成乱码目录，且 UTF-8
+     * 中文比 GBK 长，会撑爆 EXT 固定长度的包名缓冲区。guest 回传的 GBK
+     * 别名由 arm_ext_pack_to_host_path() 精确匹配映射回 pack_host_path。
+     */
+    dsm_host_path_to_guest(m->pack_alias, sizeof(m->pack_alias),
+                           (alias && *alias) ? alias : m->pack_host_path);
 }
 
 const char *arm_ext_pack_to_host_path(ArmExtModule *m, const char *pack) {
@@ -1070,11 +1079,6 @@ static int arm_ext_thumb_word_ref_has_imm(uint16_t insn, uint32_t imm) {
     return ((uint32_t)((insn >> 6) & 0x1Fu) * 4u) == imm;
 }
 
-static int arm_ext_thumb_bl_pair(uint16_t first, uint16_t second) {
-    return (first & 0xF800u) == 0xF000u &&
-           (second & 0xD000u) == 0xD000u;
-}
-
 static int arm_ext_thumb_bridge_base_offset(const uint8_t *code,
                                             uint32_t file_len,
                                             uint32_t before_off,
@@ -1514,51 +1518,6 @@ uint32_t find_wrapper_compact_heap_free_return(const uint8_t *code,
     return 0;
 }
 
-static int arm_ext_child_reads_record100_to_compact_r9_buffer(
-    const uint8_t *code,
-    uint32_t file_len) {
-    if (!code || file_len < 128u) return 0;
-    for (uint32_t off = 0; off + 96u <= file_len; off += 2u) {
-        if (arm_ext_code_u16(code, off) != 0xB530u ||
-            arm_ext_code_u16(code, off + 2u) != 0xB083u) {
-            continue;
-        }
-
-        int has_r9_buffer_clear = 0;
-        int has_record100_read = 0;
-        for (uint32_t p = off + 4u; p + 16u < off + 96u; p += 2u) {
-            /*
-             * verdload.ext 0x2CA58A clears seven words at an R9-relative
-             * buffer, then calls the record-read shim at 0x2CD810 with
-             * r0=1, r1=100, stack[1]=that buffer.  Runtime showed the long
-             * package path from record[100] landing in this compact state
-             * area before brwmain consumed the bytes as list pointers.
-             */
-            if (arm_ext_code_u16(code, p) == 0x2100u &&
-                arm_ext_code_u16(code, p + 2u) == 0x2200u &&
-                arm_ext_code_u16(code, p + 4u) == 0x2300u &&
-                (arm_ext_code_u16(code, p + 6u) & 0xFFF8u) == 0x4448u &&
-                arm_ext_code_u16(code, p + 8u) == 0xC00Eu &&
-                arm_ext_code_u16(code, p + 10u) == 0xC00Eu &&
-                arm_ext_code_u16(code, p + 12u) == 0xC008u) {
-                has_r9_buffer_clear = 1;
-            }
-            if ((arm_ext_code_u16(code, p) & 0xFFF8u) == 0x4448u &&
-                arm_ext_code_u16(code, p + 2u) == 0x9101u &&
-                arm_ext_code_u16(code, p + 4u) == 0x2164u &&
-                arm_ext_code_u16(code, p + 6u) == 0x9000u &&
-                arm_ext_code_u16(code, p + 8u) == 0x2001u &&
-                arm_ext_code_u16(code, p + 10u) == 0x9202u &&
-                arm_ext_thumb_bl_pair(arm_ext_code_u16(code, p + 12u),
-                                      arm_ext_code_u16(code, p + 14u))) {
-                has_record100_read = 1;
-            }
-        }
-        if (has_r9_buffer_clear && has_record100_read) return 1;
-    }
-    return 0;
-}
-
 static int arm_ext_child_needs_short_pack_alias(ArmExtModule *m,
                                                 uint32_t file_addr,
                                                 uint32_t file_len) {
@@ -1654,8 +1613,11 @@ static int arm_ext_child_needs_short_pack_alias(ArmExtModule *m,
         if (has_clear32 && has_pack_len_call && has_copy_len_call) return 1;
     }
 
-    if (arm_ext_child_reads_record100_to_compact_r9_buffer(code, file_len))
-        return 1;
+    /* Do not treat an MPS selector-100 initializer as a package copy.  In the
+     * observed OP6120 parent its output is a seven-word API/state structure;
+     * selector meaning belongs to the parent dispatcher, so this shape alone
+     * does not prove a fixed package-name buffer.  Independent copy and state
+     * classifiers remain responsible for actual short-alias hazards. */
 
     if (arm_ext_child_has_compact_r9_state_list(code, file_len)) return 1;
 

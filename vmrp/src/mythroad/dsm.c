@@ -57,6 +57,38 @@
 static DSM_REQUIRE_FUNCS *dsmInFuncs;
 static uint32 dsmStartTime;  //虚拟机初始化时间，用来计算系统运行时间
 
+/* 当前 LCD 旋转(MR_LCD_ROTATE_*: 0=正常,1=90°,2=180°,3=270°)。guest 经
+ * mr_plat(101,param) 设置;真机上这是 LCD 驱动状态,故由 DSM 层持有(本层
+ * 编译时未定义 VMRP,不能访问 vmrp_config)。宿主展示层经
+ * dsm_get_lcd_rotation() 读取以计算旋转后的显示尺寸。 */
+static int32 dsmLcdRotation = 0;
+
+int32 dsm_get_lcd_rotation(void) {
+    return dsmLcdRotation;
+}
+
+void dsm_set_lcd_rotation(int32 rotation) {
+    dsmLcdRotation = rotation;
+}
+
+/* 动感芯片(加速度传感器)状态,guest 经 mr_plat(4001~4006) 控制(接口语义
+ * 见 dsm.h 声明处)。真机上这是传感器驱动状态,由 DSM 层持有;宿主注入层
+ * (mr_motion_input)经 dsm_motion_listening_mode() 判断是否需要上送样本。 */
+static int32 dsmMotionPowered = 0;
+static int32 dsmMotionListening = 0;
+static int32 dsmMotionMode = MR_MOTION_EVENT_SHAKE;
+
+static void dsm_motion_reset(void) {
+    dsmMotionPowered = 0;
+    dsmMotionListening = 0;
+    dsmMotionMode = MR_MOTION_EVENT_SHAKE;
+}
+
+int32 dsm_motion_listening_mode(void) {
+    if (!dsmMotionPowered || !dsmMotionListening) return -1;
+    return dsmMotionMode;
+}
+
 typedef struct DsmMrpWriteTracker {
     int32 handle;
     char path[DSM_MAX_FILE_LEN];
@@ -895,6 +927,29 @@ char *get_filename(char *outputbuf, const char *filename) {
     return outputbuf;
 }
 
+/*
+ * get_filename() 编码规则的逆操作：guest 世界（VM/EXT ARM 代码）固定使用
+ * GBK 编码，宿主文件系统使用 UTF-8 时（FLAG_USE_UTF8_FS），暴露给 guest 的
+ * 文件名/包名必须先转成 GBK —— guest 会把它拼进 cache/<包名> 之类的路径再
+ * 交回来，由 get_filename() 按 GBK→UTF-8 还原。若缺少本转换，UTF-8 字节会
+ * 被当作 GBK 二次转换生成乱码路径，且 UTF-8 中文比 GBK 长，还会撑爆 guest
+ * 侧固定长度的包名缓冲区。非 UTF-8 文件系统上宿主路径本身就是本地编码，
+ * 原样拷贝。
+ */
+void dsm_host_path_to_guest(char *buf, uint32 bufsize, const char *host_path) {
+    if (!buf || !bufsize) return;
+    if (!host_path) host_path = "";
+    if (dsmInFuncs->flags & FLAG_USE_UTF8_FS) {
+        char *gb = UTF8StrToGBStr((uint8 *)host_path, NULL);
+        if (gb) {
+            snprintf_(buf, bufsize, "%s", gb);
+            mr_freeExt(gb);
+            return;
+        }
+    }
+    snprintf_(buf, bufsize, "%s", host_path);
+}
+
 typedef struct {
     int device;
     int status;
@@ -1431,15 +1486,47 @@ int32 mr_plat(int32 code, int32 param) {
         case 1100:  // 浏览器引擎初始化查询（wbrw在加载主页前调用）
             return MR_SUCCESS;
         case 101:
-            /* 设置/查询 LCD 旋转,param 取 MR_LCD_ROTATE_*(0=正常,3=270°)。
+            /* 设置 LCD 旋转,param 取 MR_LCD_ROTATE_*(0=正常,3=270°)。
              * gtcm(SphinxJoy 引擎)启动时调 plat(101,3) 请求横屏;反汇编
              * (game.ext 0x2370AC: cmp r0,#0 / beq 正常路径)证明返回非 0
-             * 会进入"不支持横竖转换请退出"错误分支并黑屏。模拟器的帧缓冲
-             * 方向由应用自行绘制、展示层裁剪,接受请求返回 MR_SUCCESS。
-             * 兼容性:此前返回 MR_IGNORE(1),已有样本中仅 gtcm 调用该码。 */
-            return MR_SUCCESS;
+             * 会进入"不支持横竖转换请退出"错误分支并黑屏,必须返回
+             * MR_SUCCESS。
+             * 旋转状态记入 vmrp_config.screen_rotation,消费方:
+             * - 展示层(main.c/vmrp_api.c)按 vmrp_display_width/height()
+             *   自动翻转窗口/裁剪/行宽;
+             * - ARM EXT 桥(aex_t037)随后调 arm_ext_apply_lcd_rotation()
+             *   把模块画布基准与 ARM 可见 mr_screen_w/h 更新为显示尺寸,
+             *   等价于真机 LCD 驱动旋转后更新平台屏幕全局。 */
+            /* 0..3 即 MR_LCD_ROTATE_NORMAL/90/180/270(mrporting.h:796) */
+            if (param >= 0 && param <= 3) {
+                dsm_set_lcd_rotation(param);
+                return MR_SUCCESS;
+            }
+            return MR_IGNORE;
         case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件
             return MR_SUCCESS;
+        /* 动感芯片接口(SKYENGINE 文档 mr_plat(4001~4006)),状态机在本文件
+         * 顶部 dsmMotion*;样本注入入口是宿主侧 mr_motion_input()。 */
+        case 4001:  // 停止动感芯片监听
+            dsmMotionListening = 0;
+            return MR_SUCCESS;
+        case 4002:  // 给动感芯片上电
+            dsmMotionPowered = 1;
+            return MR_SUCCESS;
+        case 4003:  // 给动感芯片断电(监听随之失效)
+            dsmMotionPowered = 0;
+            dsmMotionListening = 0;
+            return MR_SUCCESS;
+        case 4004:  // 监听晃动模式,值经 mr_event(18, SHAKE, T_MOTION_ACC*) 上送
+            dsmMotionListening = 1;
+            dsmMotionMode = MR_MOTION_EVENT_SHAKE;
+            return MR_SUCCESS;
+        case 4005:  // 监听倾斜模式,值经 mr_event(18, TILT, T_MOTION_ACC*) 上送
+            dsmMotionListening = 1;
+            dsmMotionMode = MR_MOTION_EVENT_TILT;
+            return MR_SUCCESS;
+        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)
+            return 1000 + DSM_MOTION_ACC_MAX;
         default:
             LOGW("mr_plat(code:%d, param:%d) not impl!", code, param);
             break;
@@ -1774,6 +1861,9 @@ int32 dsm_init(DSM_REQUIRE_FUNCS *inFuncs) {
     dsmInFuncs = inFuncs;
     dsmStartTime = dsmInFuncs->get_uptime_ms();
     holdTextMem = NULL;
+    /* LCD 旋转/动感芯片是 guest 运行期经 plat 请求的状态,随 DSM 初始化归零 */
+    dsm_set_lcd_rotation(0);
+    dsm_motion_reset();
     dsm_mrp_reset_all();
     dsm_media_reset_all();
 

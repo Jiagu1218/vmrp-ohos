@@ -9,10 +9,12 @@
 #include <string.h>
 #include <zlib.h>
 #ifdef _WIN32
+#include <windows.h>
 #ifndef PATH_MAX
 #define PATH_MAX 260
 #endif
 #else
+#include <stdatomic.h>
 #include <unistd.h>
 #endif
 
@@ -26,6 +28,7 @@
 #include "./include/network.h"
 #include "./include/runtime.h"
 #include "./include/arm_ext_executor.h"
+#include "./mythroad/include/dsm.h" /* dsm_get_lcd_rotation:plat(101) 旋转状态 */
 
 #define VMRP_LOG_ENABLED() (getenv("VMRP_LOG") != NULL)
 #define VMRP_LOG(...)                          \
@@ -48,8 +51,42 @@ VmrpConfig vmrp_config = {
     .device_day = DEFAULT_DEVICE_DAY,
 };
 
+/* 旋转后的显示尺寸:奇数旋转(90°/270°)时为面板转置,否则即面板尺寸。
+ * 旋转状态由 DSM 层持有(guest 经 plat(101) 设置,见 dsm.c);语义见
+ * vmrp.h 声明处注释。rotation==0 时与 screen_width/height 恒等,未调
+ * plat(101) 的应用路径行为不变。 */
+int vmrp_display_width(void) {
+    return (dsm_get_lcd_rotation() & 1) ? vmrp_config.screen_height
+                                        : vmrp_config.screen_width;
+}
+
+int vmrp_display_height(void) {
+    return (dsm_get_lcd_rotation() & 1) ? vmrp_config.screen_width
+                                        : vmrp_config.screen_height;
+}
+
 static VmrpRuntime runtime;
-static int vmrp_exit_requested = 0;
+#ifdef _WIN32
+static volatile LONG vmrp_exit_requested = 0;
+#else
+static atomic_int vmrp_exit_requested = 0;
+#endif
+
+static void vmrp_set_exit_requested(int requested) {
+#ifdef _WIN32
+    InterlockedExchange(&vmrp_exit_requested, requested);
+#else
+    atomic_store_explicit(&vmrp_exit_requested, requested, memory_order_release);
+#endif
+}
+
+static int vmrp_get_exit_requested(void) {
+#ifdef _WIN32
+    return (int)InterlockedCompareExchange(&vmrp_exit_requested, 0, 0);
+#else
+    return atomic_load_explicit(&vmrp_exit_requested, memory_order_acquire);
+#endif
+}
 
 static uint32_t rd32le(const uint8 *p) {
     return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
@@ -201,13 +238,20 @@ int32_t c_event(int32_t code, int32_t p1, int32_t p2) {
 #endif
 
 int32_t event(int32_t code, int32_t p1, int32_t p2) {
-    if (vmrp_exit_requested) return MR_FAILED;
+    if (vmrp_get_exit_requested()) return MR_FAILED;
     return vmrp_runtime_event(&runtime, code, p1, p2);
 }
 
 int32_t timer(void) {
-    if (vmrp_exit_requested) return MR_FAILED;
+    if (vmrp_get_exit_requested()) return MR_FAILED;
     return vmrp_runtime_timer(&runtime);
+}
+
+/* 动感芯片样本注入(前端/嵌入端调用),guest 未开启监听时被忽略。
+ * x/y/z 取值 ±1000,坐标系见《动感芯片接口》文档。 */
+int32_t vmrp_motion_input(int32_t x, int32_t y, int32_t z) {
+    if (vmrp_get_exit_requested()) return MR_FAILED;
+    return vmrp_runtime_motion(&runtime, x, y, z);
 }
 
 int configureVmrpDnsMap(const char *map) {
@@ -230,9 +274,10 @@ static int apply_config_paths(const VmrpArgs *args) {
 }
 
 int startVmrp(const VmrpArgs *args) {
-    vmrp_exit_requested = 0;
+    vmrp_set_exit_requested(0);
     vmrp_config.screen_width = args->screen_width;
     vmrp_config.screen_height = args->screen_height;
+    /* LCD 旋转由 dsm_init() 随 DSM 初始化归零(vmrp_runtime_init 内) */
     vmrp_config.memory_mb = args->memory_mb;
     /* The DSM callback reads this virtual handset RTC through table[34]. */
     vmrp_config.device_year = args->device_year;
@@ -287,13 +332,13 @@ int startVmrp(const VmrpArgs *args) {
 
 void stopVmrp(void) {
     vmrp_runtime_destroy(&runtime);
-    vmrp_exit_requested = 0;
+    vmrp_set_exit_requested(0);
 }
 
 void vmrp_request_exit(void) {
-    vmrp_exit_requested = 1;
+    vmrp_set_exit_requested(1);
 }
 
 int vmrp_is_exited(void) {
-    return vmrp_exit_requested;
+    return vmrp_get_exit_requested();
 }

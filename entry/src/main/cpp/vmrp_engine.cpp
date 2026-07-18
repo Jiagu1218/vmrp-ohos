@@ -127,7 +127,7 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_set_dns_map", set_dns_map, int (*)(const char *));
 
     RESOLVE_SYM(so_handle_, "vmrp_api_event", event, int (*)(int, int, int));
-    RESOLVE_SYM(so_handle_, "vmrp_api_motion_event", motion_event, int (*)(int, int, int));
+    RESOLVE_SYM(so_handle_, "vmrp_api_motion", motion, int (*)(int, int, int));
     RESOLVE_SYM(so_handle_, "vmrp_api_timer", timer, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_get_timer_interval", get_timer_interval, int (*)(void));
 
@@ -153,9 +153,10 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "vmrp_api_get_edit_text", get_edit_text, const char *(*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_edit_text", set_edit_text, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "vmrp_api_cancel_edit", cancel_edit, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_power_cb", set_motion_power_cb, void (*)(void (*)(int)));
-    RESOLVE_SYM(so_handle_, "vmrp_api_set_motion_sensitivity", set_motion_sensitivity, void (*)(float));
-    RESOLVE_SYM(so_handle_, "vmrp_api_set_shake_cb", set_shake_cb, void (*)(void (*)(int), void (*)(void)));
+    // 上游轮询式 motion/shake API（651e421/4fbb0b4）
+    RESOLVE_SYM(so_handle_, "vmrp_api_motion_active", motion_active, int (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_take_shake", take_shake, int (*)(void));
+    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_rotation", get_screen_rotation, int (*)(void));
     RESOLVE_SYM(so_handle_, "vmrp_api_set_media_cb", set_media_cb, void (*)(void (*)(void), void (*)(void)));
     RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmB", start_dsmB, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmC", start_dsmC, int (*)(const char *));
@@ -172,51 +173,9 @@ bool VmrpEngine::Load(const std::string &so_path) {
     loaded_ = true;
     LOGI("vmrp API resolved, loaded=true");
 
-    // 注册动感芯片上电/断电回调：dsm.c 的 mr_plat(4002/4003) 触发
-    // vmrp_api_motion_power()，最终调此回调启停 OH_Sensor 订阅。
-    if (api_.set_motion_power_cb) {
-        api_.set_motion_power_cb([](int on) {
-            if (on) {
-                VmrpEngine::Instance().StartSensor();
-            } else {
-                VmrpEngine::Instance().StopSensor();
-            }
-        });
-        LOGI("motion power callback registered");
-    }
-
-    // 注册震动回调：native_dsm_funcs.c 的 native_startShake/stopShake 通过
-    // vmrp_api_start_shake/stop_shake 调此回调驱动 OH_Vibrator C API。
-    // intensity: 0=轻(duration*0.3, touch), 1=中(duration*1.0, touch), 2=强(duration*2.0, alarm)
-    if (api_.set_shake_cb) {
-        api_.set_shake_cb(
-            [](int ms) {
-                int level = VmrpEngine::Instance().GetShakeIntensity();
-                int32_t duration = ms > 0 ? ms : 200;
-                Vibrator_Usage usage = VIBRATOR_USAGE_TOUCH;
-                if (level == 0) {
-                    duration = std::max(50, duration * 3 / 10);
-                } else if (level == 2) {
-                    duration = duration * 2;
-                    usage = VIBRATOR_USAGE_ALARM;
-                }
-                Vibrator_Attribute attr;
-                attr.vibratorId = 0;
-                attr.usage = usage;
-                int32_t ret = OH_Vibrator_PlayVibration(duration, attr);
-                if (ret != 0) {
-                    OH_LOG_INFO(LOG_APP, "OH_Vibrator_PlayVibration failed: %{public}d", ret);
-                }
-            },
-            []() {
-                int32_t ret = OH_Vibrator_Cancel();
-                if (ret != 0) {
-                    OH_LOG_INFO(LOG_APP, "OH_Vibrator_Cancel failed: %{public}d", ret);
-                }
-            }
-        );
-        LOGI("shake callback registered (OH_Vibrator C API)");
-    }
+    // motion/shake 改为轮询模型（上游 651e421/4fbb0b4）：
+    // TimerLoop 每 tick 调 PollMotionShake()，查 motion_active() 启停传感器、
+    // take_shake() 驱动 OH_Vibrator。不再注册回调。
 
     // 注册媒体暂停/恢复回调：dsm.c PAUSE/RESUME 调 vmrp_api_media_pause/resume
     // 时通知宿主停启 OHAudio renderer,避免 renderer 空转拉流。
@@ -312,8 +271,8 @@ int VmrpEngine::SendEvent(int code, int p0, int p1) {
 }
 
 int VmrpEngine::SendMotion(int x, int y, int z) {
-    if (!api_.motion_event) return -1;
-    int ret = api_.motion_event(x, y, z);
+    if (!api_.motion) return -1;
+    int ret = api_.motion(x, y, z);
     return ret;
 }
 
@@ -432,8 +391,9 @@ void VmrpEngine::StopSensor() {
 }
 
 void VmrpEngine::SetMotionSensitivity(float s) {
+    // 上游无 set_motion_sensitivity 接口；灵敏度只在宿主侧 OnAccelerometerData
+    // 里乘 motion_sensitivity_ 系数，不进入 vmrp。
     motion_sensitivity_ = s;
-    if (api_.set_motion_sensitivity) api_.set_motion_sensitivity(s);
 }
 
 void VmrpEngine::SetShakeIntensity(int level) {
@@ -441,6 +401,50 @@ void VmrpEngine::SetShakeIntensity(int level) {
     if (level > 2) level = 2;
     shake_intensity_ = level;
     LOGI("shake intensity set to %{public}d (0=light,1=medium,2=strong)", level);
+}
+
+// 轮询上游 motion/shake 状态。由 TimerLoop 每 tick 调一次（worker 线程外，
+// take_shake/motion_active 只读原子状态，无需 engine_mtx_）。
+// - take_shake(): 0=无请求, >0=震动 N 毫秒, -1=停止
+// - motion_active(): -1=未监听, >=0=监听中 → 启停 OH_Sensor 订阅
+void VmrpEngine::PollMotionShake() {
+    if (!loaded_) return;
+    // 震动轮询
+    if (api_.take_shake) {
+        int req = api_.take_shake();
+        if (req > 0) {
+            int level = shake_intensity_;
+            int32_t duration = req > 0 ? req : 200;
+            Vibrator_Usage usage = VIBRATOR_USAGE_TOUCH;
+            if (level == 0) {
+                duration = std::max(50, duration * 3 / 10);
+            } else if (level == 2) {
+                duration = duration * 2;
+                usage = VIBRATOR_USAGE_ALARM;
+            }
+            Vibrator_Attribute attr;
+            attr.vibratorId = 0;
+            attr.usage = usage;
+            int32_t ret = OH_Vibrator_PlayVibration(duration, attr);
+            if (ret != 0) {
+                OH_LOG_INFO(LOG_APP, "OH_Vibrator_PlayVibration failed: %{public}d", ret);
+            }
+        } else if (req == -1) {
+            int32_t ret = OH_Vibrator_Cancel();
+            if (ret != 0) {
+                OH_LOG_INFO(LOG_APP, "OH_Vibrator_Cancel failed: %{public}d", ret);
+            }
+        }
+    }
+    // 动感传感器启停轮询：active >=0 时订阅，-1 时取消
+    if (api_.motion_active) {
+        int active = api_.motion_active();
+        if (active >= 0 && !sensor_subscribed_) {
+            StartSensor();
+        } else if (active < 0 && sensor_subscribed_) {
+            StopSensor();
+        }
+    }
 }
 
 void VmrpEngine::SetVolume(int level) {
