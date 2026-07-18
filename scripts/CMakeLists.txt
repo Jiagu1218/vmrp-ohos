@@ -513,25 +513,10 @@ endif()
 # 原来的 OHOS_CONNECT_TIMEOUT 正则补丁不再匹配上游函数结构。
 
 # --- Patch aex_table.c: case 38 memset 越界守卫 (OHOS_MEMSET_BOUNDS_GUARD) ---
-# 上游重构: arm_ext_executor.c 的 case 38 拆分为 aex_table.c 的 aex_t038()。
-# arm_alloc 上游已加 if (len > EXT_MEM_SIZE) return 0 长度守卫,覆盖 uint32
-# 溢出路径(EXT 地址空间仅 16MB,heap_top+len <= 32MB 不溢出 uint32),
-# 因此 OHOS_ARM_ALLOC_U64 补丁不再需要,已删除。
-# case 14 上游已改用 arm_ptr_span + GOT 修复,OHOS_MEMSET_NULL_GUARD 已删除。
-# 本补丁仍需保留: arm_alloc 长度守卫不覆盖 heap_top 被踩为异常小值场景
-# (0x00333638 + 0xA27B9C = 0xD5B1D4 < mem_end,检查通过但分配越界)。
-set(_VMRP_AEX_TABLE1 "${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
-if(EXISTS "${_VMRP_AEX_TABLE1}")
-    file(READ "${_VMRP_AEX_TABLE1}" _at1)
-    if(NOT _at1 MATCHES "OHOS_MEMSET_BOUNDS_GUARD")
-        string(REPLACE
-            "                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);"
-            "                            void *ep = arm_ptr(m, a);\n                            /* OHOS_MEMSET_BOUNDS_GUARD: 二次越界守卫,即使 arm_alloc\n                             * 的长度守卫被绕过(如 heap_top 损坏),也阻止 memset\n                             * 踩出 m->mem 16MB 缓冲。a-EXT_BASE_ADDR+want 必须\n                             * ≤ EXT_MEM_SIZE,否则跳过 memset(与 ep==NULL 同义)。 */\n                            if (ep && (uint64_t)(a - EXT_BASE_ADDR) + (uint64_t)want <= (uint64_t)EXT_MEM_SIZE) {\n                                memset(ep, 0, want);\n                            }"
-            _at1 "${_at1}")
-        file(WRITE "${_VMRP_AEX_TABLE1}" "${_at1}")
-        message(STATUS "[OHOS] Patched case 38 memset bounds guard in aex_table.c (OHOS_MEMSET_BOUNDS_GUARD)")
-    endif()
-endif()
+# 已移除: 上游重构 aex_t038 时移除了 void *ep = arm_ptr(m, a); if (ep) memset(ep,0,want);
+# 代码段(改用 arm_ext_scrram_acquire 独立映射),补丁锚点不存在,string(REPLACE) 静默失败。
+# 上游 arm_alloc 已有长度守卫(if len > EXT_MEM_SIZE return 0),SCRRAM 独立映射也
+# 不再走 arm_alloc,原 memset 越界场景已不存在,无需此补丁。
 
 # --- Patch arm_ext_executor.c: hook_invalid WRITE_UNMAPPED 黑洞 + READ_UNMAPPED graceful exit ---
 # v2: WRITE_UNMAPPED 动态 uc_mem_map 64K 黑洞页让写操作真正完成,
@@ -605,32 +590,10 @@ if(EXISTS "${_VMRP_AEX_TABLE2}")
 endif()
 
 # --- Patch arm_ext_executor.c: arm_ext_call_dispatch 中 mr_timerStart 不覆盖 ARM 侧已设的 timer ---
-# 问题：arm_ext_call_dispatch 的 post-dispatch 逻辑在 wrapper queue 还有节点时
-# 无条件调 mr_timerStart(timer_interval=50),覆盖了 ARM 代码在 dispatch 期间
-# 通过 table[31] 设的 mr_timerStart(T)。例如 MRP 设 timerStart(1000) 表示
-# 1秒后触发,但 50ms 覆盖后每 50ms 触发一次,1分钟计时只需约 3 秒完成。
-# arm_ext_call 中所有 mr_timerStart(50) 都有 !m->host_timer_pending 前置条件,
-# 但 arm_ext_call_dispatch 中的两处缺少此检查。
-# 修复：在 mr_timerStart 之前检查 sync_timer_state_from_arm 后的 host_timer_pending,
-# 如果 ARM 侧已通过 table[31] 设了自己的 timer(host_timer_pending==1),不覆盖。
-set(_VMRP_ARMEXT9 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_ARMEXT9}")
-    file(READ "${_VMRP_ARMEXT9}" _aet9)
-    if(NOT _aet9 MATCHES "OHOS_TIMER_NO_OVERRIDE")
-        # 修复第一处: wrapper_timer_owner + queue_live 路径
-        string(REPLACE
-            "        if (queue_live) {\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            /* ARM 侧可能未调用 table[31] timerStart 重新注册 SDL 定时器，\n             * 需要宿主主动启动一次以保证下一个 tick 到达 */\n            mr_timerStart((uint16)timer_interval);"
-            "        if (queue_live) {\n            /* OHOS_TIMER_NO_OVERRIDE: sync_timer_state_from_arm 后 host_timer_pending==1\n             * 说明 ARM 代码已通过 table[31] 设了自己的 timer interval(如 1000ms),\n             * 此时 mr_timerStart(50) 会覆盖 api_timer_due_ms 导致定时器过快。\n             * 只在 ARM 侧未设 timer 时补启 50ms tick 驱动 wrapper queue。 */\n            int _arm_set_timer = m->host_timer_pending;\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            if (!_arm_set_timer) {\n                mr_timerStart((uint16)timer_interval);\n            }"
-            _aet9 "${_aet9}")
-        # 修复第二处: chain_walker_owner + tc_after 路径
-        string(REPLACE
-            "        if (tc_after) {\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            mr_timerStart((uint16)timer_interval);"
-            "        if (tc_after) {\n            int _arm_set_timer_cw = m->host_timer_pending; /* OHOS_TIMER_NO_OVERRIDE */\n            mr_timer_state = 1;\n            m->host_timer_pending = 1;\n            internal_slot_write(m, m->mr_timer_state_slot, 1);\n            if (!_arm_set_timer_cw) {\n                mr_timerStart((uint16)timer_interval);\n            }"
-            _aet9 "${_aet9}")
-        file(WRITE "${_VMRP_ARMEXT9}" "${_aet9}")
-        message(STATUS "[OHOS] Patched arm_ext_call_dispatch mr_timerStart no-override (OHOS_TIMER_NO_OVERRIDE)")
-    endif()
-endif()
+# 已移除: 上游重构了 arm_ext_call_dispatch,新增 arm_ext_call_primary_compact_dispatch
+# 路径并统一了 host_timer_pending 门控。旧补丁锚点(if (queue_live) / if (tc_after))
+# 已不存在,string(REPLACE) 静默失败,补丁无任何效果。上游已正确处理 ARM 侧 timer
+# 不被 50ms 覆盖的问题,无需此补丁。
 
 # --- Patch mythroad.c: mr_timer 末尾调用 ohos_gif_tick() 推进 GIF 动画帧 ---
 # 3011 创建的 GIF 动画需要定时器驱动逐帧绘制。ohos_gif_tick() 遍历
@@ -676,9 +639,12 @@ set(_VMRP_DSM_VOL "${VMRP_SRC_DIR}/src/mythroad/dsm.c")
 if(EXISTS "${_VMRP_DSM_VOL}")
     file(READ "${_VMRP_DSM_VOL}" _dsm_vol)
     if(NOT _dsm_vol MATCHES "OHOS_SET_VOL")
+        # 锚点: 动感芯片 case 4006 之后、default 之前插入 MR_SET_VOL。
+        # 上游在 MR_SET_KEY_END 和 default 之间新增了 case 4001~4006(动感芯片),
+        # 旧锚点(MR_SET_KEY_END ... default)失效,改用 4006 作为锚点。
         string(REPLACE
-            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        default:"
-            "        case MR_SET_KEY_END:  // 1214 启用/禁用按键结束事件\n            return MR_SUCCESS;\n        case MR_SET_VOL: {  /* OHOS_SET_VOL: 1302 音量控制, param=0~10 */\n            extern void vmrp_api_set_volume(int level);\n            vmrp_api_set_volume(param);\n            return MR_SUCCESS;\n        }\n        default:"
+            "        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)\n            return 1000 + DSM_MOTION_ACC_MAX;\n        default:"
+            "        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)\n            return 1000 + DSM_MOTION_ACC_MAX;\n        case MR_SET_VOL: {  /* OHOS_SET_VOL: 1302 音量控制, param=0~10 */\n            extern void vmrp_api_set_volume(int level);\n            vmrp_api_set_volume(param);\n            return MR_SUCCESS;\n        }\n        default:"
             _dsm_vol "${_dsm_vol}")
         file(WRITE "${_VMRP_DSM_VOL}" "${_dsm_vol}")
         message(STATUS "[OHOS] Patched dsm.c MR_SET_VOL (OHOS_SET_VOL)")
