@@ -62,10 +62,10 @@ std::atomic<bool> g_engine_running{false};
 // 编辑回调：把编辑状态通知到 ArkTS（通过 napi_threadsafe_function）。
 napi_threadsafe_function g_edit_tsfn = nullptr;
 
-// 触摸事件码由 vmrp_api.h 宏提供。
+// 触摸事件码由 skyengine_api.h 宏提供。
 } // namespace
 
-#include "vmrp_api.h"
+#include "skyengine_api.h"
 
 // 这几个函数在全局命名空间定义（无 namespace），供本文件各处调用。
 void TryRender();
@@ -161,7 +161,7 @@ void TryRenderForce() {
 }
 
 // 渲染驱动循环。
-// vmrp_api.c 在 VMRP_API_ASYNC_RUNNER=1 下采用 async worker 模型：vmrp_api_start
+// skyengine_api.c 在 VMRP_API_ASYNC_RUNNER=1 下采用 async worker 模型：skyengine_api_start
 // 成功后自动起 worker 线程自驱 timer()/event()。本循环不再调 StepTimer()，
 // 只做三件事：1) 周期请求渲染；2) 检测引擎退出；3) 轮询 motion/shake。
 static void TimerLoop() {
@@ -252,7 +252,7 @@ static napi_value SetMemory(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     int32_t memMb = 1;
     napi_get_value_int32(env, args[0], &memMb);
-    int r = vmrp_api_set_memory(memMb);
+    int r = skyengine_api_set_memory(memMb);
     napi_value result;
     napi_create_int32(env, r, &result);
     return result;
@@ -274,7 +274,7 @@ static napi_value StartEngine(napi_env env, napi_callback_info info) {
         if (pause) g_audio.Pause(); else g_audio.Resume();
     });
 
-    // 注册音量回调：dsm.c mr_plat(1302,level) 通过 vmrp_api_set_volume 触发。
+    // 注册音量回调：dsm.c mr_plat(1302,level) 通过 skyengine_api_set_volume 触发。
     VmrpEngine::Instance().SetVolumeFn([](int level) {
         g_audio.SetVolume(level);
     });

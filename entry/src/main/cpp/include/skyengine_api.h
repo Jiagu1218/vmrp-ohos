@@ -1,0 +1,189 @@
+#ifndef __VMRP_API_H__
+#define __VMRP_API_H__
+
+#include <stdint.h>
+
+#ifdef _WIN32
+#define VMRP_EXPORT __declspec(dllexport)
+#else
+#define VMRP_EXPORT __attribute__((visibility("default")))
+#endif
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* MRP event codes (same as mrporting.h) */
+#define VMRP_KEY_PRESS      0
+#define VMRP_KEY_RELEASE    1
+#define VMRP_MOUSE_DOWN     2
+#define VMRP_MOUSE_UP       3
+#define VMRP_MOUSE_MOVE     12
+
+/* MRP key codes */
+#define VMRP_KEY_0          0
+#define VMRP_KEY_1          1
+#define VMRP_KEY_2          2
+#define VMRP_KEY_3          3
+#define VMRP_KEY_4          4
+#define VMRP_KEY_5          5
+#define VMRP_KEY_6          6
+#define VMRP_KEY_7          7
+#define VMRP_KEY_8          8
+#define VMRP_KEY_9          9
+#define VMRP_KEY_STAR       10
+#define VMRP_KEY_POUND      11
+#define VMRP_KEY_UP         12
+#define VMRP_KEY_DOWN       13
+#define VMRP_KEY_LEFT       14
+#define VMRP_KEY_RIGHT      15
+#define VMRP_KEY_POWER      16
+#define VMRP_KEY_SOFTLEFT   17
+#define VMRP_KEY_SOFTRIGHT  18
+#define VMRP_KEY_SEND       19
+#define VMRP_KEY_SELECT     20
+
+/* Host-facing image processing modes. */
+#define VMRP_IMAGE_PROCESSING_NATIVE 0
+#define VMRP_IMAGE_PROCESSING_OPENCV 1
+
+/* Lifecycle */
+VMRP_EXPORT int skyengine_api_init(int screen_w, int screen_h);
+/*
+ * App-visible memory in MB. Allowed: 1/2/4/6/8/16. Must be called before
+ * skyengine_api_start(); takes effect on the next start.
+ */
+VMRP_EXPORT int skyengine_api_set_memory(int memory_mb);
+/*
+ * App-visible handset date. Accepts "YYYY-MM-DD" or "host" and uses the same
+ * calendar validation as the CLI. Must be called before skyengine_api_start(); an
+ * active run is rejected with -1.
+ */
+VMRP_EXPORT int skyengine_api_set_device_date(const char *date);
+VMRP_EXPORT int skyengine_api_set_work_dir(const char *work_dir);
+VMRP_EXPORT int skyengine_api_start(const char *mrp_path, const char *ext, const char *entry);
+VMRP_EXPORT void skyengine_api_destroy(void);
+VMRP_EXPORT int skyengine_api_is_running(void);
+/* Pauses/resumes the native VM worker without destroying emulator state. */
+VMRP_EXPORT int skyengine_api_pause(void);
+VMRP_EXPORT int skyengine_api_resume(void);
+
+/*
+ * DNS mapping: when MRP resolves original_domain, VMRP resolves fake_domain
+ * instead and returns fake_domain's IPv4 result. Format:
+ *   original_domain->fake_domain
+ * Multiple entries can be separated by comma, semicolon, or newline.
+ */
+VMRP_EXPORT int skyengine_api_set_dns_map(const char *map);
+
+/* Input events */
+VMRP_EXPORT int skyengine_api_event(int code, int p0, int p1);
+
+/*
+ * Motion chip (accelerometer, SKYENGINE mr_plat(4001~4006) 动感芯片接口):
+ * x/y/z are gravity components in ±1000 (the range advertised by plat(4006)).
+ * Axis convention (device coordinates): phone flat face-up -> +Z max; screen
+ * facing left, held sideways -> +X max; screen facing away, upright -> +Y max.
+ * Samples are dropped while the guest has no active listener; poll
+ * skyengine_api_motion_active() and only push platform sensor data when it
+ * returns >= 0 (-1 = idle, 0 = shake mode, 1 = tilt mode).
+ */
+VMRP_EXPORT int skyengine_api_motion(int x, int y, int z);
+VMRP_EXPORT int skyengine_api_motion_active(void);
+
+/*
+ * Vibration motor (mr_startShake/mr_stopShake, SKYENGINE 手册
+ * mr_startShake.md).  Pull-based like get_screen_dirty: the guest's latest
+ * request is held until taken.  Return value: 0 = no new request,
+ * >0 = start vibrating for N milliseconds (call the platform vibrator),
+ * -1 = stop vibrating.  Consecutive start/stop requests collapse to the
+ * last one (matches real motor behavior).  Poll after events/timer ticks.
+ */
+VMRP_EXPORT int skyengine_api_take_shake(void);
+
+/*
+ * Timer: shared-library builds run the VM timer on a native worker thread so
+ * Flutter hosts do not need to schedule it on the UI isolate. These functions
+ * are kept for ABI compatibility with hosts that still use manual scheduling.
+ */
+VMRP_EXPORT int skyengine_api_timer(void);
+VMRP_EXPORT int skyengine_api_get_timer_interval(void);
+
+/*
+ * Selects the host-facing screen conversion path. The OpenCV mode is accepted
+ * as a runtime option; builds without an OpenCV converter fall back to native.
+ */
+VMRP_EXPORT int skyengine_api_set_image_processing_mode(int mode);
+VMRP_EXPORT int skyengine_api_get_image_processing_mode(void);
+
+/*
+ * Screen buffer: RGB565 format, row-major, size = width * height * 2 bytes.
+ * The pointer remains valid until skyengine_api_destroy().
+ * Call skyengine_api_get_screen_dirty() to check if the buffer has been updated
+ * since the last call (it auto-clears the flag).
+ *
+ * The RGBA buffer is host-owned and refreshed when
+ * skyengine_api_get_screen_rgba_buffer() is called. It stays valid until the next
+ * skyengine_api_get_screen_rgba_buffer(), skyengine_api_init(), or skyengine_api_destroy().
+ */
+VMRP_EXPORT const uint16_t *skyengine_api_get_screen_buffer(void);
+VMRP_EXPORT const uint8_t *skyengine_api_get_screen_rgba_buffer(void);
+VMRP_EXPORT int skyengine_api_get_screen_dirty(void);
+VMRP_EXPORT int skyengine_api_get_screen_width(void);
+VMRP_EXPORT int skyengine_api_get_screen_height(void);
+/*
+ * Current LCD rotation requested by the guest via mr_plat(101, param)
+ * (MR_LCD_ROTATE_*: 0=normal, 1=90°, 2=180°, 3=270°).  For odd rotations the
+ * width/height getters above return the transposed panel size and the screen
+ * buffer rows use that width as stride.  Poll after each dirty frame and
+ * rebuild the texture/layout when width/height/rotation changed
+ * (总像素数在转置下不变,buffer 指针保持有效).
+ */
+VMRP_EXPORT int skyengine_api_get_screen_rotation(void);
+
+/*
+ * Audio stream: the runtime decodes/synthesizes MRP sound into signed
+ * 16-bit little-endian stereo PCM at skyengine_api_audio_sample_rate().
+ * Hosts without SDL (Flutter) should poll skyengine_api_audio_is_active() and
+ * push frames returned by skyengine_api_audio_render_s16le() to their platform
+ * audio backend. buffer must hold frames * channels * sizeof(int16_t) bytes.
+ */
+VMRP_EXPORT int skyengine_api_audio_sample_rate(void);
+VMRP_EXPORT int skyengine_api_audio_channels(void);
+VMRP_EXPORT int skyengine_api_audio_is_active(void);
+VMRP_EXPORT int skyengine_api_audio_render_s16le(void *buffer, int frames);
+VMRP_EXPORT void skyengine_api_audio_stop(void);
+
+/*
+ * Text edit: when MRP requests text input, skyengine_api_is_edit_active()
+ * returns 1. The host can read skyengine_api_get_edit_text() for the
+ * app-provided initial content, display a text input UI, then call
+ * skyengine_api_set_edit_text() to confirm or skyengine_api_cancel_edit() to cancel.
+ */
+VMRP_EXPORT int skyengine_api_is_edit_active(void);
+VMRP_EXPORT const char *skyengine_api_get_edit_text(void);
+VMRP_EXPORT int skyengine_api_set_edit_text(const char *text);
+VMRP_EXPORT int skyengine_api_cancel_edit(void);
+
+/* OHOS_MEDIA_DECL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。 */
+VMRP_EXPORT void skyengine_api_media_pause(void);
+VMRP_EXPORT void skyengine_api_media_resume(void);
+VMRP_EXPORT int skyengine_api_media_seek(int ms);
+VMRP_EXPORT int skyengine_api_media_position(void);
+VMRP_EXPORT int skyengine_api_media_duration(void);
+VMRP_EXPORT void skyengine_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void));
+
+/* OHOS_VOLUME_DECL: 音量控制。 */
+VMRP_EXPORT void skyengine_api_set_volume(int level);
+VMRP_EXPORT void skyengine_api_set_volume_cb(void (*cb)(int level));
+
+/* OHOS_DSM_BC_EX: 外部移植接口。 */
+VMRP_EXPORT int skyengine_api_start_dsmB(const char *entry);
+VMRP_EXPORT int skyengine_api_start_dsmC(const char *entry);
+VMRP_EXPORT int skyengine_api_start_dsm_ex(const char *path, const char *entry);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
