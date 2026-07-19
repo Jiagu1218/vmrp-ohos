@@ -69,7 +69,7 @@ int32 mr_timer_run_without_pause = FALSE;
 
 static int mr_lifecycle_diag(void) {
     static int cached = -1;
-    if (cached < 0) cached = getenv("VMRP_LIFECYCLE_DIAG") ? 1 : 0;
+    if (cached < 0) cached = getenv("SKYENGINE_LIFECYCLE_DIAG") ? 1 : 0;
     return cached;
 }
 
@@ -3079,15 +3079,15 @@ int _mr_TestCom(mrp_State* L, int input0, int input1) {
             break;
         case 2:
             native_event_function = (uint32)input1;
-            if (getenv("VMRP_ARM_EXT_TRACE")) printf("native_event_function=0x%X\n", native_event_function);
+            if (getenv("SKYENGINE_ARM_EXT_TRACE")) printf("native_event_function=0x%X\n", native_event_function);
             break;
         case 3:
             native_timer_function = (uint32)input1;
-            if (getenv("VMRP_ARM_EXT_TRACE")) printf("native_timer_function=0x%X\n", native_timer_function);
+            if (getenv("SKYENGINE_ARM_EXT_TRACE")) printf("native_timer_function=0x%X\n", native_timer_function);
             break;
         case 4:
             native_stop_function = (uint32)input1;
-            if (getenv("VMRP_ARM_EXT_TRACE")) printf("native_stop_function=0x%X\n", native_stop_function);
+            if (getenv("SKYENGINE_ARM_EXT_TRACE")) printf("native_stop_function=0x%X\n", native_stop_function);
             break;
         case 5:
             native_pauseApp_function = (uint32)input1;
@@ -4263,9 +4263,9 @@ int32 mr_event(int16 type, int32 param1, int32 param2) {
 
     if ((mr_state == MR_STATE_RUN) || ((mr_timer_run_without_pause) && (mr_state == MR_STATE_PAUSE))) {
         if (native_event_function) {
-            if (getenv("VMRP_ARM_EXT_TRACE")) printf("native_event call func=0x%X type=%d p1=%d p2=%d\n", native_event_function, type, param1, param2);
+            if (getenv("SKYENGINE_ARM_EXT_TRACE")) printf("native_event call func=0x%X type=%d p1=%d p2=%d\n", native_event_function, type, param1, param2);
             int32 status = native_ext_callback3(native_event_function, (uint32)type, (uint32)param1, (uint32)param2);
-            if (getenv("VMRP_ARM_EXT_TRACE")) printf("native_event ret=%d state=%d\n", status, mr_state);
+            if (getenv("SKYENGINE_ARM_EXT_TRACE")) printf("native_event ret=%d state=%d\n", status, mr_state);
             if (status != MR_IGNORE)
                 return status;
         }
@@ -4274,7 +4274,7 @@ int32 mr_event(int16 type, int32 param1, int32 param2) {
             /* 原版平台的 mr_event 只有两级:显式注册的 mr_event_function
              * (对应上面的 native_event_function),然后 Lua dealevent;
              * 原始事件从不直接投递给 C ext——ext 只经 dealevent 打包转发
-             * (_strCom 801)收到事件。20-byte native_ext_event 是 vmrp 为
+             * (_strCom 801)收到事件。20-byte native_ext_event 是 skyengine 为
              * 无 Lua hook 的 EXT-only runtime 补的兼容入口。若在 dealevent
              * 存在时也先调它,同一按键会两次进入 wrapper,且 MR_IGNORE 语义
              * 变得含混:重放会双重处理,强制消费又截断 Lua 路径。因此与

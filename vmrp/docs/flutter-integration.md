@@ -17,11 +17,11 @@
 │                 └──────┬──────┘  │
 │                        │ dart:ffi│
 ├────────────────────────┼─────────┤
-│  libvmrp.so (C)        │         │
+│  libskyengine.so (C)        │         │
 │  ┌─────────────────────▼──────┐  │
-│  │ vmrp_api.c (导出API)       │  │
+│  │ skyengine_api.c (导出API)       │  │
 │  │   ↓                        │  │
-│  │ vmrp core + mythroad + ARM │  │
+│  │ skyengine core + mythroad + ARM │  │
 │  └────────────────────────────┘  │
 └──────────────────────────────────┘
 ```
@@ -31,13 +31,13 @@
 - 屏幕渲染：C 侧维护 RGB565 像素缓冲区，Dart 侧读取后绘制
 - 音频播放：C 侧解码/合成 MIDI/WAV/PCM 为 44.1kHz/S16/stereo PCM，Dart 侧通过 `flutter_soloud` 播放
 - 定时器：Dart 侧轮询 C 的 timer interval，自行用 `Timer` 调度
-- 单线程模型：所有 vmrp C 调用必须在同一个 isolate 中
+- 单线程模型：所有 skyengine C 调用必须在同一个 isolate 中
 
 ---
 
 ## 1. 集成到 Flutter 项目
 
-推荐使用 **git submodule** 方式，Flutter 构建时自动编译 `libvmrp.so`，无需手动交叉编译。
+推荐使用 **git submodule** 方式，Flutter 构建时自动编译 `libskyengine.so`，无需手动交叉编译。
 
 ### 方式一：Git Submodule（推荐）
 
@@ -45,14 +45,14 @@
 
 ```bash
 cd your_flutter_project
-git submodule add https://github.com/msojocs/vmrp.git vmrp
-git submodule update --init --recursive  # 初始化 vmrp 内部的 unicorn 子模块
+git submodule add https://github.com/msojocs/skyengine.git skyengine
+git submodule update --init --recursive  # 初始化 skyengine 内部的 unicorn 子模块
 ```
 
 目录结构：
 ```
 your_flutter_project/
-  vmrp/                          ← git submodule
+  skyengine/                          ← git submodule
     CMakeLists.txt
     src/
     third_party/unicorn/         ← 嵌套子模块，--recursive 会自动拉取
@@ -60,8 +60,8 @@ your_flutter_project/
     app/
       build.gradle.kts           ← 配置 CMake
   lib/
-    vmrp_bindings.dart
-    vmrp_engine.dart
+    skyengine_bindings.dart
+    skyengine_engine.dart
 ```
 
 #### 1.2 配置 android/app/build.gradle.kts
@@ -78,7 +78,7 @@ android {
 
     externalNativeBuild {
         cmake {
-            path = file("../../vmrp/CMakeLists.txt")
+            path = file("../../skyengine/CMakeLists.txt")
             version = "3.18.1+"
         }
     }
@@ -95,25 +95,25 @@ android {
         }
         externalNativeBuild {
             cmake {
-                arguments '-DVMRP_BUILD_SHARED_ONLY=ON'
+                arguments '-DSKYENGINE_BUILD_SHARED_ONLY=ON'
             }
         }
     }
 
     externalNativeBuild {
         cmake {
-            path "../../vmrp/CMakeLists.txt"
+            path "../../skyengine/CMakeLists.txt"
         }
     }
 }
 ```
 
-关键参数 `-DVMRP_BUILD_SHARED_ONLY=ON`：只构建 `libvmrp.so`，跳过 SDL 可执行文件和测试（Android 环境没有 SDL）。
+关键参数 `-DSKYENGINE_BUILD_SHARED_ONLY=ON`：只构建 `libskyengine.so`，跳过 SDL 可执行文件和测试（Android 环境没有 SDL）。
 
 #### 1.3 构建
 
 ```bash
-flutter build apk  # 自动触发 CMake 编译 libvmrp.so
+flutter build apk  # 自动触发 CMake 编译 libskyengine.so
 ```
 
 Flutter 的 Gradle 插件会用 Android NDK 的 CMake toolchain 自动编译，产物直接打包进 APK。
@@ -132,7 +132,7 @@ cmake -B build-android-arm64 \
   -DCMAKE_TOOLCHAIN_FILE=$NDK/build/cmake/android.toolchain.cmake \
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_PLATFORM=android-21 \
-  -DVMRP_BUILD_SHARED_ONLY=ON \
+  -DSKYENGINE_BUILD_SHARED_ONLY=ON \
   -DCMAKE_BUILD_TYPE=Release
 
 cmake --build build-android-arm64
@@ -146,111 +146,111 @@ your_flutter_project/
       src/main/
         jniLibs/
           arm64-v8a/
-            libvmrp.so
+            libskyengine.so
           armeabi-v7a/
-            libvmrp.so
+            libskyengine.so
 ```
 
 ---
 
 ## 2. Dart FFI 绑定
 
-### vmrp_bindings.dart
+### skyengine_bindings.dart
 
 ```dart
 import 'dart:ffi';
 import 'dart:io';
 
 // C 函数签名
-typedef _vmrp_api_init_C = Int32 Function(Int32, Int32);
-typedef _vmrp_api_init_Dart = int Function(int, int);
+typedef _skyengine_api_init_C = Int32 Function(Int32, Int32);
+typedef _skyengine_api_init_Dart = int Function(int, int);
 
-typedef _vmrp_api_start_C = Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
-typedef _vmrp_api_start_Dart = int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _skyengine_api_start_C = Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
+typedef _skyengine_api_start_Dart = int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>);
 
-typedef _vmrp_api_destroy_C = Void Function();
-typedef _vmrp_api_destroy_Dart = void Function();
+typedef _skyengine_api_destroy_C = Void Function();
+typedef _skyengine_api_destroy_Dart = void Function();
 
-typedef _vmrp_api_event_C = Int32 Function(Int32, Int32, Int32);
-typedef _vmrp_api_event_Dart = int Function(int, int, int);
+typedef _skyengine_api_event_C = Int32 Function(Int32, Int32, Int32);
+typedef _skyengine_api_event_Dart = int Function(int, int, int);
 
-typedef _vmrp_api_timer_C = Int32 Function();
-typedef _vmrp_api_timer_Dart = int Function();
+typedef _skyengine_api_timer_C = Int32 Function();
+typedef _skyengine_api_timer_Dart = int Function();
 
-typedef _vmrp_api_get_timer_interval_C = Int32 Function();
-typedef _vmrp_api_get_timer_interval_Dart = int Function();
+typedef _skyengine_api_get_timer_interval_C = Int32 Function();
+typedef _skyengine_api_get_timer_interval_Dart = int Function();
 
-typedef _vmrp_api_get_screen_buffer_C = Pointer<Uint16> Function();
-typedef _vmrp_api_get_screen_buffer_Dart = Pointer<Uint16> Function();
+typedef _skyengine_api_get_screen_buffer_C = Pointer<Uint16> Function();
+typedef _skyengine_api_get_screen_buffer_Dart = Pointer<Uint16> Function();
 
-typedef _vmrp_api_get_screen_dirty_C = Int32 Function();
-typedef _vmrp_api_get_screen_dirty_Dart = int Function();
+typedef _skyengine_api_get_screen_dirty_C = Int32 Function();
+typedef _skyengine_api_get_screen_dirty_Dart = int Function();
 
-typedef _vmrp_api_get_screen_width_C = Int32 Function();
-typedef _vmrp_api_get_screen_width_Dart = int Function();
+typedef _skyengine_api_get_screen_width_C = Int32 Function();
+typedef _skyengine_api_get_screen_width_Dart = int Function();
 
-typedef _vmrp_api_get_screen_height_C = Int32 Function();
-typedef _vmrp_api_get_screen_height_Dart = int Function();
+typedef _skyengine_api_get_screen_height_C = Int32 Function();
+typedef _skyengine_api_get_screen_height_Dart = int Function();
 
-typedef _vmrp_api_get_screen_rotation_C = Int32 Function();
-typedef _vmrp_api_get_screen_rotation_Dart = int Function();
+typedef _skyengine_api_get_screen_rotation_C = Int32 Function();
+typedef _skyengine_api_get_screen_rotation_Dart = int Function();
 
-typedef _vmrp_api_motion_C = Int32 Function(Int32, Int32, Int32);
-typedef _vmrp_api_motion_Dart = int Function(int, int, int);
+typedef _skyengine_api_motion_C = Int32 Function(Int32, Int32, Int32);
+typedef _skyengine_api_motion_Dart = int Function(int, int, int);
 
-typedef _vmrp_api_motion_active_C = Int32 Function();
-typedef _vmrp_api_motion_active_Dart = int Function();
+typedef _skyengine_api_motion_active_C = Int32 Function();
+typedef _skyengine_api_motion_active_Dart = int Function();
 
-typedef _vmrp_api_is_edit_active_C = Int32 Function();
-typedef _vmrp_api_is_edit_active_Dart = int Function();
+typedef _skyengine_api_is_edit_active_C = Int32 Function();
+typedef _skyengine_api_is_edit_active_Dart = int Function();
 
-typedef _vmrp_api_set_edit_text_C = Int32 Function(Pointer<Utf8>);
-typedef _vmrp_api_set_edit_text_Dart = int Function(Pointer<Utf8>);
+typedef _skyengine_api_set_edit_text_C = Int32 Function(Pointer<Utf8>);
+typedef _skyengine_api_set_edit_text_Dart = int Function(Pointer<Utf8>);
 
-typedef _vmrp_api_cancel_edit_C = Int32 Function();
-typedef _vmrp_api_cancel_edit_Dart = int Function();
+typedef _skyengine_api_cancel_edit_C = Int32 Function();
+typedef _skyengine_api_cancel_edit_Dart = int Function();
 
 class VmrpBindings {
   late final DynamicLibrary _lib;
 
-  late final _vmrp_api_init_Dart init;
-  late final _vmrp_api_start_Dart start;
-  late final _vmrp_api_destroy_Dart destroy;
-  late final _vmrp_api_event_Dart event;
-  late final _vmrp_api_timer_Dart timer;
-  late final _vmrp_api_get_timer_interval_Dart getTimerInterval;
-  late final _vmrp_api_get_screen_buffer_Dart getScreenBuffer;
-  late final _vmrp_api_get_screen_dirty_Dart getScreenDirty;
-  late final _vmrp_api_get_screen_width_Dart getScreenWidth;
-  late final _vmrp_api_get_screen_height_Dart getScreenHeight;
-  late final _vmrp_api_get_screen_rotation_Dart getScreenRotation;
-  late final _vmrp_api_motion_Dart motion;
-  late final _vmrp_api_motion_active_Dart motionActive;
-  late final _vmrp_api_is_edit_active_Dart isEditActive;
-  late final _vmrp_api_set_edit_text_Dart setEditText;
-  late final _vmrp_api_cancel_edit_Dart cancelEdit;
+  late final _skyengine_api_init_Dart init;
+  late final _skyengine_api_start_Dart start;
+  late final _skyengine_api_destroy_Dart destroy;
+  late final _skyengine_api_event_Dart event;
+  late final _skyengine_api_timer_Dart timer;
+  late final _skyengine_api_get_timer_interval_Dart getTimerInterval;
+  late final _skyengine_api_get_screen_buffer_Dart getScreenBuffer;
+  late final _skyengine_api_get_screen_dirty_Dart getScreenDirty;
+  late final _skyengine_api_get_screen_width_Dart getScreenWidth;
+  late final _skyengine_api_get_screen_height_Dart getScreenHeight;
+  late final _skyengine_api_get_screen_rotation_Dart getScreenRotation;
+  late final _skyengine_api_motion_Dart motion;
+  late final _skyengine_api_motion_active_Dart motionActive;
+  late final _skyengine_api_is_edit_active_Dart isEditActive;
+  late final _skyengine_api_set_edit_text_Dart setEditText;
+  late final _skyengine_api_cancel_edit_Dart cancelEdit;
 
   VmrpBindings() {
     _lib = Platform.isAndroid
-        ? DynamicLibrary.open('libvmrp.so')
+        ? DynamicLibrary.open('libskyengine.so')
         : DynamicLibrary.process();
 
-    init = _lib.lookupFunction<_vmrp_api_init_C, _vmrp_api_init_Dart>('vmrp_api_init');
-    start = _lib.lookupFunction<_vmrp_api_start_C, _vmrp_api_start_Dart>('vmrp_api_start');
-    destroy = _lib.lookupFunction<_vmrp_api_destroy_C, _vmrp_api_destroy_Dart>('vmrp_api_destroy');
-    event = _lib.lookupFunction<_vmrp_api_event_C, _vmrp_api_event_Dart>('vmrp_api_event');
-    timer = _lib.lookupFunction<_vmrp_api_timer_C, _vmrp_api_timer_Dart>('vmrp_api_timer');
-    getTimerInterval = _lib.lookupFunction<_vmrp_api_get_timer_interval_C, _vmrp_api_get_timer_interval_Dart>('vmrp_api_get_timer_interval');
-    getScreenBuffer = _lib.lookupFunction<_vmrp_api_get_screen_buffer_C, _vmrp_api_get_screen_buffer_Dart>('vmrp_api_get_screen_buffer');
-    getScreenDirty = _lib.lookupFunction<_vmrp_api_get_screen_dirty_C, _vmrp_api_get_screen_dirty_Dart>('vmrp_api_get_screen_dirty');
-    getScreenWidth = _lib.lookupFunction<_vmrp_api_get_screen_width_C, _vmrp_api_get_screen_width_Dart>('vmrp_api_get_screen_width');
-    getScreenHeight = _lib.lookupFunction<_vmrp_api_get_screen_height_C, _vmrp_api_get_screen_height_Dart>('vmrp_api_get_screen_height');
-    getScreenRotation = _lib.lookupFunction<_vmrp_api_get_screen_rotation_C, _vmrp_api_get_screen_rotation_Dart>('vmrp_api_get_screen_rotation');
-    motion = _lib.lookupFunction<_vmrp_api_motion_C, _vmrp_api_motion_Dart>('vmrp_api_motion');
-    motionActive = _lib.lookupFunction<_vmrp_api_motion_active_C, _vmrp_api_motion_active_Dart>('vmrp_api_motion_active');
-    isEditActive = _lib.lookupFunction<_vmrp_api_is_edit_active_C, _vmrp_api_is_edit_active_Dart>('vmrp_api_is_edit_active');
-    setEditText = _lib.lookupFunction<_vmrp_api_set_edit_text_C, _vmrp_api_set_edit_text_Dart>('vmrp_api_set_edit_text');
-    cancelEdit = _lib.lookupFunction<_vmrp_api_cancel_edit_C, _vmrp_api_cancel_edit_Dart>('vmrp_api_cancel_edit');
+    init = _lib.lookupFunction<_skyengine_api_init_C, _skyengine_api_init_Dart>('skyengine_api_init');
+    start = _lib.lookupFunction<_skyengine_api_start_C, _skyengine_api_start_Dart>('skyengine_api_start');
+    destroy = _lib.lookupFunction<_skyengine_api_destroy_C, _skyengine_api_destroy_Dart>('skyengine_api_destroy');
+    event = _lib.lookupFunction<_skyengine_api_event_C, _skyengine_api_event_Dart>('skyengine_api_event');
+    timer = _lib.lookupFunction<_skyengine_api_timer_C, _skyengine_api_timer_Dart>('skyengine_api_timer');
+    getTimerInterval = _lib.lookupFunction<_skyengine_api_get_timer_interval_C, _skyengine_api_get_timer_interval_Dart>('skyengine_api_get_timer_interval');
+    getScreenBuffer = _lib.lookupFunction<_skyengine_api_get_screen_buffer_C, _skyengine_api_get_screen_buffer_Dart>('skyengine_api_get_screen_buffer');
+    getScreenDirty = _lib.lookupFunction<_skyengine_api_get_screen_dirty_C, _skyengine_api_get_screen_dirty_Dart>('skyengine_api_get_screen_dirty');
+    getScreenWidth = _lib.lookupFunction<_skyengine_api_get_screen_width_C, _skyengine_api_get_screen_width_Dart>('skyengine_api_get_screen_width');
+    getScreenHeight = _lib.lookupFunction<_skyengine_api_get_screen_height_C, _skyengine_api_get_screen_height_Dart>('skyengine_api_get_screen_height');
+    getScreenRotation = _lib.lookupFunction<_skyengine_api_get_screen_rotation_C, _skyengine_api_get_screen_rotation_Dart>('skyengine_api_get_screen_rotation');
+    motion = _lib.lookupFunction<_skyengine_api_motion_C, _skyengine_api_motion_Dart>('skyengine_api_motion');
+    motionActive = _lib.lookupFunction<_skyengine_api_motion_active_C, _skyengine_api_motion_active_Dart>('skyengine_api_motion_active');
+    isEditActive = _lib.lookupFunction<_skyengine_api_is_edit_active_C, _skyengine_api_is_edit_active_Dart>('skyengine_api_is_edit_active');
+    setEditText = _lib.lookupFunction<_skyengine_api_set_edit_text_C, _skyengine_api_set_edit_text_Dart>('skyengine_api_set_edit_text');
+    cancelEdit = _lib.lookupFunction<_skyengine_api_cancel_edit_C, _skyengine_api_cancel_edit_Dart>('skyengine_api_cancel_edit');
   }
 }
 ```
@@ -265,9 +265,9 @@ import 'dart:ffi';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:ffi/package:ffi.dart';
-import 'vmrp_bindings.dart';
+import 'skyengine_bindings.dart';
 
-/// 事件码（对应 vmrp_api.h 中的 VMRP_* 常量）
+/// 事件码（对应 skyengine_api.h 中的 VMRP_* 常量）
 class VmrpEvent {
   static const int keyPress = 0;
   static const int keyRelease = 1;
@@ -455,7 +455,7 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
-import 'vmrp_engine.dart';
+import 'skyengine_engine.dart';
 
 class VmrpWidget extends StatefulWidget {
   final VmrpEngine engine;
@@ -587,8 +587,8 @@ class _VmrpPainter extends CustomPainter {
 
 ```dart
 import 'package:flutter/material.dart';
-import 'vmrp_engine.dart';
-import 'vmrp_widget.dart';
+import 'skyengine_engine.dart';
+import 'skyengine_widget.dart';
 
 class MrpPlayerPage extends StatefulWidget {
   final String mrpPath;
@@ -737,7 +737,7 @@ VMRP 的工作目录（文件 I/O 根目录）是 MRP 文件所在的目录。
 ## 7. 注意事项
 
 ### 线程安全
-所有 `vmrp_api_*` 调用必须在**同一线程**中执行。VMRP 内部的 Unicorn ARM 引擎不支持并发访问。在 Flutter 中，确保所有调用都在主 isolate 的同步代码中（`dart:ffi` 调用本身是同步的）。
+所有 `skyengine_api_*` 调用必须在**同一线程**中执行。VMRP 内部的 Unicorn ARM 引擎不支持并发访问。在 Flutter 中，确保所有调用都在主 isolate 的同步代码中（`dart:ffi` 调用本身是同步的）。
 
 ### 分辨率
 常见 MRP 分辨率：
@@ -745,7 +745,7 @@ VMRP 的工作目录（文件 I/O 根目录）是 MRP 文件所在的目录。
 - 176x220
 - 128x160
 
-通过 `vmrp_api_init(width, height)` 设置。分辨率必须在 `start()` 之前设定。
+通过 `skyengine_api_init(width, height)` 设置。分辨率必须在 `start()` 之前设定。
 
 ### 屏幕旋转（横屏游戏）
 部分游戏（如 gtcm/贪吃猫，面向 320x480 竖屏真机）运行期经
@@ -753,8 +753,8 @@ VMRP 的工作目录（文件 I/O 根目录）是 MRP 文件所在的目录。
 2=180°，3=270°），并可在进入付费/下载等插件界面前撤销旋转再恢复。
 旋转是**运行期状态**，宿主需在每次 dirty 帧后复查：
 
-- `vmrp_api_get_screen_rotation()`：返回当前旋转（0..3）
-- `vmrp_api_get_screen_width()` / `vmrp_api_get_screen_height()`：**旋转感知**，
+- `skyengine_api_get_screen_rotation()`：返回当前旋转（0..3）
+- `skyengine_api_get_screen_width()` / `skyengine_api_get_screen_height()`：**旋转感知**，
   奇数旋转（90°/270°）时返回 `init` 面板尺寸的转置（如 320x480 → 480x320），
   屏幕缓冲区行宽同步按该宽度解释
 - 总像素数在转置下不变，`getScreenBuffer()` 指针保持有效，无需重新 `init`
@@ -762,11 +762,11 @@ VMRP 的工作目录（文件 I/O 根目录）是 MRP 文件所在的目录。
 Dart FFI 绑定：
 
 ```dart
-typedef _vmrp_api_get_screen_rotation_C = Int32 Function();
-typedef _vmrp_api_get_screen_rotation_Dart = int Function();
+typedef _skyengine_api_get_screen_rotation_C = Int32 Function();
+typedef _skyengine_api_get_screen_rotation_Dart = int Function();
 // ...
-getScreenRotation = _lib.lookupFunction<_vmrp_api_get_screen_rotation_C,
-    _vmrp_api_get_screen_rotation_Dart>('vmrp_api_get_screen_rotation');
+getScreenRotation = _lib.lookupFunction<_skyengine_api_get_screen_rotation_C,
+    _skyengine_api_get_screen_rotation_Dart>('skyengine_api_get_screen_rotation');
 ```
 
 VmrpEngine 轮询处（每次 dirty 帧后）：
@@ -789,9 +789,9 @@ if (_bindings.getScreenDirty() != 0) {
 部分游戏（如 gtdgdq）经 `mr_plat(4001~4006)` 使用动感芯片（SKYENGINE
 《动感芯片接口》），监听开启后由 `MR_MOTION_EVENT` 上送加速度样本：
 
-- `vmrp_api_motion_active()`：guest 监听状态，-1=未监听（**应关闭平台传感
+- `skyengine_api_motion_active()`：guest 监听状态，-1=未监听（**应关闭平台传感
   器省电**），0=晃动模式，1=倾斜模式；轮询风格同 `getScreenDirty()`
-- `vmrp_api_motion(x, y, z)`：注入重力加速度分量，取值 **±1000**
+- `skyengine_api_motion(x, y, z)`：注入重力加速度分量，取值 **±1000**
   （plat(4006) 向游戏通告的量程）；guest 未监听时样本被忽略
 
 坐标系（设备坐标，见《动感芯片接口》）：手机平放屏幕朝上 → +Z 最大；屏幕
@@ -823,7 +823,7 @@ void _pollMotionState() {
 游戏经 `mr_startShake(ms)` / `mr_stopShake()` 控制振动器（SKYENGINE 手册
 mr_startShake.md）。C 侧只记录最新请求，嵌入端轮询取走后调平台振动器：
 
-- `vmrp_api_take_shake()`：取走并清除请求（轮询风格同 `getScreenDirty()`，
+- `skyengine_api_take_shake()`：取走并清除请求（轮询风格同 `getScreenDirty()`，
   建议随 dirty 帧/timer 后复查）
   - `0`：无新请求
   - `>0`：开始震动 N 毫秒
@@ -832,9 +832,9 @@ mr_startShake.md）。C 侧只记录最新请求，嵌入端轮询取走后调�
 
 ```dart
 // FFI 绑定
-typedef _vmrp_api_take_shake_C = Int32 Function();
-typedef _vmrp_api_take_shake_Dart = int Function();
-// takeShake = _lib.lookupFunction<...>('vmrp_api_take_shake');
+typedef _skyengine_api_take_shake_C = Int32 Function();
+typedef _skyengine_api_take_shake_Dart = int Function();
+// takeShake = _lib.lookupFunction<...>('skyengine_api_take_shake');
 
 // 轮询处(示例:vibration 包;HapticFeedback 仅短促反馈不支持时长)
 void _pollShake() {
@@ -854,7 +854,7 @@ void _pollShake() {
 - 上面的 `getScreenRGBA()` 示例中已包含 RGB565 → RGBA8888 转换
 
 ### 定时器模型
-MRP 程序通过 `timerStart(ms)` 请求定时回调。C API 不自行创建线程，而是暴露 `vmrp_api_get_timer_interval()` 让宿主调度。典型流程：
+MRP 程序通过 `timerStart(ms)` 请求定时回调。C API 不自行创建线程，而是暴露 `skyengine_api_get_timer_interval()` 让宿主调度。典型流程：
 
 ```
 start() → check getTimerInterval() → 非0 → Timer(ms) → timer()
@@ -867,11 +867,11 @@ start() → check getTimerInterval() → 非0 → Timer(ms) → timer()
 ### 音频模型
 MRP 的 `mr_playSound()` 在 C 侧接收完整内存音频数据。Flutter 共享库不直接打开 SDL 音频设备，而是把支持的 MIDI/WAV/PCM 转成固定格式 PCM，由宿主拉流播放：
 
-- `vmrp_api_audio_sample_rate()`：当前固定返回 `44100`
-- `vmrp_api_audio_channels()`：当前固定返回 `2`
-- `vmrp_api_audio_is_active()`：有正在播放的声音时返回 `1`
-- `vmrp_api_audio_render_s16le(buffer, frames)`：向 `buffer` 写入 signed 16-bit little-endian stereo PCM，返回实际帧数
-- `vmrp_api_audio_stop()`：停止当前声音并清空音频状态
+- `skyengine_api_audio_sample_rate()`：当前固定返回 `44100`
+- `skyengine_api_audio_channels()`：当前固定返回 `2`
+- `skyengine_api_audio_is_active()`：有正在播放的声音时返回 `1`
+- `skyengine_api_audio_render_s16le(buffer, frames)`：向 `buffer` 写入 signed 16-bit little-endian stereo PCM，返回实际帧数
+- `skyengine_api_audio_stop()`：停止当前声音并清空音频状态
 
 Dart 侧的 `VmrpAudioPlayer` 会在 `start()`、输入事件和 timer 回调之后检查 `audio_is_active`，再通过 `flutter_soloud` 的 `BufferStream` 持续写入 PCM 数据。这样 Android、Windows、Linux 等 Flutter 平台共用同一套 VMRP 解码/合成逻辑，平台差异留给 Flutter 音频插件处理。
 
