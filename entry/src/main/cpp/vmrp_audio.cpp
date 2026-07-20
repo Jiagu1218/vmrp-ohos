@@ -27,7 +27,16 @@ static OH_AudioData_Callback_Result OnWriteDataCb(OH_AudioRenderer *renderer, vo
 void VmrpAudio::OnWriteData(OH_AudioRenderer *renderer, void *audioData, int32_t audioDataSize) {
     (void)renderer;
     auto &eng = VmrpEngine::Instance();
-    if (!eng.IsRunning() || eng.IsMediaPaused() || !eng.AudioActive()) {
+    static int diag_counter = 0;
+    diag_counter++;
+    bool running = eng.IsRunning();
+    bool paused = eng.IsMediaPaused();
+    bool active = eng.AudioActive();
+    if (!running || paused || !active) {
+        if ((diag_counter % 500) == 1) {
+            OH_LOG_INFO(LOG_APP, "OnWriteData: silent running=%{public}d paused=%{public}d active=%{public}d",
+                        running, paused, active);
+        }
         memset(audioData, 0, static_cast<size_t>(audioDataSize));
         return;
     }
@@ -36,6 +45,9 @@ void VmrpAudio::OnWriteData(OH_AudioRenderer *renderer, void *audioData, int32_t
     int frames = audioDataSize / frame_bytes;
     int written = eng.PullAudio(audioData, frames);
     if (written <= 0) {
+        if ((diag_counter % 500) == 1) {
+            OH_LOG_INFO(LOG_APP, "OnWriteData: PullAudio returned %{public}d frames=%{public}d", written, frames);
+        }
         memset(audioData, 0, static_cast<size_t>(audioDataSize));
     }
 }
