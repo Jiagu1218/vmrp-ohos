@@ -665,6 +665,7 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, display_w, display_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         tex_w_ = display_w;
         tex_h_ = display_h;
+        prev_filter_type_ = -1;
     }
     const size_t pixels = static_cast<size_t>(display_w) * display_h;
     uint32_t *rgba = static_cast<uint32_t *>(malloc(pixels * 4));
@@ -746,6 +747,7 @@ int VmrpRenderer::Render(const uint8_t *rgba, int32_t display_w, int32_t display
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, display_w, display_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
         tex_w_ = display_w;
         tex_h_ = display_h;
+        prev_filter_type_ = -1;
     }
     glBindTexture(GL_TEXTURE_2D, texture_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
