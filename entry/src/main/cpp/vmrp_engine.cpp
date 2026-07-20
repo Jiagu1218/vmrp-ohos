@@ -218,6 +218,8 @@ bool VmrpEngine::IsRunning() const {
 
 int VmrpEngine::Init(int w, int h) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
+    panel_w_ = w;
+    panel_h_ = h;
     int ret = api_.init(w, h);
     if (ret == 0 && api_.set_dns_map) {
         api_.set_dns_map(
@@ -293,6 +295,7 @@ const uint8_t *VmrpEngine::ScreenRgbaBuffer() {
 }
 int VmrpEngine::ScreenWidth() { return api_.get_screen_width ? api_.get_screen_width() : 0; }
 int VmrpEngine::ScreenHeight() { return api_.get_screen_height ? api_.get_screen_height() : 0; }
+int VmrpEngine::ScreenRotation() { return api_.get_screen_rotation ? api_.get_screen_rotation() : 0; }
 bool VmrpEngine::ScreenDirty() { return api_.get_screen_dirty && api_.get_screen_dirty() != 0; }
 
 int VmrpEngine::AudioSampleRate() { return api_.audio_sample_rate ? api_.audio_sample_rate() : 44100; }

@@ -286,6 +286,8 @@ struct TopScreen {
   @Param statusText: string = '';
   @Param runningState: boolean = false;
   @Param scaleVal: number = 1;
+  @Param bufW: number = 240;
+  @Param bufH: number = 320;
 
   build() {
     Column() {
@@ -294,16 +296,16 @@ struct TopScreen {
           Stack() {
             ContentSlot(this.nodeContent)
           }
-          .width(240)
-          .height(320)
+          .width(this.bufW)
+          .height(this.bufH)
           .backgroundColor(SCREEN_BG)
           .borderRadius(6)
           .clip(true)
           .scale({ x: this.scaleVal, y: this.scaleVal })
           .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
         }
-        .width(240 * this.scaleVal)
-        .height(320 * this.scaleVal)
+        .width(this.bufW * this.scaleVal)
+        .height(this.bufH * this.scaleVal)
         .alignContent(Alignment.Center)
         .clip(true)
       }
@@ -446,6 +448,8 @@ struct Index {
   @Local foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
   @Local screenAreaW: number = 240;
   @Local screenAreaH: number = 320;
+  @Local bufW: number = 240;
+  @Local bufH: number = 320;
   @Local dualAreaW: number = 400;
   @Local dualAreaH: number = 600;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
@@ -642,7 +646,9 @@ struct Index {
           nodeContent: this.nodeContent,
           statusText: this.statusText,
           runningState: this.runningState,
-          scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / 240, (this.dualAreaH * 0.5 - 36) / 320)
+          scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / this.bufW, (this.dualAreaH * 0.5 - 36) / this.bufH),
+          bufW: this.bufW,
+          bufH: this.bufH
         })
       } else {
         Scroll() {
@@ -676,12 +682,12 @@ struct Index {
         Stack() {
           ContentSlot(this.nodeContent)
         }
-        .width(240)
-        .height(320)
+        .width(this.bufW)
+        .height(this.bufH)
         .backgroundColor(SCREEN_BG)
         .scale({
-          x: Math.min(this.screenAreaW / 240, this.screenAreaH / 320),
-          y: Math.min(this.screenAreaW / 240, this.screenAreaH / 320)
+          x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH),
+          y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH)
         })
       }
       .width('100%')
@@ -764,14 +770,14 @@ struct Index {
           Stack() {
             ContentSlot(this.nodeContent)
           }
-          .width(240)
-          .height(320)
+          .width(this.bufW)
+          .height(this.bufH)
           .backgroundColor(SCREEN_BG)
           .borderRadius(6)
           .clip(true)
           .scale({
-            x: Math.min(this.screenAreaW / 240, this.screenAreaH * 0.48 / 320),
-            y: Math.min(this.screenAreaW / 240, this.screenAreaH * 0.48 / 320)
+            x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH),
+            y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH)
           })
           .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
         }

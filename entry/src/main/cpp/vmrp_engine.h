@@ -108,6 +108,9 @@ public:
     const uint8_t *ScreenRgbaBuffer();
     int ScreenWidth();
     int ScreenHeight();
+    int ScreenRotation();
+    int PanelWidth() const { return panel_w_; }
+    int PanelHeight() const { return panel_h_; }
     bool ScreenDirty();
 
     // 音频：在 OHAudio 回调线程上调用，仅做 PCM 拷贝，不触碰 Unicorn 引擎。
@@ -179,6 +182,8 @@ private:
     std::atomic<bool> media_paused_{false};
     AudioPauseFn audio_pause_fn_ = nullptr;
     VolumeFn volume_fn_ = nullptr;
+    int panel_w_ = 0;
+    int panel_h_ = 0;
 };
 
 #endif // VMRP_ENGINE_H

@@ -25,10 +25,10 @@ public:
     void RebuildSurface(int32_t w, int32_t h);
     void OnSurfaceDestroyed();
 
-    // RGB565 路径：src 是 screen_w * screen_h 个 uint16
-    int Render(const uint16_t *src, int32_t screen_w, int32_t screen_h);
-    // RGBA8888 路径：直接上传纹理
-    int Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h);
+    // RGB565 路径：src 行宽 display_w, 纹理尺寸 display_w×display_h
+    int Render(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation);
+    // RGBA8888 路径：rgba 行宽 display_w, 纹理尺寸 display_w×display_h
+    int Render(const uint8_t *rgba, int32_t display_w, int32_t display_h, int rotation);
 
     bool Ready() const { return egl_display_ != EGL_NO_DISPLAY && texture_ != 0; }
     int32_t SurfaceWidth() const { return surface_w_; }
@@ -95,6 +95,7 @@ private:
     int   gamma_correct_           = 1;
     int   dither_enabled_          = 1;
     int   prev_filter_type_        = -1;
+    int   current_rotation_        = 0;
 
     // uniform locations - upscale pass
     GLint ul_up_u_tex_ = -1;
@@ -118,6 +119,7 @@ private:
     GLint ul_out_u_screen_effect_ = -1;
     GLint ul_out_u_screen_effect_strength_ = -1;
     GLint ul_out_u_barrel_k_ = -1;
+    GLint ul_out_u_rotation_ = -1;
 };
 
 #endif // VMRP_RENDERER_H

@@ -23,8 +23,15 @@ import {
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
   createSurfaceNode as nativeCreateSurfaceNode,
-  mediaPause as nativeMediaPause, mediaResume as nativeMediaResume
+  mediaPause as nativeMediaPause, mediaResume as nativeMediaResume,
+  getScreenInfo as nativeGetScreenInfo
 } from 'libentry.so';
+
+interface ScreenInfo {
+  width: number;
+  height: number;
+  rotation: number;
+}
 
 // MRP 事件码（与 vmrp_api.h 一致）。
 export const VMRP_KEY_PRESS = 0;
@@ -135,6 +142,10 @@ export class VmrpEngineTs {
 
   isRunning(): boolean {
     return nativeIsRunning();
+  }
+
+  getScreenInfo(): ScreenInfo {
+    return nativeGetScreenInfo();
   }
 
   // 暂停音频渲染(不清 PCM，可恢复)。应用切后台时调用。
