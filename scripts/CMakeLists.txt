@@ -287,14 +287,17 @@ if(EXISTS "${_VMRP_DSM}")
     if(_dsm_text MATCHES "MAP_ANONYMOUS \\| MAP_32BIT")
         string(REPLACE "MAP_ANONYMOUS | MAP_32BIT"
                        "MAP_ANONYMOUS /* x86-glibc only, musl lacks the 32bit flag */"
-                       _dsm_text "${_dsm_text}")
+                        _dsm_text "${_dsm_text}")
         set(_dsm_patched TRUE)
     endif()
+    string(REPLACE "#define MIDI_MAX_EVENTS 4096"
+                   "#define MIDI_MAX_EVENTS 16384  /* OHOS: 部分游戏MIDI事件数>4096,如gxrxd240 */"
+                   _dsm_text "${_dsm_text}")
+    set(_dsm_patched TRUE)
     if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
         message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT)")
     endif()
-    # 子补丁3: OHOS_MEDIA_CTRL — NativeAudioState 扩展 + pause/resume/seek/position/duration
     if(NOT _dsm_text MATCHES "OHOS_MEDIA_CTRL")
         # 3a) NativeAudioState 加 pcm_total_len/paused/midi_total_samples/midi_rendered_samples
         string(REPLACE
