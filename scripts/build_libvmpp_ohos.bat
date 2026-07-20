@@ -116,6 +116,7 @@ echo === Configure ===
     -B "%BUILD_DIR%"
 if errorlevel 1 (
     echo [ERROR] CMake configure failed.
+    call :restore_patched
     exit /b 1
 )
 
@@ -125,6 +126,7 @@ echo === Build skyengine-shared ===
 "%NDK_CMAKE%" --build "%BUILD_DIR%" --target skyengine-shared -j
 if errorlevel 1 (
     echo [ERROR] Build failed.
+    call :restore_patched
     exit /b 1
 )
 
@@ -147,6 +149,7 @@ if "!SO_FOUND!"=="0" if exist "%BUILD_DIR%\vmrp\libvmrp.so" (
 )
 if "!SO_FOUND!"=="0" (
     echo [ERROR] libvmrp.so not found in %BUILD_DIR%
+    call :restore_patched
     exit /b 1
 )
 
