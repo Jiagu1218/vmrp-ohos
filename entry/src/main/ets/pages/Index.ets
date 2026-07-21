@@ -402,6 +402,7 @@ struct Index {
         }
         .width('100%')
         .layoutWeight(1)
+        .align(Alignment.TopStart)
       }
       .titleBar({
       content: {
