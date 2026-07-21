@@ -13,6 +13,7 @@ export interface MrpInfoData {
   platform: number;
   fileSize: number;
   filePath: string;
+  mtime: number;
 }
 
 const MRP_MAGIC = 'MRPG';
@@ -56,6 +57,12 @@ export class MrpInfo {
       const slash = filePath.lastIndexOf('/');
       const baseName = slash >= 0 ? filePath.substring(slash + 1) : filePath;
 
+      let mtime = 0;
+      try {
+        const stat = fs.statSync(filePath);
+        mtime = stat.mtime;
+      } catch (_e) {}
+
       const result: MrpInfoData = {
         filename: filename.length > 0 ? filename : baseName,
         appname: appname.length > 0 ? appname : baseName.replace('.mrp', ''),
@@ -67,7 +74,8 @@ export class MrpInfo {
         screenH: screenH,
         platform: platform,
         fileSize: fileLen,
-        filePath: filePath
+        filePath: filePath,
+        mtime: mtime
       };
       return result;
     } catch (_e) {
