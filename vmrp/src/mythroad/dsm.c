@@ -14,7 +14,7 @@
 #define DSM_SEEK_CUR 1
 #define DSM_SEEK_END 2
 
-/* vmrp advertises a real MTK platform version that common ARM EXT libraries
+/* skyengine advertises a real MTK platform version that common ARM EXT libraries
  * accept for graphics setup; actual SCRRAM availability is implemented by
  * mr_platEx(MR_MALLOC_SCRRAM), not inferred from this handset bucket. */
 #define MT6227
@@ -59,7 +59,7 @@ static uint32 dsmStartTime;  //虚拟机初始化时间，用来计算系统运�
 
 /* 当前 LCD 旋转(MR_LCD_ROTATE_*: 0=正常,1=90°,2=180°,3=270°)。guest 经
  * mr_plat(101,param) 设置;真机上这是 LCD 驱动状态,故由 DSM 层持有(本层
- * 编译时未定义 VMRP,不能访问 vmrp_config)。宿主展示层经
+ * 作为独立子项目编译,不能访问 skyengine_config)。宿主展示层经
  * dsm_get_lcd_rotation() 读取以计算旋转后的显示尺寸。 */
 static int32 dsmLcdRotation = 0;
 
@@ -380,7 +380,7 @@ void mr_printf(const char *format, ...) {
     va_list params;
 
     if (!log_checked) {
-        log_enabled = getenv("VMRP_LOG") != NULL;
+        log_enabled = getenv("SKYENGINE_LOG") != NULL;
         log_checked = 1;
     }
     if (!log_enabled) {
@@ -597,8 +597,8 @@ int32 mr_getUserInfo(mr_userinfo *info) {
     memset2(info, 0, sizeof(mr_userinfo));
     strcpy2((char *)info->IMEI, "864086040622841");
     strcpy2((char *)info->IMSI, "460019707327302");
-    strncpy2(info->manufactory, "vmrp", 7);
-    strncpy2(info->type, "vmrp", 7);
+    strncpy2(info->manufactory, "opense", 7);
+    strncpy2(info->type, "opense", 7);
 
     info->ver = 101000000 + DSM_PLAT_VERSION * 10000 + DSM_FAE_VERSION;
     //	info->ver = 116000000 + DSM_PLAT_VERSION * 10000 + DSM_FAE_VERSION; //SPLE
@@ -960,6 +960,25 @@ typedef struct {
 
 static DsmMediaDevice dsm_media_devices[ACI_AMR_WB_DEVICE + 1];
 
+/* MR_MEDIA_*_MUTICHANNEL is a handle API: OPEN owns a compressed-data copy,
+ * while PLAY transfers a decoded copy to the native mixer.  Generation bits
+ * keep a delayed PLAY/STOP/CLOSE from targeting a slot reused after CLOSE. */
+#define DSM_MEDIA_CHANNEL_COUNT 16
+#define DSM_MEDIA_CHANNEL_TOKEN_MASK 0xffu
+#define DSM_MEDIA_CHANNEL_GENERATION_MAX 0x7fffffu
+
+typedef struct {
+    uint8 *data;
+    uint32 len;
+    uint32 generation;
+    int32 device;
+    int32 loop;
+    int in_use;
+    int playing;
+} DsmMediaChannel;
+
+static DsmMediaChannel dsm_media_channels[DSM_MEDIA_CHANNEL_COUNT];
+
 static int32 dsm_media_to_sound_type(int device) {
     switch (device) {
         case ACI_MIDI_DEVICE: return MR_SOUND_MIDI;
@@ -984,9 +1003,129 @@ static void dsm_media_release(DsmMediaDevice *media) {
 }
 
 static void dsm_media_reset_all(void) {
-    /* dsm_init 在 Mythroad 堆重新初始化前调用；上一轮应用的 media 缓冲
-     * 跟随整块堆内存释放，这里只清状态，不能再对旧指针调用 mr_free。 */
+    /* dsm_init 在 Mythroad 堆重新初始化前调用；上一轮应用的 media/channel
+     * 缓冲跟随整块堆内存释放，这里只清状态，不能再对旧指针调用 mr_free。 */
     memset2(dsm_media_devices, 0, sizeof(dsm_media_devices));
+    memset2(dsm_media_channels, 0, sizeof(dsm_media_channels));
+}
+
+static int32 dsm_media_channel_handle(int slot, uint32 generation) {
+    return (int32)((generation << 8) | (uint32)(slot + 1));
+}
+
+static DsmMediaChannel *dsm_media_channel_get(int32 handle, int device) {
+    if (handle <= 0) return NULL;
+    uint32 raw = (uint32)handle;
+    uint32 token = raw & DSM_MEDIA_CHANNEL_TOKEN_MASK;
+    uint32 generation = raw >> 8;
+    if (token == 0 || token > DSM_MEDIA_CHANNEL_COUNT || generation == 0) {
+        return NULL;
+    }
+    DsmMediaChannel *channel = &dsm_media_channels[token - 1];
+    if (!channel->in_use || channel->generation != generation ||
+        channel->device != device) {
+        return NULL;
+    }
+    return channel;
+}
+
+static int32 dsm_media_channel_release(DsmMediaChannel *channel, int slot) {
+    int32 stop_ret = MR_SUCCESS;
+    if (channel->playing) {
+        int32 handle = dsm_media_channel_handle(slot, channel->generation);
+        stop_ret = dsmInFuncs->mr_stopSoundChannel(handle);
+    }
+    uint32 generation = channel->generation;
+    mr_free(channel->data, channel->len);
+    memset2(channel, 0, sizeof(*channel));
+    channel->generation = generation;
+    return stop_ret;
+}
+
+void dsm_media_channels_release_all(void) {
+    /* App restart frees the whole Mythroad heap without calling dsm_init().
+     * Stop host-owned decoded voices and release channel copies first so no
+     * slot can retain a dangling pointer into the next application's heap. */
+    for (int slot = 0; slot < DSM_MEDIA_CHANNEL_COUNT; slot++) {
+        DsmMediaChannel *channel = &dsm_media_channels[slot];
+        if (channel->in_use) {
+            dsm_media_channel_release(channel, slot);
+        }
+    }
+}
+
+/* ARM table[38] calls this after translating the nested 32-bit guest address.
+ * Keeping the host pointer outside the 12-byte guest payload avoids truncating
+ * a 64-bit pointer while DSM retains ownership of the compressed-data copy. */
+int32 dsm_media_open_channel_host(int device, const void *data, uint32 data_len,
+                                  int32 loop) {
+    if (!data || data_len == 0 || dsm_media_to_sound_type(device) == MR_FAILED ||
+        !dsmInFuncs->mr_playSoundChannel || !dsmInFuncs->mr_stopSoundChannel) {
+        return MR_FAILED;
+    }
+
+    int slot = -1;
+    for (int i = 0; i < DSM_MEDIA_CHANNEL_COUNT; i++) {
+        if (!dsm_media_channels[i].in_use) {
+            slot = i;
+            break;
+        }
+    }
+    if (slot < 0) return MR_FAILED;
+
+    uint8 *copy = mr_malloc(data_len);
+    if (!copy) return MR_FAILED;
+    memcpy2(copy, data, data_len);
+
+    DsmMediaChannel *channel = &dsm_media_channels[slot];
+    uint32 generation = channel->generation + 1u;
+    if (generation == 0 || generation > DSM_MEDIA_CHANNEL_GENERATION_MAX) {
+        generation = 1;
+    }
+    channel->data = copy;
+    channel->len = data_len;
+    channel->generation = generation;
+    channel->device = device;
+    channel->loop = loop ? TRUE : FALSE;
+    channel->in_use = TRUE;
+    channel->playing = FALSE;
+    return dsm_media_channel_handle(slot, generation);
+}
+
+static int32 dsm_media_channel_platEx(int32 cmd, int device, uint8 *input,
+                                      int32 input_len) {
+    /* OPEN's first word is a guest address, so only table[38], which owns the
+     * guest mapping, may translate it and call dsm_media_open_channel_host(). */
+    if (cmd == MR_MEDIA_OPEN_MUTICHANNEL) return MR_FAILED;
+    if (!input || input_len != (int32)sizeof(int32)) return MR_FAILED;
+
+    int32 handle = MR_FAILED;
+    memcpy2(&handle, input, sizeof(handle));
+    DsmMediaChannel *channel = dsm_media_channel_get(handle, device);
+    if (!channel) return MR_FAILED;
+
+    switch (cmd) {
+        case MR_MEDIA_PLAY_MUTICHANNEL: {
+            int32 type = dsm_media_to_sound_type(device);
+            int32 ret = dsmInFuncs->mr_playSoundChannel(
+                handle, type, channel->data, channel->len, channel->loop);
+            if (ret == MR_SUCCESS) channel->playing = TRUE;
+            return ret;
+        }
+        case MR_MEDIA_STOP_MUTICHANNEL:
+            if (!channel->playing) return MR_SUCCESS;
+            if (dsmInFuncs->mr_stopSoundChannel(handle) == MR_SUCCESS) {
+                channel->playing = FALSE;
+                return MR_SUCCESS;
+            }
+            return MR_FAILED;
+        case MR_MEDIA_CLOSE_MUTICHANNEL: {
+            int slot = (int)(((uint32)handle & DSM_MEDIA_CHANNEL_TOKEN_MASK) - 1u);
+            return dsm_media_channel_release(channel, slot);
+        }
+        default:
+            return MR_FAILED;
+    }
 }
 
 static DsmMediaDevice *dsm_media_get(int device, int create) {
@@ -1491,8 +1630,8 @@ int32 mr_plat(int32 code, int32 param) {
              * (game.ext 0x2370AC: cmp r0,#0 / beq 正常路径)证明返回非 0
              * 会进入"不支持横竖转换请退出"错误分支并黑屏,必须返回
              * MR_SUCCESS。
-             * 旋转状态记入 vmrp_config.screen_rotation,消费方:
-             * - 展示层(main.c/vmrp_api.c)按 vmrp_display_width/height()
+             * 旋转状态记入 skyengine_config.screen_rotation,消费方:
+             * - 展示层(main.c/skyengine_api.c)按 skyengine_display_width/height()
              *   自动翻转窗口/裁剪/行宽;
              * - ARM EXT 桥(aex_t037)随后调 arm_ext_apply_lcd_rotation()
              *   把模块画布基准与 ARM 可见 mr_screen_w/h 更新为显示尺寸,
@@ -1542,6 +1681,13 @@ int32 mr_platEx(int32 code, uint8 *input, int32 input_len, uint8 **output, int32
 
     int media_cmd = code / 10;
     int media_device = code % 10;
+    if (media_device != 0 &&
+        (media_cmd == MR_MEDIA_OPEN_MUTICHANNEL ||
+         media_cmd == MR_MEDIA_PLAY_MUTICHANNEL ||
+         media_cmd == MR_MEDIA_STOP_MUTICHANNEL ||
+         media_cmd == MR_MEDIA_CLOSE_MUTICHANNEL)) {
+        return dsm_media_channel_platEx(media_cmd, media_device, input, input_len);
+    }
     if (media_device != 0 &&
         (media_cmd == MR_MEDIA_INIT ||
          media_cmd == MR_MEDIA_FILE_LOAD ||
@@ -1822,7 +1968,7 @@ uint16 *mr_getScreenBuffer(void) {
 #endif
 
 void dsm_prepare(void) {
-    if (getenv("VMRP_LOG")) {
+    if (getenv("SKYENGINE_LOG")) {
         fprintf(stderr, "[dsm_prepare] mkDir...\n");
         fflush(stderr);
     }
@@ -1831,24 +1977,24 @@ void dsm_prepare(void) {
     dsmInFuncs->mkDir(DSM_DRIVE_A);
     dsmInFuncs->mkDir(DSM_DRIVE_B);
     dsmInFuncs->mkDir(DSM_DRIVE_X);
-    if (getenv("VMRP_LOG")) {
+    if (getenv("SKYENGINE_LOG")) {
         fprintf(stderr, "[dsm_prepare] xl_font_sky16_init...\n");
         fflush(stderr);
     }
     xl_font_sky16_init();
-    if (getenv("VMRP_LOG")) {
+    if (getenv("SKYENGINE_LOG")) {
         fprintf(stderr, "[dsm_prepare] xl_font_sky12_init...\n");
         fflush(stderr);
     }
     xl_font_sky12_init();
-    if (getenv("VMRP_LOG")) {
+    if (getenv("SKYENGINE_LOG")) {
         fprintf(stderr, "[dsm_prepare] encode_init...\n");
         fflush(stderr);
     }
     if (encode_init() == MR_FAILED) {
         LOGW("%s", "encode load fail");
     }
-    if (getenv("VMRP_LOG")) {
+    if (getenv("SKYENGINE_LOG")) {
         fprintf(stderr, "[dsm_prepare] done\n");
         fflush(stderr);
     }

@@ -1,7 +1,7 @@
 /*
  * vmrp_audio.h - OHAudio 渲染器（拉流式）
  *
- * vmrp 的音频是 pull 模型：vmrp_api_audio_render_s16le(buf, frames) 把
+ * skyengine 的音频是 pull 模型：skyengine_api_audio_render_s16le(buf, frames) 把
  * 已解码/合成的 S16LE 立体声 PCM 写入调用方缓冲。OHAudio 的渲染回调正好
  * 是 pull 语义（它要求我们填充音频数据），二者匹配。
  *
@@ -25,7 +25,7 @@ public:
     void Stop();
 
     // PAUSE: 暂停 OHAudio renderer(停止拉流回调),RESUME: 恢复。
-    // 配合 vmrp_api_media_pause/resume，暂停时 renderer 不再消耗 CPU。
+    // 配合 skyengine_api_media_pause/resume，暂停时 renderer 不再消耗 CPU。
     void Pause();
     void Resume();
 

@@ -11,8 +11,9 @@ set(UNICORN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(UNICORN_INSTALL OFF CACHE BOOL "" FORCE)
 
 # Build the shared library target (excludes main.c/e2e_control.c, no SDL).
-set(VMRP_BUILD_SHARED ON CACHE BOOL "" FORCE)
-set(VMRP_BUILD_SHARED_ONLY ON CACHE BOOL "" FORCE)
+# Upstream 5d3fd47 renamed VMRP_BUILD_SHARED → SKYENGINE_BUILD_SHARED.
+set(SKYENGINE_BUILD_SHARED ON CACHE BOOL "" FORCE)
+set(SKYENGINE_BUILD_SHARED_ONLY ON CACHE BOOL "" FORCE)
 
 project(vmrp_ohos_wrapper C)
 
@@ -223,7 +224,7 @@ ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/arm_ext/aex_mem.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/mythroad.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/dsm.c")
-ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/vmrp_api.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/skyengine_api.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/network.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/native_dsm_funcs.c")
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/src/lib/mr_strlib.c")
@@ -231,42 +232,36 @@ ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/mythroad/src/lib/mr_strlib.c")
 # --- Patch arm_ext_internal.h: 添加 OHOS 需要的额外字段 ---
 # 上游 651e421 已添加 motion_acc_addr(与上游 mr_motion_input 共用),不再注入。
 # OHOS 特有字段:
-# - screen_buf_addr/len: platEx(1001) 分配的离屏渲染缓冲(第二内存)
 # - iram_addr/len: platEx(1012) 分配的内部 cache
 set(_VMRP_INT_H "${VMRP_SRC_DIR}/src/include/arm_ext_internal.h")
 if(EXISTS "${_VMRP_INT_H}")
     file(READ "${_VMRP_INT_H}" _inth)
-    if(NOT _inth MATCHES "OHOS_PLATEX_SCREEN_BUF")
-        # screen_buf_addr/len: 插在 screen_cap 之后
-        string(REPLACE
-            "    uint32_t screen_cap;\n    /* ARM 可见 mr_screen_w/h"
-            "    uint32_t screen_cap;\n    /* OHOS_PLATEX_SCREEN_BUF: platEx(1001) 分配的离屏渲染缓冲。\n     * 与 screen_addr(主屏幕)不同,这是 guest 通过 platEx(1001) 申请的\n     * 第二内存,用于离屏绘制后再手动拷贝到主屏。 */\n    uint32_t screen_buf_addr;\n    uint32_t screen_buf_len;\n    /* ARM 可见 mr_screen_w/h"
-            _inth "${_inth}")
+    if(NOT _inth MATCHES "OHOS_PLATEX_IRAM")
         # iram_addr/len: 插在 exram_len 之后
         string(REPLACE
             "    uint32_t exram_len;\n    uint32_t internal_table_addr;"
             "    uint32_t exram_len;\n    /* OHOS_PLATEX_IRAM: platEx(1012) 分配的内部 cache 缓冲。 */\n    uint32_t iram_addr;\n    uint32_t iram_len;\n    uint32_t internal_table_addr;"
             _inth "${_inth}")
         file(WRITE "${_VMRP_INT_H}" "${_inth}")
-        message(STATUS "[OHOS] Patched arm_ext_internal.h: added screen_buf_addr/len, iram_addr/len")
+        message(STATUS "[OHOS] Patched arm_ext_internal.h: added iram_addr/len")
     endif()
 endif()
 
-# --- Patch vmrp_api.c: 添加 vmrp_api_start_dsmB/C/ex 外部移植接口 ---
-# 上游 651e421/4fbb0b4 已实现 motion/shake(vmrp_api_motion/take_shake 等),
+# --- Patch skyengine_api.c: 添加 skyengine_api_start_dsmB/C/ex 外部移植接口 ---
+# 上游 651e421/4fbb0b4 已实现 motion/shake(skyengine_api_motion/take_shake 等),
 # OHOS 不再注入 motion/shake 代码。仅保留上游没有的 dsmB/C/ex 热启动接口。
-set(_VMRP_API_MOTION "${VMRP_SRC_DIR}/src/vmrp_api.c")
+set(_VMRP_API_MOTION "${VMRP_SRC_DIR}/src/skyengine_api.c")
 if(EXISTS "${_VMRP_API_MOTION}")
     file(READ "${_VMRP_API_MOTION}" _api_m)
     if(NOT _api_m MATCHES "OHOS_DSM_BC_EX")
-        # OHOS_DSM_BC_EX — vmrp_api_start_dsmB/C/ex 导出
-        # 锚点: vmrp_api_take_shake 函数末尾(上游 4fbb0b4 新增,稳定存在)
+        # OHOS_DSM_BC_EX — skyengine_api_start_dsmB/C/ex 导出
+        # 锚点: skyengine_api_take_shake 函数末尾(上游 4fbb0b4 新增,稳定存在)
         string(REPLACE
-            "VMRP_EXPORT int vmrp_api_take_shake(void) {\n#if VMRP_API_ASYNC_RUNNER\n    api_lock();\n#endif\n    int req = shake_request;\n    shake_request = 0;\n#if VMRP_API_ASYNC_RUNNER\n    api_unlock();\n#endif\n    return req;\n}"
-            "VMRP_EXPORT int vmrp_api_take_shake(void) {\n#if VMRP_API_ASYNC_RUNNER\n    api_lock();\n#endif\n    int req = shake_request;\n    shake_request = 0;\n#if VMRP_API_ASYNC_RUNNER\n    api_unlock();\n#endif\n    return req;\n}\n\n/* OHOS_DSM_BC_EX: 外部移植接口 vmrp_api_start_dsmB/C/ex。\n * 宿主通过这些函数以简化参数启动 MRP 应用:\n *   vmrp_api_start_dsmB(entry)   — entry 含 *A/%QQ.mrp 前缀\n *   vmrp_api_start_dsmC(entry)   — 同 dsmB(引擎已初始化)\n *   vmrp_api_start_dsm_ex(path, entry) — 显式 path+entry\n * 内部调 mythroad 层实现,需在引擎运行中调用(热切换)。\n */\nVMRP_EXPORT int vmrp_api_start_dsmB(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmB(const char *entry);\n    return mr_start_dsmB(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsmC(const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsmC(const char *entry);\n    return mr_start_dsmC(entry);\n}\nVMRP_EXPORT int vmrp_api_start_dsm_ex(const char *path, const char *entry) {\n    if (!api_running || vmrp_is_exited()) return -1;\n    extern int32 mr_start_dsm_ex(const char *path, const char *entry);\n    return mr_start_dsm_ex(path, entry);\n}"
+            "VMRP_EXPORT int skyengine_api_take_shake(void) {\n#if VMRP_API_ASYNC_RUNNER\n    api_lock();\n#endif\n    int req = shake_request;\n    shake_request = 0;\n#if VMRP_API_ASYNC_RUNNER\n    api_unlock();\n#endif\n    return req;\n}"
+            "VMRP_EXPORT int skyengine_api_take_shake(void) {\n#if VMRP_API_ASYNC_RUNNER\n    api_lock();\n#endif\n    int req = shake_request;\n    shake_request = 0;\n#if VMRP_API_ASYNC_RUNNER\n    api_unlock();\n#endif\n    return req;\n}\n\n/* OHOS_DSM_BC_EX: 外部移植接口 skyengine_api_start_dsmB/C/ex。\n * 宿主通过这些函数以简化参数启动 MRP 应用:\n *   skyengine_api_start_dsmB(entry)   — entry 含 *A/%QQ.mrp 前缀\n *   skyengine_api_start_dsmC(entry)   — 同 dsmB(引擎已初始化)\n *   skyengine_api_start_dsm_ex(path, entry) — 显式 path+entry\n * 内部调 mythroad 层实现,需在引擎运行中调用(热切换)。\n */\nVMRP_EXPORT int skyengine_api_start_dsmB(const char *entry) {\n    if (!api_running || skyengine_is_exited()) return -1;\n    extern int32 mr_start_dsmB(const char *entry);\n    return mr_start_dsmB(entry);\n}\nVMRP_EXPORT int skyengine_api_start_dsmC(const char *entry) {\n    if (!api_running || skyengine_is_exited()) return -1;\n    extern int32 mr_start_dsmC(const char *entry);\n    return mr_start_dsmC(entry);\n}\nVMRP_EXPORT int skyengine_api_start_dsm_ex(const char *path, const char *entry) {\n    if (!api_running || skyengine_is_exited()) return -1;\n    extern int32 mr_start_dsm_ex(const char *path, const char *entry);\n    return mr_start_dsm_ex(path, entry);\n}"
             _api_m "${_api_m}")
         file(WRITE "${_VMRP_API_MOTION}" "${_api_m}")
-        message(STATUS "[OHOS] Patched vmrp_api dsmB/C/ex functions (OHOS_DSM_BC_EX)")
+        message(STATUS "[OHOS] Patched skyengine_api dsmB/C/ex functions (OHOS_DSM_BC_EX)")
     endif()
 endif()
 
@@ -283,7 +278,7 @@ endif()
 # block is already guarded by #ifdef __x86_64__).
 #
 # 上游 4fbb0b4 已重构 native_startShake/stopShake 为调 guiStartShake/guiStopShake
-# (轮询模型,嵌入端经 vmrp_api_take_shake 取走请求),OHOS 不再注入 shake 转发代码。
+# (轮询模型,嵌入端经 skyengine_api_take_shake 取走请求),OHOS 不再注入 shake 转发代码。
 set(_VMRP_DSM "${VMRP_SRC_DIR}/src/native_dsm_funcs.c")
 if(EXISTS "${_VMRP_DSM}")
     file(READ "${_VMRP_DSM}" _dsm_text)
@@ -292,14 +287,14 @@ if(EXISTS "${_VMRP_DSM}")
     if(_dsm_text MATCHES "MAP_ANONYMOUS \\| MAP_32BIT")
         string(REPLACE "MAP_ANONYMOUS | MAP_32BIT"
                        "MAP_ANONYMOUS /* x86-glibc only, musl lacks the 32bit flag */"
-                       _dsm_text "${_dsm_text}")
+                        _dsm_text "${_dsm_text}")
         set(_dsm_patched TRUE)
     endif()
+
     if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
         message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT)")
     endif()
-    # 子补丁3: OHOS_MEDIA_CTRL — NativeAudioState 扩展 + pause/resume/seek/position/duration
     if(NOT _dsm_text MATCHES "OHOS_MEDIA_CTRL")
         # 3a) NativeAudioState 加 pcm_total_len/paused/midi_total_samples/midi_rendered_samples
         string(REPLACE
@@ -317,8 +312,8 @@ if(EXISTS "${_VMRP_DSM}")
             "    if (!stream || len <= 0) return 0;\n    memset(stream, 0, (size_t)len);\n\n    if (s->paused) return 0;  /* OHOS_MEDIA_CTRL: 暂停时不渲染,保持静音 */\n\n    int frames"
             _dsm_text "${_dsm_text}")
         string(REPLACE
-            "        midi_render(s, (int16_t *)stream, frames);\n    }\n\n    return source"
-            "        midi_render(s, (int16_t *)stream, frames);\n        s->midi_rendered_samples += (uint32)frames;  /* OHOS_MEDIA_CTRL */\n    }\n\n    return source"
+            "        midi_render(s, (int16_t *)stream, frames);\n    }\n\n    native_audio_mix_channels_locked(s, (int16_t *)stream, frames);\n\n    return had_audio ? frames : 0;"
+            "        midi_render(s, (int16_t *)stream, frames);\n        s->midi_rendered_samples += (uint32)frames;  /* OHOS_MEDIA_CTRL */\n    }\n\n    native_audio_mix_channels_locked(s, (int16_t *)stream, frames);\n\n    return had_audio ? frames : 0;"
             _dsm_text "${_dsm_text}")
         # 3d) native_audio_take_pcm: 设置 pcm_total_len
         string(REPLACE
@@ -332,8 +327,8 @@ if(EXISTS "${_VMRP_DSM}")
             _dsm_text "${_dsm_text}")
         # 3f) 在 native_audio_stop 后插入 pause/resume/seek/position/duration
         string(REPLACE
-            "void native_audio_stop(void) {\n    native_audio_lock();\n    native_audio_clear_locked(&native_audio);\n    native_audio_unlock();\n}"
-            "void native_audio_stop(void) {\n    native_audio_lock();\n    native_audio_clear_locked(&native_audio);\n    native_audio_unlock();\n}\n\n/* OHOS_MEDIA_CTRL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION) */\nvoid native_audio_pause(void) {\n    native_audio_lock();\n    if (native_audio.source != AUDIO_SOURCE_NONE) {\n        native_audio.paused = 1;\n    }\n    native_audio_unlock();\n}\nvoid native_audio_resume(void) {\n    native_audio_lock();\n    native_audio.paused = 0;\n    native_audio_unlock();\n}\nint native_audio_seek(int ms) {\n    native_audio_lock();\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        uint32 byte_pos = (uint32)((int64_t)ms * AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t) / 1000);\n        if (byte_pos > native_audio.pcm_total_len) byte_pos = native_audio.pcm_total_len;\n        native_audio.pcm_pos = byte_pos;\n        native_audio_unlock();\n        return MR_SUCCESS;\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        uint32 target_sample = (uint32)((int64_t)ms * AUDIO_SAMPLE_RATE / 1000);\n        if (target_sample > native_audio.midi_total_samples) target_sample = native_audio.midi_total_samples;\n        uint32 target_tick = target_sample / (native_audio.midi_samples_per_tick > 0 ? native_audio.midi_samples_per_tick : 1);\n        native_audio.midi_tick = target_tick;\n        native_audio.midi_sample_in_tick = target_sample % (native_audio.midi_samples_per_tick > 0 ? native_audio.midi_samples_per_tick : 1);\n        native_audio.midi_event_pos = 0;\n        while (native_audio.midi_event_pos < native_audio.midi_event_count &&\n               native_audio.midi_events[native_audio.midi_event_pos].tick <= native_audio.midi_tick) {\n            midi_apply_event(&native_audio, &native_audio.midi_events[native_audio.midi_event_pos]);\n            native_audio.midi_event_pos++;\n        }\n        native_audio.midi_rendered_samples = target_sample;\n        native_audio_unlock();\n        return MR_SUCCESS;\n    }\n    native_audio_unlock();\n    return MR_FAILED;\n}\nint native_audio_position(void) {\n    native_audio_lock();\n    int pos_ms = 0;\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        pos_ms = (int)((int64_t)native_audio.pcm_pos * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_samples_per_tick > 0) {\n        pos_ms = (int)((int64_t)native_audio.midi_rendered_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    native_audio_unlock();\n    return pos_ms;\n}\nint native_audio_duration(void) {\n    native_audio_lock();\n    int dur_ms = 0;\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        dur_ms = (int)((int64_t)native_audio.pcm_total_len * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        dur_ms = (int)((int64_t)native_audio.midi_total_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    native_audio_unlock();\n    return dur_ms;\n}"
+            "void native_audio_stop(void) {\n    native_audio_lock();\n    native_audio_clear_all_locked(&native_audio);\n    native_audio_unlock();\n}"
+            "void native_audio_stop(void) {\n    native_audio_lock();\n    native_audio_clear_all_locked(&native_audio);\n    native_audio_unlock();\n}\n\n/* OHOS_MEDIA_CTRL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION) */\nvoid native_audio_pause(void) {\n    native_audio_lock();\n    if (native_audio.source != AUDIO_SOURCE_NONE) {\n        native_audio.paused = 1;\n    }\n    native_audio_unlock();\n}\nvoid native_audio_resume(void) {\n    native_audio_lock();\n    native_audio.paused = 0;\n    native_audio_unlock();\n}\nint native_audio_seek(int ms) {\n    native_audio_lock();\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        uint32 byte_pos = (uint32)((int64_t)ms * AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t) / 1000);\n        if (byte_pos > native_audio.pcm_total_len) byte_pos = native_audio.pcm_total_len;\n        native_audio.pcm_pos = byte_pos;\n        native_audio_unlock();\n        return MR_SUCCESS;\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        uint32 target_sample = (uint32)((int64_t)ms * AUDIO_SAMPLE_RATE / 1000);\n        if (target_sample > native_audio.midi_total_samples) target_sample = native_audio.midi_total_samples;\n        uint32 target_tick = target_sample / (native_audio.midi_samples_per_tick > 0 ? native_audio.midi_samples_per_tick : 1);\n        native_audio.midi_tick = target_tick;\n        native_audio.midi_sample_in_tick = target_sample % (native_audio.midi_samples_per_tick > 0 ? native_audio.midi_samples_per_tick : 1);\n        native_audio.midi_event_pos = 0;\n        while (native_audio.midi_event_pos < native_audio.midi_event_count &&\n               native_audio.midi_events[native_audio.midi_event_pos].tick <= native_audio.midi_tick) {\n            midi_apply_event(&native_audio, &native_audio.midi_events[native_audio.midi_event_pos]);\n            native_audio.midi_event_pos++;\n        }\n        native_audio.midi_rendered_samples = target_sample;\n        native_audio_unlock();\n        return MR_SUCCESS;\n    }\n    native_audio_unlock();\n    return MR_FAILED;\n}\nint native_audio_position(void) {\n    native_audio_lock();\n    int pos_ms = 0;\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        pos_ms = (int)((int64_t)native_audio.pcm_pos * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_samples_per_tick > 0) {\n        pos_ms = (int)((int64_t)native_audio.midi_rendered_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    native_audio_unlock();\n    return pos_ms;\n}\nint native_audio_duration(void) {\n    native_audio_lock();\n    int dur_ms = 0;\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        dur_ms = (int)((int64_t)native_audio.pcm_total_len * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        dur_ms = (int)((int64_t)native_audio.midi_total_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    native_audio_unlock();\n    return dur_ms;\n}"
             _dsm_text "${_dsm_text}")
         set(_dsm_patched TRUE)
     endif()
@@ -343,36 +338,36 @@ if(EXISTS "${_VMRP_DSM}")
     endif()
 endif()
 
-# --- Patch vmrp_api.c: 导出 vmrp_api_media_pause/resume/seek/position/duration ---
-# vmrp_api.c 属于 :restore_patched,用 CMake patch 保证幂等。
+# --- Patch skyengine_api.c: 导出 skyengine_api_media_pause/resume/seek/position/duration ---
+# skyengine_api.c 属于 :restore_patched,用 CMake patch 保证幂等。
 # 宿主(OHOS vmrp_engine.cpp)通过 dlsym 解析这些符号实现媒体控制。
-# pause/resume 带回调: dsm.c 调 vmrp_api_media_pause 时通知宿主暂停 OHAudio renderer,
-# 调 vmrp_api_media_resume 时通知宿主恢复,避免 renderer 空转拉流。
-set(_VMRP_API "${VMRP_SRC_DIR}/src/vmrp_api.c")
+# pause/resume 带回调: dsm.c 调 skyengine_api_media_pause 时通知宿主暂停 OHAudio renderer,
+# 调 skyengine_api_media_resume 时通知宿主恢复,避免 renderer 空转拉流。
+set(_VMRP_API "${VMRP_SRC_DIR}/src/skyengine_api.c")
 if(EXISTS "${_VMRP_API}")
     file(READ "${_VMRP_API}" _api_text)
     if(NOT _api_text MATCHES "OHOS_MEDIA_API")
         string(REPLACE
-            "VMRP_EXPORT void vmrp_api_audio_stop(void) {\n    native_audio_stop();\n}"
-            "VMRP_EXPORT void vmrp_api_audio_stop(void) {\n    native_audio_stop();\n}\n\n/* OHOS_MEDIA_API: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * 宿主通过这些符号实现 MRP 音频的暂停/恢复/跳转/进度/总时长查询。\n * pause/resume 通知宿主停启 OHAudio renderer,避免拉流空转。 */\nstatic void (*media_pause_cb)(void) = NULL;\nstatic void (*media_resume_cb)(void) = NULL;\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void)) {\n    media_pause_cb = pause_cb;\n    media_resume_cb = resume_cb;\n}\nVMRP_EXPORT void vmrp_api_media_pause(void) {\n    native_audio_pause();\n    if (media_pause_cb) media_pause_cb();\n}\nVMRP_EXPORT void vmrp_api_media_resume(void) {\n    native_audio_resume();\n    if (media_resume_cb) media_resume_cb();\n}\nVMRP_EXPORT int vmrp_api_media_seek(int ms) {\n    return native_audio_seek(ms);\n}\nVMRP_EXPORT int vmrp_api_media_position(void) {\n    return native_audio_position();\n}\nVMRP_EXPORT int vmrp_api_media_duration(void) {\n    return native_audio_duration();\n}\n\n/* OHOS_VOLUME_API: 音量控制。MRP 调 mr_plat(1302,level) 时触发,\n * 宿主通过回调调 OH_AudioRenderer_SetVolume。level 通常 0~10。 */\nstatic void (*volume_cb)(int) = NULL;\nVMRP_EXPORT void vmrp_api_set_volume_cb(void (*cb)(int)) {\n    volume_cb = cb;\n}\nVMRP_EXPORT void vmrp_api_set_volume(int level) {\n    if (volume_cb) volume_cb(level);\n}"
+            "VMRP_EXPORT void skyengine_api_audio_stop(void) {\n    native_audio_stop();\n}"
+            "VMRP_EXPORT void skyengine_api_audio_stop(void) {\n    native_audio_stop();\n}\n\n/* OHOS_MEDIA_API: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * 宿主通过这些符号实现 MRP 音频的暂停/恢复/跳转/进度/总时长查询。\n * pause/resume 通知宿主停启 OHAudio renderer,避免拉流空转。 */\nstatic void (*media_pause_cb)(void) = NULL;\nstatic void (*media_resume_cb)(void) = NULL;\nVMRP_EXPORT void skyengine_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void)) {\n    media_pause_cb = pause_cb;\n    media_resume_cb = resume_cb;\n}\nVMRP_EXPORT void skyengine_api_media_pause(void) {\n    native_audio_pause();\n    if (media_pause_cb) media_pause_cb();\n}\nVMRP_EXPORT void skyengine_api_media_resume(void) {\n    native_audio_resume();\n    if (media_resume_cb) media_resume_cb();\n}\nVMRP_EXPORT int skyengine_api_media_seek(int ms) {\n    return native_audio_seek(ms);\n}\nVMRP_EXPORT int skyengine_api_media_position(void) {\n    return native_audio_position();\n}\nVMRP_EXPORT int skyengine_api_media_duration(void) {\n    return native_audio_duration();\n}\n\n/* OHOS_VOLUME_API: 音量控制。MRP 调 mr_plat(1302,level) 时触发,\n * 宿主通过回调调 OH_AudioRenderer_SetVolume。level 通常 0~10。 */\nstatic void (*volume_cb)(int) = NULL;\nVMRP_EXPORT void skyengine_api_set_volume_cb(void (*cb)(int)) {\n    volume_cb = cb;\n}\nVMRP_EXPORT void skyengine_api_set_volume(int level) {\n    if (volume_cb) volume_cb(level);\n}"
             _api_text "${_api_text}")
         file(WRITE "${_VMRP_API}" "${_api_text}")
-        message(STATUS "[OHOS] Patched vmrp_api.c (OHOS_MEDIA_API)")
+        message(STATUS "[OHOS] Patched skyengine_api.c (OHOS_MEDIA_API)")
     endif()
 endif()
 
-# --- Patch vmrp_api.h + native_dsm_funcs.h: 声明 media 控制函数 ---
+# --- Patch skyengine_api.h + native_dsm_funcs.h: 声明 media 控制函数 ---
 # 两个头文件都属于 :restore_patched,用 CMake patch 保证幂等。
-set(_VMRP_API_H "${VMRP_SRC_DIR}/src/include/vmrp_api.h")
+set(_VMRP_API_H "${VMRP_SRC_DIR}/src/include/skyengine_api.h")
 if(EXISTS "${_VMRP_API_H}")
     file(READ "${_VMRP_API_H}" _api_h_text)
     if(NOT _api_h_text MATCHES "OHOS_MEDIA_DECL")
         string(REPLACE
-            "VMRP_EXPORT void vmrp_api_audio_stop(void);"
-            "VMRP_EXPORT void vmrp_api_audio_stop(void);\n\n/* OHOS_MEDIA_DECL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * vmrp_api_media_seek: 跳转到 ms 位置,返回 MR_SUCCESS/MR_FAILED。\n * vmrp_api_media_position: 当前播放位置(ms)。\n * vmrp_api_media_duration: 总时长(ms),未知返回0。\n * vmrp_api_set_media_cb: 注册暂停/恢复回调,宿主收到回调时停启 OHAudio renderer。 */\nVMRP_EXPORT void vmrp_api_media_pause(void);\nVMRP_EXPORT void vmrp_api_media_resume(void);\nVMRP_EXPORT int vmrp_api_media_seek(int ms);\nVMRP_EXPORT int vmrp_api_media_position(void);\nVMRP_EXPORT int vmrp_api_media_duration(void);\nVMRP_EXPORT void vmrp_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void));\n\n/* OHOS_VOLUME_DECL: 音量控制。vmrp_api_set_volume: MRP 调 mr_plat(1302,level)\n * 时触发,level 通常 0~10。宿主收到回调时调 OH_AudioRenderer_SetVolume。 */\nVMRP_EXPORT void vmrp_api_set_volume(int level);\nVMRP_EXPORT void vmrp_api_set_volume_cb(void (*cb)(int level));"
+            "VMRP_EXPORT void skyengine_api_audio_stop(void);"
+            "VMRP_EXPORT void skyengine_api_audio_stop(void);\n\n/* OHOS_MEDIA_DECL: 媒体播放控制(PAUSE/RESUME/SEEK/POSITION/DURATION)。\n * skyengine_api_media_seek: 跳转到 ms 位置,返回 MR_SUCCESS/MR_FAILED。\n * skyengine_api_media_position: 当前播放位置(ms)。\n * skyengine_api_media_duration: 总时长(ms),未知返回0。\n * skyengine_api_set_media_cb: 注册暂停/恢复回调,宿主收到回调时停启 OHAudio renderer。 */\nVMRP_EXPORT void skyengine_api_media_pause(void);\nVMRP_EXPORT void skyengine_api_media_resume(void);\nVMRP_EXPORT int skyengine_api_media_seek(int ms);\nVMRP_EXPORT int skyengine_api_media_position(void);\nVMRP_EXPORT int skyengine_api_media_duration(void);\nVMRP_EXPORT void skyengine_api_set_media_cb(void (*pause_cb)(void), void (*resume_cb)(void));\n\n/* OHOS_VOLUME_DECL: 音量控制。skyengine_api_set_volume: MRP 调 mr_plat(1302,level)\n * 时触发,level 通常 0~10。宿主收到回调时调 OH_AudioRenderer_SetVolume。 */\nVMRP_EXPORT void skyengine_api_set_volume(int level);\nVMRP_EXPORT void skyengine_api_set_volume_cb(void (*cb)(int level));"
             _api_h_text "${_api_h_text}")
         file(WRITE "${_VMRP_API_H}" "${_api_h_text}")
-        message(STATUS "[OHOS] Patched vmrp_api.h (OHOS_MEDIA_DECL)")
+        message(STATUS "[OHOS] Patched skyengine_api.h (OHOS_MEDIA_DECL)")
     endif()
 endif()
 set(_VMRP_NDF_H "${VMRP_SRC_DIR}/src/include/native_dsm_funcs.h")
@@ -392,13 +387,13 @@ endif()
 # 上游 PAUSE 和 STOP 实现相同(都调 mr_stopSound 清空 PCM),导致 PAUSE 后无法 RESUME。
 # 修复:
 # - DsmMediaDevice 加 duration_ms/pause_pos_ms 跟踪媒体位置
-# - PAUSE: 记当前位置→pause_pos_ms, 调 vmrp_api_media_pause 暂停渲染(不清 PCM)
+# - PAUSE: 记当前位置→pause_pos_ms, 调 skyengine_api_media_pause 暂停渲染(不清 PCM)
 # - STOP: 调 mr_stopSound 清 PCM + 重置位置
-# - RESUME: 从 pause_pos_ms 恢复, 调 vmrp_api_media_resume
-# - 210 SETPOS: vmrp_api_media_seek(ms)
-# - 212 GET_TOTAL_TIME: vmrp_api_media_duration()
-# - 213 GET_CURTIME(s): vmrp_api_media_position() / 1000
-# - 215 GET_CURTIME(ms): vmrp_api_media_position()
+# - RESUME: 从 pause_pos_ms 恢复, 调 skyengine_api_media_resume
+# - 210 SETPOS: skyengine_api_media_seek(ms)
+# - 212 GET_TOTAL_TIME: skyengine_api_media_duration()
+# - 213 GET_CURTIME(s): skyengine_api_media_position() / 1000
+# - 215 GET_CURTIME(ms): skyengine_api_media_position()
 set(_VMRP_DSM_MEDIA "${VMRP_SRC_DIR}/src/mythroad/dsm.c")
 if(EXISTS "${_VMRP_DSM_MEDIA}")
     file(READ "${_VMRP_DSM_MEDIA}" _dsm_media)
@@ -411,17 +406,17 @@ if(EXISTS "${_VMRP_DSM_MEDIA}")
         # 2) dsm_media_play: 播放时记录 duration_ms
         string(REPLACE
             "    if (ret == MR_SUCCESS) {\n        media->status = MR_MEDIA_PLAYING;\n    }\n    return ret;\n}"
-            "    if (ret == MR_SUCCESS) {\n        media->status = MR_MEDIA_PLAYING;\n        /* OHOS_DSM_MEDIA: 播放成功后查询总时长缓存到 duration_ms */\n        extern int vmrp_api_media_duration(void);\n        media->duration_ms = vmrp_api_media_duration();\n        media->pause_pos_ms = 0;\n    }\n    return ret;\n}"
+            "    if (ret == MR_SUCCESS) {\n        media->status = MR_MEDIA_PLAYING;\n        /* OHOS_DSM_MEDIA: 播放成功后查询总时长缓存到 duration_ms */\n        extern int skyengine_api_media_duration(void);\n        media->duration_ms = skyengine_api_media_duration();\n        media->pause_pos_ms = 0;\n    }\n    return ret;\n}"
             _dsm_media "${_dsm_media}")
         # 3) PAUSE: 记位置+暂停渲染(不清 PCM)
         string(REPLACE
             "        case MR_MEDIA_PAUSE_REQ:\n        case MR_MEDIA_STOP_REQ:\n            mr_stopSound(dsm_media_to_sound_type(device));\n            media->status = MR_MEDIA_LOADED;\n            return MR_SUCCESS;\n        case MR_MEDIA_RESUME_REQ:\n            return dsm_media_play(media, input, input_len);"
-            "        case MR_MEDIA_PAUSE_REQ: {  /* OHOS_DSM_MEDIA: PAUSE 保存位置,暂停渲染,不清 PCM */\n            extern int vmrp_api_media_position(void);\n            extern void vmrp_api_media_pause(void);\n            media->pause_pos_ms = vmrp_api_media_position();\n            vmrp_api_media_pause();\n            media->status = MR_MEDIA_PAUSED;\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_STOP_REQ:  /* OHOS_DSM_MEDIA: STOP 清 PCM+重置位置 */\n            mr_stopSound(dsm_media_to_sound_type(device));\n            media->pause_pos_ms = 0;\n            media->duration_ms = 0;\n            media->status = MR_MEDIA_LOADED;\n            return MR_SUCCESS;\n        case MR_MEDIA_RESUME_REQ: {  /* OHOS_DSM_MEDIA: RESUME 从暂停位置恢复 */\n            extern void vmrp_api_media_resume(void);\n            extern int vmrp_api_media_seek(int ms);\n            if (media->status == MR_MEDIA_PAUSED && media->pause_pos_ms > 0) {\n                vmrp_api_media_resume();\n                vmrp_api_media_seek(media->pause_pos_ms);\n            } else {\n                vmrp_api_media_resume();\n            }\n            media->status = MR_MEDIA_PLAYING;\n            return MR_SUCCESS;\n        }"
+            "        case MR_MEDIA_PAUSE_REQ: {  /* OHOS_DSM_MEDIA: PAUSE 保存位置,暂停渲染,不清 PCM */\n            extern int skyengine_api_media_position(void);\n            extern void skyengine_api_media_pause(void);\n            media->pause_pos_ms = skyengine_api_media_position();\n            skyengine_api_media_pause();\n            media->status = MR_MEDIA_PAUSED;\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_STOP_REQ:  /* OHOS_DSM_MEDIA: STOP 清 PCM+重置位置 */\n            mr_stopSound(dsm_media_to_sound_type(device));\n            media->pause_pos_ms = 0;\n            media->duration_ms = 0;\n            media->status = MR_MEDIA_LOADED;\n            return MR_SUCCESS;\n        case MR_MEDIA_RESUME_REQ: {  /* OHOS_DSM_MEDIA: RESUME 从暂停位置恢复 */\n            extern void skyengine_api_media_resume(void);\n            extern int skyengine_api_media_seek(int ms);\n            if (media->status == MR_MEDIA_PAUSED && media->pause_pos_ms > 0) {\n                skyengine_api_media_resume();\n                skyengine_api_media_seek(media->pause_pos_ms);\n            } else {\n                skyengine_api_media_resume();\n            }\n            media->status = MR_MEDIA_PLAYING;\n            return MR_SUCCESS;\n        }"
             _dsm_media "${_dsm_media}")
         # 4) 实现 210/212/213/215 (替换整块桩代码)
         string(REPLACE
             "        case MR_MEDIA_SETPOS:\n        case MR_MEDIA_GETTIME:\n        case MR_MEDIA_GET_TOTAL_TIME:\n        case MR_MEDIA_GET_CURTIME:\n        case MR_MEDIA_GET_CURTIME_MSEC: {\n            static T_MEDIA_TIME media_time;\n            media_time.pos = 0;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }"
-            "        case MR_MEDIA_SETPOS: {  /* OHOS_DSM_MEDIA: 210 seek 到指定 ms 位置 */\n            extern int vmrp_api_media_seek(int ms);\n            int32 pos_ms = 0;\n            if (input && input_len >= 4) memcpy2(&pos_ms, input, 4);\n            vmrp_api_media_seek(pos_ms);\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GETTIME: {  /* OHOS_DSM_MEDIA: 211 兼容,返回秒 */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_position(void);\n            media_time.pos = vmrp_api_media_position() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_TOTAL_TIME: {  /* OHOS_DSM_MEDIA: 212 返回总时长(秒) */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_duration(void);\n            media_time.pos = vmrp_api_media_duration() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_CURTIME: {  /* OHOS_DSM_MEDIA: 213 返回当前播放位置(秒) */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_position(void);\n            media_time.pos = vmrp_api_media_position() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_CURTIME_MSEC: {  /* OHOS_DSM_MEDIA: 215 返回当前播放位置(毫秒) */\n            static T_MEDIA_TIME media_time;\n            extern int vmrp_api_media_position(void);\n            media_time.pos = vmrp_api_media_position();\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }"
+            "        case MR_MEDIA_SETPOS: {  /* OHOS_DSM_MEDIA: 210 seek 到指定 ms 位置 */\n            extern int skyengine_api_media_seek(int ms);\n            int32 pos_ms = 0;\n            if (input && input_len >= 4) memcpy2(&pos_ms, input, 4);\n            skyengine_api_media_seek(pos_ms);\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GETTIME: {  /* OHOS_DSM_MEDIA: 211 兼容,返回秒 */\n            static T_MEDIA_TIME media_time;\n            extern int skyengine_api_media_position(void);\n            media_time.pos = skyengine_api_media_position() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_TOTAL_TIME: {  /* OHOS_DSM_MEDIA: 212 返回总时长(秒) */\n            static T_MEDIA_TIME media_time;\n            extern int skyengine_api_media_duration(void);\n            media_time.pos = skyengine_api_media_duration() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_CURTIME: {  /* OHOS_DSM_MEDIA: 213 返回当前播放位置(秒) */\n            static T_MEDIA_TIME media_time;\n            extern int skyengine_api_media_position(void);\n            media_time.pos = skyengine_api_media_position() / 1000;\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }\n        case MR_MEDIA_GET_CURTIME_MSEC: {  /* OHOS_DSM_MEDIA: 215 返回当前播放位置(毫秒) */\n            static T_MEDIA_TIME media_time;\n            extern int skyengine_api_media_position(void);\n            media_time.pos = skyengine_api_media_position();\n            if (output && output_len) {\n                *output = (uint8 *)&media_time;\n                *output_len = sizeof(media_time);\n            }\n            return MR_SUCCESS;\n        }"
             _dsm_media "${_dsm_media}")
         file(WRITE "${_VMRP_DSM_MEDIA}" "${_dsm_media}")
         message(STATUS "[OHOS] Patched dsm.c media control (OHOS_DSM_MEDIA)")
@@ -582,7 +577,7 @@ if(EXISTS "${_VMRP_AEX_TABLE2}")
     if(NOT _at2 MATCHES "OHOS_PLATEX_MEM_EXT")
         string(REPLACE
             "            /* SCRRAM is a separate platform allocation, not an LG_mem/bump"
-            "            /* OHOS_PLATEX_MEM_EXT: platEx(1001) 获取屏幕缓冲(第二内存),从 ARM 堆分配\n             * 屏幕大小(SCRW*SCRH*2)的缓冲,guest 代码用返回的 ARM 地址做离屏渲染。\n             * platEx(1002) 释放时清零 addr/len;platEx(1012) 申请内部 cache;\n             * platEx(1013) 释放内部 cache。均与 1014/1015 同模式——ARM 堆分配,\n             * guest 通过写回的 ARM 地址访问,无需 host 指针转换。\n             */\n            if (r0 == 1001) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = 0;\n                /* 屏幕缓冲大小: 从 table[92/93] 读 mr_screen_w/h,\n                 * 兜底用 240*320*2=153600 */\n                {\n                    uint32_t sw = 240, sh = 320;\n                    if (m->screen_w_slot) {\n                        void *sp = arm_ptr(m, m->screen_w_slot);\n                        if (sp) memcpy(&sw, sp, 4);\n                    }\n                    if (m->screen_h_slot) {\n                        void *sp = arm_ptr(m, m->screen_h_slot);\n                        if (sp) memcpy(&sh, sp, 4);\n                    }\n                    if (sw < 16 || sw > 1024) sw = 240;\n                    if (sh < 16 || sh > 1024) sh = 320;\n                    want = sw * sh * 2;\n                }\n                uint32_t a = 0;\n                if (want) {\n                    if (m->screen_buf_addr && want <= m->screen_buf_len) {\n                        a = m->screen_buf_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->screen_buf_addr = a;\n                            m->screen_buf_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_FAILED;\n                goto aex_done;\n            }\n            if (r0 == 1002) {\n                m->screen_buf_addr = 0;\n                m->screen_buf_len = 0;\n                ret = MR_SUCCESS;\n                goto aex_done;\n            }\n            if (r0 == 1012) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = (uint32_t)r2;\n                uint32_t a = 0;\n                if (want) {\n                    if (m->iram_addr && want <= m->iram_len) {\n                        a = m->iram_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->iram_addr = a;\n                            m->iram_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_IGNORE;\n                goto aex_done;\n            }\n            if (r0 == 1013) {\n                m->iram_addr = 0;\n                m->iram_len = 0;\n                ret = MR_SUCCESS;\n                goto aex_done;\n            }\n            /* SCRRAM is a separate platform allocation, not an LG_mem/bump"
+            "            /* OHOS_PLATEX_MEM_EXT: platEx(1001) 获取屏幕缓冲(第二内存),从 ARM 堆分配\n             * 屏幕大小(SCRW*SCRH*2)的缓冲,guest 代码用返回的 ARM 地址做离屏渲染。\n             * platEx(1002) 释放时清零 addr/len;platEx(1012) 申请内部 cache;\n             * platEx(1013) 释放内部 cache。均与 1014/1015 同模式——ARM 堆分配,\n             * guest 通过写回的 ARM 地址访问,无需 host 指针转换。\n             */\n            if (r0 == 1001) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = 0;\n                /* 屏幕缓冲大小: 从 table[92/93] 读 mr_screen_w/h,\n                 * 兜底用 240*320*2=153600 */\n                {\n                    uint32_t sw = 240, sh = 320;\n                    if (m->screen_w_slot) {\n                        void *sp = arm_ptr(m, m->screen_w_slot);\n                        if (sp) memcpy(&sw, sp, 4);\n                    }\n                    if (m->screen_h_slot) {\n                        void *sp = arm_ptr(m, m->screen_h_slot);\n                        if (sp) memcpy(&sh, sp, 4);\n                    }\n                    if (sw < 16 || sw > 1024) sw = 240;\n                    if (sh < 16 || sh > 1024) sh = 320;\n                    want = sw * sh * 2;\n                }\n                uint32_t a = 0;\n                if (want) {\n                    if (m->screen_addr && want <= m->screen_len) {\n                        a = m->screen_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->screen_addr = a;\n                            m->screen_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_FAILED;\n                goto aex_done;\n            }\n            if (r0 == 1002) {\n                m->screen_addr = 0;\n                m->screen_len = 0;\n                ret = MR_SUCCESS;\n                goto aex_done;\n            }\n            if (r0 == 1012) {\n                uint32_t outp = r3, outlenp = arg_read(m, 4);\n                uint32_t want = (uint32_t)r2;\n                uint32_t a = 0;\n                if (want) {\n                    if (m->iram_addr && want <= m->iram_len) {\n                        a = m->iram_addr;\n                    } else {\n                        a = arm_alloc(m, want);\n                        if (a) {\n                            m->iram_addr = a;\n                            m->iram_len = want;\n                            void *ep = arm_ptr(m, a);\n                            if (ep) memset(ep, 0, want);\n                        }\n                    }\n                }\n                if (a) {\n                    if (outp) uc_mem_write(m->uc, outp, &a, 4);\n                    if (outlenp) uc_mem_write(m->uc, outlenp, &want, 4);\n                }\n                ret = a ? MR_SUCCESS : MR_IGNORE;\n                goto aex_done;\n            }\n            if (r0 == 1013) {\n                m->iram_addr = 0;\n                m->iram_len = 0;\n                ret = MR_SUCCESS;\n                goto aex_done;\n            }\n            /* SCRRAM is a separate platform allocation, not an LG_mem/bump"
             _at2 "${_at2}")
         file(WRITE "${_VMRP_AEX_TABLE2}" "${_at2}")
         message(STATUS "[OHOS] Patched platEx(1001/1002/1012/1013) in aex_table.c (OHOS_PLATEX_MEM_EXT)")
@@ -624,7 +619,7 @@ if(EXISTS "${_VMRP_DSMBC}")
     if(NOT _dsm_bc MATCHES "OHOS_DSM_BC_EX")
         string(REPLACE
             "int32 mr_stop_ex(int16 freemem) {"
-            "/* OHOS_DSM_BC_EX: 外部移植接口 mr_start_dsmB/C/ex\n * (SkyEngine API 参考手册 / 外部移植接口)\n *\n * mr_start_dsmB(const char *entry):\n *   直接启动 mrp 文件,entry 含启动标志(*A=固化应用,%QQ.mrp=根目录mrp)。\n *   等价 mr_start_dsm(entry, NULL, NULL),ext 默认 MR_START_FILE。\n *\n * mr_start_dsmC(const char *entry):\n *   同 dsmB,但冷启动时先 dsm_init 初始化引擎再启动。\n *   用于宿主首次启动虚拟机的场景。\n *\n * mr_start_dsm_ex(const char *path, const char *entry):\n *   显式 path(=filename) + entry 入口标志。\n *   等价 mr_start_dsm(path, NULL, entry)。\n */\nint32 mr_start_dsmB(const char *entry) {\n    if (!entry) entry = \"*A\";\n    return mr_start_dsm((char *)entry, NULL, NULL);\n}\n\nint32 mr_start_dsmC(const char *entry) {\n    /* dsmC 与 dsmB 等效,因为 OHOS 宿主总是先调 vmrp_api_init\n     * (内部 dsm_init)再调 start。dsm_init 重复调用是安全的\n     * (dsm.c: 仅赋值 dsmInFuncs + 重置状态)。 */\n    return mr_start_dsmB(entry);\n}\n\nint32 mr_start_dsm_ex(const char *path, const char *entry) {\n    return mr_start_dsm((char *)path, NULL, (char *)entry);\n}\n\nint32 mr_stop_ex(int16 freemem) {"
+            "/* OHOS_DSM_BC_EX: 外部移植接口 mr_start_dsmB/C/ex\n * (SkyEngine API 参考手册 / 外部移植接口)\n *\n * mr_start_dsmB(const char *entry):\n *   直接启动 mrp 文件,entry 含启动标志(*A=固化应用,%QQ.mrp=根目录mrp)。\n *   等价 mr_start_dsm(entry, NULL, NULL),ext 默认 MR_START_FILE。\n *\n * mr_start_dsmC(const char *entry):\n *   同 dsmB,但冷启动时先 dsm_init 初始化引擎再启动。\n *   用于宿主首次启动虚拟机的场景。\n *\n * mr_start_dsm_ex(const char *path, const char *entry):\n *   显式 path(=filename) + entry 入口标志。\n *   等价 mr_start_dsm(path, NULL, entry)。\n */\nint32 mr_start_dsmB(const char *entry) {\n    if (!entry) entry = \"*A\";\n    return mr_start_dsm((char *)entry, NULL, NULL);\n}\n\nint32 mr_start_dsmC(const char *entry) {\n    /* dsmC 与 dsmB 等效,因为 OHOS 宿主总是先调 skyengine_api_init\n     * (内部 dsm_init)再调 start。dsm_init 重复调用是安全的\n     * (dsm.c: 仅赋值 dsmInFuncs + 重置状态)。 */\n    return mr_start_dsmB(entry);\n}\n\nint32 mr_start_dsm_ex(const char *path, const char *entry) {\n    return mr_start_dsm((char *)path, NULL, (char *)entry);\n}\n\nint32 mr_stop_ex(int16 freemem) {"
             _dsm_bc "${_dsm_bc}")
         file(WRITE "${_VMRP_DSMBC}" "${_dsm_bc}")
         message(STATUS "[OHOS] Patched mr_start_dsmB/C/ex in mythroad.c (OHOS_DSM_BC_EX)")
@@ -644,7 +639,7 @@ if(EXISTS "${_VMRP_DSM_VOL}")
         # 旧锚点(MR_SET_KEY_END ... default)失效,改用 4006 作为锚点。
         string(REPLACE
             "        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)\n            return 1000 + DSM_MOTION_ACC_MAX;\n        default:"
-            "        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)\n            return 1000 + DSM_MOTION_ACC_MAX;\n        case MR_SET_VOL: {  /* OHOS_SET_VOL: 1302 音量控制, param=0~10 */\n            extern void vmrp_api_set_volume(int level);\n            vmrp_api_set_volume(param);\n            return MR_SUCCESS;\n        }\n        default:"
+            "        case 4006:  // 量程查询:返回 A(>1000),上送分量范围 ±(A-1000)\n            return 1000 + DSM_MOTION_ACC_MAX;\n        case MR_SET_VOL: {  /* OHOS_SET_VOL: 1302 音量控制, param=0~10 */\n            extern void skyengine_api_set_volume(int level);\n            skyengine_api_set_volume(param);\n            return MR_SUCCESS;\n        }\n        default:"
             _dsm_vol "${_dsm_vol}")
         file(WRITE "${_VMRP_DSM_VOL}" "${_dsm_vol}")
         message(STATUS "[OHOS] Patched dsm.c MR_SET_VOL (OHOS_SET_VOL)")
@@ -778,7 +773,7 @@ if(EXISTS "${_VMRP_NET}")
     endif()
 endif()
 
-# --- Patch vmrp_api.c: async worker timer 停止时保持心跳 (OHOS_WORKER_HEARTBEAT) ---
+# --- Patch skyengine_api.c: async worker timer 停止时保持心跳 (OHOS_WORKER_HEARTBEAT) ---
 # 已移除: op6120 卡死的根因是 origin_mem_len 过大(用户设 16MB 内存 → clamp 8MB),
 # 导致 ARM 代码 exRam 预算计算溢出。设置里选 1MB 内存即可正常,不需要此补丁。
 
@@ -786,34 +781,33 @@ endif()
 # 已移除: 用户在设置里选 1MB 内存即可。origin_mem_len = vmrp_memory_bytes(1) = 1MB,
 # 跟真机标准一致。不需要强制覆盖。
 
-# --- Diagnostic patches removed (OHOS_CODE2_HELPER / OHOS_TIMER_PATH) ---
-
-# 已移除: Pattern D 会把 op6120 等游戏从能工作的 native_ext_void_event(2) 路径
-# 推到 arm_ext_call_dispatch 路径,但该路径的 queue liveness 检查对 op6120 的
-# timer 结构不兼容(队列在 socket 等待期间空 → host timer 不重 arm → 卡死)。
-# 上游也无 Pattern D,op6120 在上游走 code=2 正常工作,故此处保持不补丁。
-
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
-# --- OHOS 图片解码：注入 ohos_image_decode.c 到 vmrp-shared ---
+# --- Patch skyengine-shared OUTPUT_NAME: 保持输出 libvmrp.so 而非 libskyengine.so ---
+# 上游 5d3fd47 重命名输出为 libskyengine.so,但 OHOS 侧 dlopen/CMakeLists/打包
+# 路径全引用 libvmrp.so。保持旧名避免大面积改动。
+if(TARGET skyengine-shared)
+    set_target_properties(skyengine-shared PROPERTIES OUTPUT_NAME "vmrp")
+endif()
+
+# --- OHOS 图片解码：注入 ohos_image_decode.c 到 skyengine-shared ---
 # 源文件在 vmrp 树外的 ohos_src/ 目录，不污染上游源码。
 # 仅 OHOS 构建（CMAKE_SYSTEM_NAME=OHOS）时编译，定义 __OHOS__ 宏
 # 使 dsm.c 中的 case 3001/3002/3009/3010 生效。
 # 链接鸿蒙原生 Image C API: libimage_source.so + libpixelmap.so
-if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND TARGET vmrp-shared)
+if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND TARGET skyengine-shared)
     set(_OHOS_IMG_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/ohos_image_decode.cpp")
     if(EXISTS "${_OHOS_IMG_SRC}")
-        target_sources(vmrp-shared PRIVATE "${_OHOS_IMG_SRC}")
-        target_compile_definitions(vmrp-shared PRIVATE __OHOS__)
+        target_sources(skyengine-shared PRIVATE "${_OHOS_IMG_SRC}")
+        target_compile_definitions(skyengine-shared PRIVATE __OHOS__)
         # OHOS SDK sysroot 已通过 toolchain 设置，头文件路径自动解析
         # multimedia/image_framework 在 sysroot/usr/include 下
         # vmrp/CMakeLists.txt 使用 plain signature 的 target_link_libraries，
         # 此处也必须用 plain signature，不能混用 PRIVATE/PUBLIC 关键字。
-        target_link_libraries(vmrp-shared image_source pixelmap)
+        target_link_libraries(skyengine-shared image_source pixelmap)
         message(STATUS "[OHOS] Injected ohos_image_decode.c + libimage_source/libpixelmap")
     else()
         message(WARNING "[OHOS] ohos_image_decode.c not found at ${_OHOS_IMG_SRC}")
     endif()
 endif()
-
 

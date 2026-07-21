@@ -2,7 +2,7 @@
  * vmrp_engine.cpp - vmrp 引擎桥接核心实现。
  *
  * 通过 dlopen 加载预构建的 libvmrp.so（aarch64-linux-ohos，含 Unicorn arm-softmmu
- * 软件模拟 ARM32），按名称解析 vmrp_api.h 的 18 个导出符号。
+ * 软件模拟 ARM32），按名称解析 skyengine_api.h 的导出符号。
  *
  * 线程模型说明（重要）：
  *   - vmrp 内部的 Unicorn ARM 引擎不支持并发访问。所有 Init/SetWorkDir/Start/
@@ -119,54 +119,54 @@ bool VmrpEngine::Load(const std::string &so_path) {
     }
     LOGI("dlopen(libvmrp.so) OK (by name, no namespace check)");
 
-    RESOLVE_SYM(so_handle_, "vmrp_api_init", init, int (*)(int, int));
-    RESOLVE_SYM(so_handle_, "vmrp_api_set_work_dir", set_work_dir, int (*)(const char *));
-    RESOLVE_SYM(so_handle_, "vmrp_api_start", start, int (*)(const char *, const char *, const char *));
-    RESOLVE_SYM(so_handle_, "vmrp_api_destroy", destroy, void (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_is_running", is_running, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_set_dns_map", set_dns_map, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "skyengine_api_init", init, int (*)(int, int));
+    RESOLVE_SYM(so_handle_, "skyengine_api_set_work_dir", set_work_dir, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "skyengine_api_start", start, int (*)(const char *, const char *, const char *));
+    RESOLVE_SYM(so_handle_, "skyengine_api_destroy", destroy, void (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_is_running", is_running, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_set_dns_map", set_dns_map, int (*)(const char *));
 
-    RESOLVE_SYM(so_handle_, "vmrp_api_event", event, int (*)(int, int, int));
-    RESOLVE_SYM(so_handle_, "vmrp_api_motion", motion, int (*)(int, int, int));
-    RESOLVE_SYM(so_handle_, "vmrp_api_timer", timer, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_timer_interval", get_timer_interval, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_event", event, int (*)(int, int, int));
+    RESOLVE_SYM(so_handle_, "skyengine_api_motion", motion, int (*)(int, int, int));
+    RESOLVE_SYM(so_handle_, "skyengine_api_timer", timer, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_timer_interval", get_timer_interval, int (*)(void));
 
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_buffer", get_screen_buffer, const uint16_t *(*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_rgba_buffer", get_screen_rgba_buffer, const uint8_t *(*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_dirty", get_screen_dirty, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_width", get_screen_width, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_height", get_screen_height, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_screen_buffer", get_screen_buffer, const uint16_t *(*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_screen_rgba_buffer", get_screen_rgba_buffer, const uint8_t *(*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_screen_dirty", get_screen_dirty, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_screen_width", get_screen_width, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_screen_height", get_screen_height, int (*)(void));
 
-    RESOLVE_SYM(so_handle_, "vmrp_api_audio_sample_rate", audio_sample_rate, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_audio_channels", audio_channels, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_audio_is_active", audio_is_active, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_audio_render_s16le", audio_render_s16le, int (*)(void *, int));
-    RESOLVE_SYM(so_handle_, "vmrp_api_audio_stop", audio_stop, void (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_audio_sample_rate", audio_sample_rate, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_audio_channels", audio_channels, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_audio_is_active", audio_is_active, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_audio_render_s16le", audio_render_s16le, int (*)(void *, int));
+    RESOLVE_SYM(so_handle_, "skyengine_api_audio_stop", audio_stop, void (*)(void));
 
-    RESOLVE_SYM(so_handle_, "vmrp_api_media_pause", media_pause, void (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_media_resume", media_resume, void (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_media_seek", media_seek, int (*)(int));
-    RESOLVE_SYM(so_handle_, "vmrp_api_media_position", media_position, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_media_duration", media_duration, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_media_pause", media_pause, void (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_media_resume", media_resume, void (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_media_seek", media_seek, int (*)(int));
+    RESOLVE_SYM(so_handle_, "skyengine_api_media_position", media_position, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_media_duration", media_duration, int (*)(void));
 
-    RESOLVE_SYM(so_handle_, "vmrp_api_is_edit_active", is_edit_active, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_edit_text", get_edit_text, const char *(*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_set_edit_text", set_edit_text, int (*)(const char *));
-    RESOLVE_SYM(so_handle_, "vmrp_api_cancel_edit", cancel_edit, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_is_edit_active", is_edit_active, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_edit_text", get_edit_text, const char *(*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_set_edit_text", set_edit_text, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "skyengine_api_cancel_edit", cancel_edit, int (*)(void));
     // 上游轮询式 motion/shake API（651e421/4fbb0b4）
-    RESOLVE_SYM(so_handle_, "vmrp_api_motion_active", motion_active, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_take_shake", take_shake, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_get_screen_rotation", get_screen_rotation, int (*)(void));
-    RESOLVE_SYM(so_handle_, "vmrp_api_set_media_cb", set_media_cb, void (*)(void (*)(void), void (*)(void)));
-    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmB", start_dsmB, int (*)(const char *));
-    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsmC", start_dsmC, int (*)(const char *));
-    RESOLVE_SYM(so_handle_, "vmrp_api_start_dsm_ex", start_dsm_ex, int (*)(const char *, const char *));
+    RESOLVE_SYM(so_handle_, "skyengine_api_motion_active", motion_active, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_take_shake", take_shake, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_screen_rotation", get_screen_rotation, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_set_media_cb", set_media_cb, void (*)(void (*)(void), void (*)(void)));
+    RESOLVE_SYM(so_handle_, "skyengine_api_start_dsmB", start_dsmB, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "skyengine_api_start_dsmC", start_dsmC, int (*)(const char *));
+    RESOLVE_SYM(so_handle_, "skyengine_api_start_dsm_ex", start_dsm_ex, int (*)(const char *, const char *));
 
     // Volume API may not exist in older builds; optional resolve.
     {
-        void *sym = dlsym(so_handle_, "vmrp_api_set_volume");
+        void *sym = dlsym(so_handle_, "skyengine_api_set_volume");
         if (sym) api_.set_volume = reinterpret_cast<void (*)(int)>(sym);
-        sym = dlsym(so_handle_, "vmrp_api_set_volume_cb");
+        sym = dlsym(so_handle_, "skyengine_api_set_volume_cb");
         if (sym) api_.set_volume_cb = reinterpret_cast<void (*)(void (*)(int))>(sym);
     }
 
@@ -177,7 +177,7 @@ bool VmrpEngine::Load(const std::string &so_path) {
     // TimerLoop 每 tick 调 PollMotionShake()，查 motion_active() 启停传感器、
     // take_shake() 驱动 OH_Vibrator。不再注册回调。
 
-    // 注册媒体暂停/恢复回调：dsm.c PAUSE/RESUME 调 vmrp_api_media_pause/resume
+    // 注册媒体暂停/恢复回调：dsm.c PAUSE/RESUME 调 skyengine_api_media_pause/resume
     // 时通知宿主停启 OHAudio renderer,避免 renderer 空转拉流。
     if (api_.set_media_cb) {
         api_.set_media_cb(
@@ -199,7 +199,7 @@ bool VmrpEngine::Load(const std::string &so_path) {
         LOGI("media pause/resume callback registered");
     }
 
-    // 注册音量回调：dsm.c mr_plat(1302,level) 调 vmrp_api_set_volume 时
+    // 注册音量回调：dsm.c mr_plat(1302,level) 调 skyengine_api_set_volume 时
     // 通知宿主调 OH_AudioRenderer_SetVolume。
     if (api_.set_volume_cb) {
         api_.set_volume_cb([](int level) {
@@ -218,6 +218,8 @@ bool VmrpEngine::IsRunning() const {
 
 int VmrpEngine::Init(int w, int h) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
+    panel_w_ = w;
+    panel_h_ = h;
     int ret = api_.init(w, h);
     if (ret == 0 && api_.set_dns_map) {
         api_.set_dns_map(
@@ -293,6 +295,7 @@ const uint8_t *VmrpEngine::ScreenRgbaBuffer() {
 }
 int VmrpEngine::ScreenWidth() { return api_.get_screen_width ? api_.get_screen_width() : 0; }
 int VmrpEngine::ScreenHeight() { return api_.get_screen_height ? api_.get_screen_height() : 0; }
+int VmrpEngine::ScreenRotation() { return api_.get_screen_rotation ? api_.get_screen_rotation() : 0; }
 bool VmrpEngine::ScreenDirty() { return api_.get_screen_dirty && api_.get_screen_dirty() != 0; }
 
 int VmrpEngine::AudioSampleRate() { return api_.audio_sample_rate ? api_.audio_sample_rate() : 44100; }

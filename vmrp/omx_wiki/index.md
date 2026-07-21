@@ -1,6 +1,6 @@
 # Wiki Index
 
-> 39 pages | Last updated: 2026-07-18T16:12:27.749Z
+> 41 pages | Last updated: 2026-07-21T04:14:46.000Z
 
 ## debugging
 
@@ -21,6 +21,7 @@
 - [gzwdzjs play MR_UCS2GB caller-owned output pointer fix](gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md) — # gzwdzjs play MR_UCS2GB caller-owned output pointer fix
 - [gzwdzjs primary black clear damage synthesis](gzwdzjs-primary-black-clear-damage-synthesis.md) — # gzwdzjs primary black clear damage synthesis
 - [gzwdzjs table bridge stale epilogue guard](gzwdzjs-table-bridge-stale-epilogue-guard.md) — # gzwdzjs table bridge stale epilogue guard
+- [gwyaz installed-file probe and wrapper RW owner fix](gwyaz-installed-file-probe-and-wrapper-rw-owner-fix.md) — # gwyaz installed-file probe and wrapper RW owner fix
 - [MPS selector 100 is not record 100](mps-selector-100-is-not-record-100.md) — # MPS selector 100 is not record 100
 - [OP6120 independent SCRRAM 4M startup fix](op6120-independent-scrram-4m-startup-fix.md) — # OP6120 independent SCRRAM 4M startup fix
 - [opglqa font download repeat investigation](opglqa-font-download-repeat-investigation.md) — # opglqa font download repeat investigation
@@ -28,6 +29,7 @@
 - [Optwar exit plugin no-network investigation](optwar-exit-plugin-no-network-investigation.md) — # Optwar exit plugin no-network investigation
 - [Wrapper RW foreign-write journal (staging R9 divergence containment)](private-loader-wrapper-package-context-repair.md) — # Wrapper RW foreign-write journal (staging R9 divergence containment)
 - [RX4.5 ARM EXT 0x80000000 Platform IO Mapping](rx4-5-arm-ext-0x80000000-platform-io-mapping.md) — # RX4.5 ARM EXT 0x80000000 Platform IO Mapping
+- [rzsgqd background music silent debugging](rzsgqd-background-music-silent-debugging.md) — # rzsgqd background music silent debugging
 - [Sanguo black-screen dynamic LG_mem arena fix](sanguo-black-screen-dynamic-lg-mem-arena-fix.md) — # Sanguo black-screen dynamic LG_mem arena fix
 - [WBRW html2sky native elements and PPM verification 2026-07-12](wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md) — # WBRW html2sky native elements and PPM verification 2026-07-12
 - [wbrw input paste UCS2 table77 fix](wbrw-input-paste-ucs2-table77-fix.md) — # wbrw input paste UCS2 table77 fix

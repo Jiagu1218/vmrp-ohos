@@ -22,6 +22,12 @@ export const startDsmEx: (path: string, entry?: string) => number;
 export const submitEdit: (text: string) => number;
 export const cancelEdit: () => number;
 export const isRunning: () => boolean;
+interface ScreenInfo {
+  width: number;
+  height: number;
+  rotation: number;
+}
+export const getScreenInfo: () => ScreenInfo;
 export const mediaPause: () => void;
 export const mediaResume: () => void;
 export const setEditCallback: (cb: (editText: string) => void) => void;

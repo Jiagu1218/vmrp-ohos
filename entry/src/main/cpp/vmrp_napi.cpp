@@ -62,10 +62,10 @@ std::atomic<bool> g_engine_running{false};
 // 编辑回调：把编辑状态通知到 ArkTS（通过 napi_threadsafe_function）。
 napi_threadsafe_function g_edit_tsfn = nullptr;
 
-// 触摸事件码由 vmrp_api.h 宏提供。
+// 触摸事件码由 skyengine_api.h 宏提供。
 } // namespace
 
-#include "vmrp_api.h"
+#include "skyengine_api.h"
 
 // 这几个函数在全局命名空间定义（无 namespace），供本文件各处调用。
 void TryRender();
@@ -141,15 +141,14 @@ void TryRender() {
     const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
-    g_renderer.Render(rgba, sw, sh);
+    int rot = VmrpEngine::Instance().ScreenRotation();
+    g_renderer.Render(rgba, sw, sh, rot);
 }
 
 // 在非渲染线程（timer/key/touch）请求渲染：置标志，由帧回调线程消费。
 void RequestRender() { g_need_render.store(true); }
 
 // 强制渲染：不检查 dirty，每帧都上传纹理并 swap。
-// EGL window surface 是双缓冲，需持续 eglSwapBuffers 维持显示；
-// 静态画面画完一帧后不再 dirty，但仍需每帧 swap 保持上屏。
 void TryRenderForce() {
     if (!g_engine_running.load()) return;
     std::lock_guard<std::mutex> lk(g_render_mtx);
@@ -157,11 +156,12 @@ void TryRenderForce() {
     const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
-    g_renderer.Render(rgba, sw, sh);
+    int rot = VmrpEngine::Instance().ScreenRotation();
+    g_renderer.Render(rgba, sw, sh, rot);
 }
 
 // 渲染驱动循环。
-// vmrp_api.c 在 VMRP_API_ASYNC_RUNNER=1 下采用 async worker 模型：vmrp_api_start
+// skyengine_api.c 在 VMRP_API_ASYNC_RUNNER=1 下采用 async worker 模型：skyengine_api_start
 // 成功后自动起 worker 线程自驱 timer()/event()。本循环不再调 StepTimer()，
 // 只做三件事：1) 周期请求渲染；2) 检测引擎退出；3) 轮询 motion/shake。
 static void TimerLoop() {
@@ -252,7 +252,7 @@ static napi_value SetMemory(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     int32_t memMb = 1;
     napi_get_value_int32(env, args[0], &memMb);
-    int r = vmrp_api_set_memory(memMb);
+    int r = skyengine_api_set_memory(memMb);
     napi_value result;
     napi_create_int32(env, r, &result);
     return result;
@@ -274,7 +274,7 @@ static napi_value StartEngine(napi_env env, napi_callback_info info) {
         if (pause) g_audio.Pause(); else g_audio.Resume();
     });
 
-    // 注册音量回调：dsm.c mr_plat(1302,level) 通过 vmrp_api_set_volume 触发。
+    // 注册音量回调：dsm.c mr_plat(1302,level) 通过 skyengine_api_set_volume 触发。
     VmrpEngine::Instance().SetVolumeFn([](int level) {
         g_audio.SetVolume(level);
     });
@@ -467,6 +467,21 @@ static napi_value IsRunning(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// getScreenInfo(): 返回 {width, height, rotation}
+static napi_value GetScreenInfo(napi_env env, napi_callback_info info) {
+    (void)info;
+    napi_value obj;
+    napi_create_object(env, &obj);
+    napi_value w, h, rot;
+    napi_create_int32(env, VmrpEngine::Instance().ScreenWidth(), &w);
+    napi_create_int32(env, VmrpEngine::Instance().ScreenHeight(), &h);
+    napi_create_int32(env, VmrpEngine::Instance().ScreenRotation(), &rot);
+    napi_set_named_property(env, obj, "width", w);
+    napi_set_named_property(env, obj, "height", h);
+    napi_set_named_property(env, obj, "rotation", rot);
+    return obj;
+}
+
 // mediaPause(): 暂停音频渲染(不清 PCM,可恢复)
 // 同时暂停 OHAudio renderer 停止拉流回调,避免空转。
 static napi_value MediaPause(napi_env env, napi_callback_info info) {
@@ -526,13 +541,24 @@ static void OnNodeTouchEvent(ArkUI_NodeEvent *event) {
 
     float x = OH_ArkUI_PointerEvent_GetX(input);
     float y = OH_ArkUI_PointerEvent_GetY(input);
-    int32_t sw = VmrpEngine::Instance().ScreenWidth();
-    int32_t sh = VmrpEngine::Instance().ScreenHeight();
-    if (sw <= 0) sw = 240;
-    if (sh <= 0) sh = 320;
-    // XComponent 节点 240x320 vp，PointerEvent 坐标相对其左上角，与 MRP 屏幕 1:1。
-    int32_t mx = std::max(0, std::min(sw - 1, static_cast<int32_t>(x)));
-    int32_t my = std::max(0, std::min(sh - 1, static_cast<int32_t>(y)));
+    int rot = VmrpEngine::Instance().ScreenRotation();
+    int32_t pw = VmrpEngine::Instance().PanelWidth();
+    int32_t ph = VmrpEngine::Instance().PanelHeight();
+    int32_t dw = VmrpEngine::Instance().ScreenWidth();
+    int32_t dh = VmrpEngine::Instance().ScreenHeight();
+    if (pw <= 0) pw = 240;
+    if (ph <= 0) ph = 320;
+    if (dw <= 0) dw = pw;
+    if (dh <= 0) dh = ph;
+    float nx = x / static_cast<float>(pw);
+    float ny = y / static_cast<float>(ph);
+    float rx, ry;
+    if (rot == 1) { rx = 1.0f - ny; ry = nx; }
+    else if (rot == 2) { rx = 1.0f - nx; ry = 1.0f - ny; }
+    else if (rot == 3) { rx = ny; ry = 1.0f - nx; }
+    else { rx = nx; ry = ny; }
+    int32_t mx = std::max(0, std::min(dw - 1, static_cast<int32_t>(rx * dw)));
+    int32_t my = std::max(0, std::min(dh - 1, static_cast<int32_t>(ry * dh)));
 
     int code = -1;
     switch (OH_ArkUI_UIInputEvent_GetAction(input)) {
@@ -576,14 +602,18 @@ static napi_value CreateSurfaceNode(napi_env env, napi_callback_info info) {
         return nullptr;
     }
 
-    // 1) 创建 XComponent 节点 + 设尺寸 240x320（vp，与 MRP 屏幕一致）。
+    // 1) 创建 XComponent 节点 + 设尺寸（vp，与 MRP 面板一致，不随旋转变化）。
     g_xc_node = g_node_api->createNode(ARKUI_NODE_XCOMPONENT);
     if (g_xc_node == nullptr) {
         LOGE("createNode(ARKUI_NODE_XCOMPONENT) returned null");
         return nullptr;
     }
-    ArkUI_NumberValue wv; wv.f32 = 240.0f;
-    ArkUI_NumberValue hv; hv.f32 = 320.0f;
+    int32_t pw = VmrpEngine::Instance().PanelWidth();
+    int32_t ph = VmrpEngine::Instance().PanelHeight();
+    if (pw <= 0) pw = 240;
+    if (ph <= 0) ph = 320;
+    ArkUI_NumberValue wv; wv.f32 = static_cast<float>(pw);
+    ArkUI_NumberValue hv; hv.f32 = static_cast<float>(ph);
     ArkUI_AttributeItem wItem; wItem.value = &wv; wItem.size = 1; wItem.string = nullptr; wItem.object = nullptr;
     ArkUI_AttributeItem hItem; hItem.value = &hv; hItem.size = 1; hItem.string = nullptr; hItem.object = nullptr;
     g_node_api->setAttribute(g_xc_node, NODE_WIDTH, &wItem);
@@ -647,6 +677,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"submitEdit", nullptr, SubmitEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cancelEdit", nullptr, CancelEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isRunning", nullptr, IsRunning, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getScreenInfo", nullptr, GetScreenInfo, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mediaPause", nullptr, MediaPause, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mediaResume", nullptr, MediaResume, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setEditCallback", nullptr, SetEditCallback, nullptr, nullptr, nullptr, napi_default, nullptr},

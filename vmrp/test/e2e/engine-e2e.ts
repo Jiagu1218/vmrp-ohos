@@ -9,15 +9,15 @@ import { fileURLToPath } from "node:url";
 
 export type Rgb = readonly [number, number, number];
 
-export interface VmrpE2eOptions {
+export interface SkyEngineE2eOptions {
   bin?: string;
   workDir?: string;
   timeoutMs?: number;
   /** 域名重映射(--dns-map),用于把依赖网络的用例约束到本地测试端点。 */
   dnsMap?: string;
-  /** 屏幕分辨率(--screen WxH),如 "480x320"。默认由 vmrp 决定(240x320)。 */
+  /** 屏幕分辨率(--screen WxH),如 "480x320"。默认由 SkyEngine 决定(240x320)。 */
   screen?: `${number}x${number}`;
-  /** 应用可见内存(--memory),档位 1M/2M/4M/6M/8M/16M。默认由 vmrp 决定(1M)。 */
+  /** 应用可见内存(--memory),档位 1M/2M/4M/6M/8M/16M。默认由 SkyEngine 决定(1M)。 */
   memory?: "1M" | "2M" | "4M" | "6M" | "8M" | "16M";
   /** 应用可见设备日期；"host" 显式使用宿主墙钟日期。 */
   deviceDate?: `${number}-${number}-${number}` | "host";
@@ -25,13 +25,13 @@ export interface VmrpE2eOptions {
   captureLatestFrame?: boolean;
 }
 
-export interface VmrpKeyOptions {
+export interface SkyEngineKeyOptions {
   timeoutMs?: number;
   holdMs?: number;
   waitForDraw?: boolean;
 }
 
-export interface VmrpPasteOptions {
+export interface SkyEnginePasteOptions {
   timeoutMs?: number;
   waitForDraw?: boolean;
 }
@@ -55,7 +55,7 @@ type KeyName =
   | "POUND" | "HASH" | "#"
   | `${number}`
 
-export class VmrpE2e {
+export class SkyEngineE2e {
   readonly tmpDir: string;
   readonly socketPath: string;
   readonly stdoutPath: string;
@@ -73,14 +73,14 @@ export class VmrpE2e {
   private readonly captureLatestFrame: boolean;
   private process?: ChildProcessByStdio<null, Readable, Readable>;
 
-  private constructor(tmpDir: string, options: VmrpE2eOptions = {}) {
+  private constructor(tmpDir: string, options: SkyEngineE2eOptions = {}) {
     this.tmpDir = tmpDir;
-    this.socketPath = path.join(tmpDir, "vmrp-e2e.sock");
+    this.socketPath = path.join(tmpDir, "skyengine-e2e.sock");
     this.stdoutPath = path.join(tmpDir, "stdout.log");
     this.stderrPath = path.join(tmpDir, "stderr.log");
     this.defaultScreenPath = path.join(tmpDir, "screen.ppm");
-    this.bin = options.bin ?? process.env.VMRP_BIN ?? "build/vmrp";
-    this.workDir = options.workDir ?? process.env.VMRP_WORK_DIR ?? ".";
+    this.bin = options.bin ?? process.env.VMRP_BIN ?? "build/skyengine";
+    this.workDir = options.workDir ?? process.env.SKYENGINE_WORK_DIR ?? ".";
     this.timeoutMs = options.timeoutMs ?? Number(process.env.VMRP_TIMEOUT_MS ?? 30_000);
     this.dnsMap = options.dnsMap;
     this.screenSize = options.screen;
@@ -89,13 +89,13 @@ export class VmrpE2e {
     this.captureLatestFrame = options.captureLatestFrame ?? false;
   }
 
-  static async start(mrpPath: string, options: VmrpE2eOptions = {}): Promise<VmrpE2e> {
-    const tmpDir = await mkdtemp(path.join(tmpdir(), "vmrp-e2e-"));
-    const vmrp = new VmrpE2e(tmpDir, options);
-    await vmrp.spawn(await vmrp.prepareMrp(mrpPath));
+  static async start(mrpPath: string, options: SkyEngineE2eOptions = {}): Promise<SkyEngineE2e> {
+    const tmpDir = await mkdtemp(path.join(tmpdir(), "skyengine-e2e-"));
+    const engine = new SkyEngineE2e(tmpDir, options);
+    await engine.spawn(await engine.prepareMrp(mrpPath));
     // 同时输出 CI 收集的截图目录和模拟器工作目录，便于从用例日志定位产物。
-    console.info(`[vmrp-e2e] artifact-dir: ${tmpDir}; work-dir: ${path.resolve(vmrp.workDir)}`);
-    return vmrp;
+    console.info(`[skyengine-e2e] artifact-dir: ${tmpDir}; work-dir: ${path.resolve(engine.workDir)}`);
+    return engine;
   }
 
   /**
@@ -167,7 +167,7 @@ export class VmrpE2e {
    */
   async key(
     name: KeyName,
-    optionsOrTimeout: VmrpKeyOptions | number = 2_000,
+    optionsOrTimeout: SkyEngineKeyOptions | number = 2_000,
     legacyHoldMs?: number
   ): Promise<void> {
     const options = typeof optionsOrTimeout === "number"
@@ -193,7 +193,7 @@ export class VmrpE2e {
     await this.command(`SET_CLIPBOARD ${text}`);
   }
 
-  async pasteShortcut(optionsOrTimeout: VmrpPasteOptions | number = 5_000): Promise<void> {
+  async pasteShortcut(optionsOrTimeout: SkyEnginePasteOptions | number = 5_000): Promise<void> {
     const options = typeof optionsOrTimeout === "number"
       ? { timeoutMs: optionsOrTimeout, waitForDraw: true }
       : { timeoutMs: 5_000, waitForDraw: true, ...optionsOrTimeout };
@@ -278,8 +278,8 @@ export class VmrpE2e {
         ...process.env,
         SDL_VIDEODRIVER: process.env.SDL_VIDEODRIVER ?? "dummy",
         SDL_AUDIODRIVER: process.env.SDL_AUDIODRIVER ?? "dummy",
-        VMRP_E2E_SOCKET: this.socketPath,
-        VMRP_PPM_PATH: this.defaultScreenPath,
+        SKYENGINE_E2E_SOCKET: this.socketPath,
+        SKYENGINE_PPM_PATH: this.defaultScreenPath,
         ...(this.captureLatestFrame ? { VMRP_PPM: "1" } : {})
       },
       stdio: ["ignore", "pipe", "pipe"]
@@ -297,7 +297,7 @@ export class VmrpE2e {
     const start = Date.now();
     while (Date.now() - start < this.timeoutMs) {
       if (this.process?.exitCode !== null) {
-        throw new Error(`vmrp exited before E2E socket was ready: ${this.process?.exitCode}`);
+        throw new Error(`SkyEngine exited before E2E socket was ready: ${this.process?.exitCode}`);
       }
       try {
         const info = await stat(this.socketPath);
@@ -332,12 +332,12 @@ export class VmrpE2e {
  *
  * 测试并发执行时,所有用例共享仓库根目录 mythroad/(wasm/dist/fs/mythroad
  * 的符号链接)会互相覆盖插件/缓存/存档,导致数据竞争。VmrpWorkspace 在临时
- * 目录中复制一份模板,把该目录作为 vmrp 的 --work-dir,实现文件级隔离。
+ * 目录中复制一份模板,把该目录作为 SkyEngine 的 --work-dir,实现文件级隔离。
  *
  * 生命周期须覆盖整个 it()(而非单个 VmrpE2e 实例):opglqa/font.test.ts
- * 会在同一用例内重启第二个 vmrp 实例并验证第一次启动落盘的文件被复用。
+ * 会在同一用例内重启第二个 SkyEngine 实例并验证第一次启动落盘的文件被复用。
  */
-export class VmrpWorkspace {
+export class SkyEngineWorkspace {
   /** 传给 VmrpE2e.start 的 workDir。 */
   readonly dir: string;
 
@@ -345,8 +345,8 @@ export class VmrpWorkspace {
     this.dir = dir;
   }
 
-  static async create(): Promise<VmrpWorkspace> {
-    const tmpDir = await mkdtemp(path.join(tmpdir(), "vmrp-ws-"));
+  static async create(): Promise<SkyEngineWorkspace> {
+    const tmpDir = await mkdtemp(path.join(tmpdir(), "skyengine-ws-"));
     // 用 import.meta.url 定位模板源,不依赖 worker 的 cwd;直接指向符号链接
     // 目标 wasm/dist/fs/mythroad。dereference: true 确保拷贝真实文件。
     const src = fileURLToPath(new URL("../../wasm/dist/fs/mythroad", import.meta.url));
@@ -358,7 +358,7 @@ export class VmrpWorkspace {
       dereference: true,
       preserveTimestamps: true
     });
-    return new VmrpWorkspace(tmpDir);
+    return new SkyEngineWorkspace(tmpDir);
   }
 
   /** 把工作区内的相对路径(如 "mythroad/plugins/netpay.mrp")转成绝对路径。 */

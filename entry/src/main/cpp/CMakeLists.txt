@@ -5,7 +5,7 @@ project(vmrp_entry)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# vmrp_api.h 头文件
+# skyengine_api.h 头文件
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_library(vmrp_entry SHARED

@@ -1,8 +1,8 @@
 #include "./header/debug.h"
 
-#include "./header/fileLib.h"
+#include "./header/file_lib.h"
 #include "./header/utils.h"
-#include "./header/vmrp.h"
+#include "./header/skyengine.h"
 #include "./windows/capstone-4.0.1-win32/include/capstone/capstone.h"
 
 // 获取等号左边的内容，限制长最大长度为maxLen个字符,
@@ -52,7 +52,7 @@ static void dumpFile(uc_engine *uc, char *str) {
     char *lenStr = getSplitStr(str, ',', 3);
     uint32_t addr = toUint32(addrStr);
     uint32_t length = toUint32(lenStr);
-    vmrp_writeFile(filename, getMrpMemPtr(addr), length);
+    skyengine_writeFile(filename, getMrpMemPtr(addr), length);
     free(filename);
     free(addrStr);
     free(lenStr);

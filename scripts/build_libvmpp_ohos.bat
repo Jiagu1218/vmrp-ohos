@@ -14,7 +14,7 @@ REM          entry\libs\<abi>\libvmrp.so  (for HAP packaging)
 REM
 REM  How it works:
 REM    - Cross-compile with OHOS NDK ohos.toolchain.cmake
-REM    - scripts\CMakeLists.txt drives vmrp's vmrp-shared target
+REM    - scripts\CMakeLists.txt drives vmrp's skyengine-shared target
 REM      (excludes main.c/e2e_control.c, no VMRP_SDL_AUDIO -> no SDL)
 REM    - Unicorn arm-softmmu is TCG software emulation of ARM32; it does NOT
 REM      need host ARM32 hardware, so MRP ARM32 code runs on any OHOS ABI.
@@ -116,15 +116,17 @@ echo === Configure ===
     -B "%BUILD_DIR%"
 if errorlevel 1 (
     echo [ERROR] CMake configure failed.
+    call :restore_patched
     exit /b 1
 )
 
 REM --- Build ---
 echo.
-echo === Build vmrp-shared ===
-"%NDK_CMAKE%" --build "%BUILD_DIR%" --target vmrp-shared -j
+echo === Build skyengine-shared ===
+"%NDK_CMAKE%" --build "%BUILD_DIR%" --target skyengine-shared -j
 if errorlevel 1 (
     echo [ERROR] Build failed.
+    call :restore_patched
     exit /b 1
 )
 
@@ -147,6 +149,7 @@ if "!SO_FOUND!"=="0" if exist "%BUILD_DIR%\vmrp\libvmrp.so" (
 )
 if "!SO_FOUND!"=="0" (
     echo [ERROR] libvmrp.so not found in %BUILD_DIR%
+    call :restore_patched
     exit /b 1
 )
 
@@ -180,8 +183,8 @@ git checkout -- src\native_dsm_funcs.c            >nul 2>&1
 git checkout -- src\mythroad\mythroad.c           >nul 2>&1
 git checkout -- src\mythroad\dsm.c                >nul 2>&1
 git checkout -- src\arm_ext_executor.c            >nul 2>&1
-git checkout -- src\vmrp_api.c                    >nul 2>&1
-git checkout -- src\include\vmrp_api.h              >nul 2>&1
+git checkout -- src\skyengine_api.c                    >nul 2>&1
+git checkout -- src\include\skyengine_api.h              >nul 2>&1
 git checkout -- src\include\native_dsm_funcs.h      >nul 2>&1
 git checkout -- src\network.c                     >nul 2>&1
 git checkout -- src\arm_ext\aex_exec.c            >nul 2>&1

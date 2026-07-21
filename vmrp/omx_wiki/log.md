@@ -136,7 +136,7 @@
 
 ## [2026-06-27T15:07:39.467Z] ingest
 - **Pages:** dota-browser-plugin-record-pack-slot-fix.md
-- **Summary:** Refreshed final DOTA browser plugin verification evidence from /tmp/vmrp-e2e-GSqFvj
+- **Summary:** Refreshed final DOTA browser plugin verification evidence from /tmp/skyengine-e2e-GSqFvj
 ## [2026-06-27T15:46:20.555Z] ingest
 - **Pages:** dota-download-browser-components-transition-frame-fix.md
 - **Summary:** Created new page "DOTA download-browser-components transition frame fix"
@@ -353,7 +353,7 @@
 
 ## [2026-07-15T14:36:30Z] verify
 - **Pages:** cookie-child-return-opening-folder-frame-replay.md
-- **Summary:** Re-ran the default parallel E2E suite without `--no-file-parallelism`; 19 files and 31 tests passed. Refreshed retained Cookie PPM evidence at `/tmp/vmrp-e2e-Vdk5ke`, where `return-draw-0047.ppm` shows `正在打开` before the restored file-manager list.
+- **Summary:** Re-ran the default parallel E2E suite without `--no-file-parallelism`; 19 files and 31 tests passed. Refreshed retained Cookie PPM evidence at `/tmp/skyengine-e2e-Vdk5ke`, where `return-draw-0047.ppm` shows `正在打开` before the restored file-manager list.
 
 ## [2026-07-16T11:10:00+08:00] fix
 - **Pages:** cookie-child-return-opening-folder-frame-replay.md
@@ -533,3 +533,22 @@
 ## [2026-07-18T17:30:00.000Z] update
 - **Pages:** private-loader-wrapper-package-context-repair.md, arm-ext-canonical-empty-event-layer-recovery.md
 - **Summary:** Replaced the three per-field staging-R9 symptom repairs (event layer, command queue, package-context instruction-shape matcher) with a single wrapper RW foreign-write journal; pages updated to document the forensic write list (23 foreign writes, incl. one post-registration stale-pointer write) and the byte-journal/revert mechanism.
+## [2026-07-20T12:44:09.442Z] query
+- **Pages:** cookie-mrp-restart-and-full-runtime-version-contract.md, dota-download-browser-components-transition-frame-fix.md, gfhcq-game-stutter-performance-investigation.md, private-loader-wrapper-package-context-repair.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-line-wrap-progress-2026-07-16.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-proxy2-image-loading-2026-07-12.md
+- **Summary:** Query "2937 240320 rzsgqd background music audio" → 10 results (of 10 total)
+
+## [2026-07-20T12:44:26.959Z] ingest
+- **Pages:** rzsgqd-background-music-silent-debugging.md
+- **Summary:** Created new page "rzsgqd background music silent debugging"
+
+## [2026-07-20T12:44:26.962Z] add
+- **Pages:** rzsgqd-background-music-silent-debugging.md
+- **Summary:** Created wiki page rzsgqd-background-music-silent-debugging.md
+
+## [2026-07-21T04:03:19.000Z] complete
+- **Pages:** gwyaz-installed-file-probe-and-wrapper-rw-owner-fix.md, private-loader-wrapper-package-context-repair.md
+- **Summary:** Recorded that table[42]/mr_info must expose real EFS installation state rather than MRP-cache source availability, and refined the wrapper RW journal from all non-wrapper PCs to unowned PCs so confirmed children can update wrapper-allocated shared objects while stale staging writes remain contained.
+
+## [2026-07-21T04:14:46.000Z] verify
+- **Pages:** gwyaz-installed-file-probe-and-wrapper-rw-owner-fix.md
+- **Summary:** Target and focused DIAG passed with distinct before/after PPMs and no 0x8F4 revert; geyaxz retained all three journal-protection paths; final no-retry E2E passed 28 files/51 tests, with ctest, TypeScript, and diff checks also clean.

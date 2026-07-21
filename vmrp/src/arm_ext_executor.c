@@ -2,11 +2,10 @@
 #include "./include/compat_msvc.h"
 #include "./include/arm_ext_internal.h"
 #include "./include/arm_ext_priv.h"
-#include "./include/vmrp.h"
-#include "./include/app_compat.h"
+#include "./include/skyengine.h"
 #include "./include/bridge.h"
 #include "./include/network.h"
-#include "./include/fileLib.h"
+#include "./include/file_lib.h"
 
 #include <ctype.h>
 #include <stdbool.h>
@@ -23,7 +22,7 @@
 #include <zlib.h>
 
 #include "./include/utils.h"
-#include "./include/vmrp.h"
+#include "./include/skyengine.h"
 
 extern void mr_printf(const char *format, ...);
 extern uint16 *mr_screenBuf;
@@ -669,6 +668,28 @@ static void hook_table(uc_engine *uc, uint64_t address, uint32_t size, void *use
     ArmExtModule *m = (ArmExtModule *)user_data;
     if (address < EXT_TABLE_ADDR || address >= EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4) return;
     uint32_t idx = (uint32_t)((address - EXT_TABLE_ADDR) / 4);
+    /*
+     * 真机上 table 槽指向固件里真实的 ARM 实现,任何一次调用都会在调用方
+     * SP 之下压出若干层被调用者栈帧(AAPCS 规定 SP 之下是被调用者可随意
+     * 使用的死区),固件返回后死区里残留的是各层帧的返回地址、保存的栈帧
+     * 指针等地址类数值。宿主实现不触碰 guest 栈,死区因此保留早前遗留的
+     * 小数值:读取未初始化栈槽的应用代码(如 SDK 资源提取器 readChunk 的
+     * 输出容量槽,真机上靠残留地址恒大于解压尺寸通过容量判定)在这里读到
+     * 小长度值,容量判定失败,每条压缩记录都以陈旧缓冲写出。此处以本次
+     * 调用的返回地址与调用方 SP——死区中最普遍的两类残留——填充 SP 之下
+     * 64 字节,恢复与真机一致的死区语义;对遵守 AAPCS 的代码没有可观察
+     * 差异。
+     */
+    {
+        uint32_t sp = reg_read32(m->uc, UC_ARM_REG_SP);
+        void *frame = sp >= 64u ? arm_ptr_span(m, sp - 64u, 64u) : NULL;
+        if (frame) {
+            uint32_t lr = reg_read32(m->uc, UC_ARM_REG_LR);
+            uint32_t residue[16];
+            for (int i = 0; i < 16; i++) residue[i] = (i & 1) ? sp : lr;
+            memcpy(frame, residue, sizeof(residue));
+        }
+    }
     if (m->pending_internal_file_addr) {
         arm_ext_sync_internal_nested_module(m, m->pending_internal_file_addr,
                                             m->pending_internal_file_len);
@@ -694,7 +715,7 @@ static void hook_table(uc_engine *uc, uint64_t address, uint32_t size, void *use
         AexTableCtx tc = { idx, r0, r1, r2, r3, MR_SUCCESS };
         h(m, &tc);
         cb_ret(m, tc.ret);
-        if (vmrp_is_exited()) {
+        if (skyengine_is_exited()) {
             /* table[54] may return into guest code after requesting a platform
              * exit. Stop here so a guest-side exit loop cannot pin the worker. */
             reg_write32(uc, UC_ARM_REG_PC, EXT_STOP_ADDR);
@@ -769,14 +790,14 @@ static bool hook_invalid(uc_engine *uc, uc_mem_type type, uint64_t address, int 
             uint32_t dump_len = dump_end - dump_start;
             uint8_t *dump_buf = malloc(dump_len);
             if (dump_buf && uc_mem_read(uc, dump_start, dump_buf, dump_len) == UC_ERR_OK) {
-                FILE *df = fopen("/tmp/vmrp_crash.bin", "wb");
+                FILE *df = fopen("/tmp/skyengine_crash.bin", "wb");
                 if (df) {
                     fwrite(dump_buf, 1, dump_len, df);
                     fclose(df);
-                    printf("  [CRASH_DUMP] saved %u bytes [0x%X..0x%X] to /tmp/vmrp_crash.bin\n",
+                    printf("  [CRASH_DUMP] saved %u bytes [0x%X..0x%X] to /tmp/skyengine_crash.bin\n",
                            dump_len, dump_start, dump_end);
                     printf("  [CRASH_DUMP] disassemble: arm-none-eabi-objdump -D -b binary "
-                           "-m arm -M force-thumb --adjust-vma=0x%X /tmp/vmrp_crash.bin\n",
+                           "-m arm -M force-thumb --adjust-vma=0x%X /tmp/skyengine_crash.bin\n",
                            dump_start);
                 }
             }
@@ -827,9 +848,6 @@ static void hook_got_write(uc_engine *uc, uc_mem_type type, uint64_t address, in
                     break;
                 }
             }
-        }
-        if (app_should_protect_got_addr(m, (uint32_t)address)) {
-            return;
         }
         /* bridge 函数指针写入 → 记录快照。只在 got_snapshot_base 尚未
          * 设置或与当前 R9 一致时更新 base，防止嵌套插件（如 netpay）
@@ -985,8 +1003,8 @@ static void init_table(ArmExtModule *m) {
         write_table_entry(m, 24, m->port_table_addr);
     }
 
-    int32_t sw = mr_screen_w > 0 ? mr_screen_w : vmrp_config.screen_width;
-    int32_t sh = mr_screen_h > 0 ? mr_screen_h : vmrp_config.screen_height;
+    int32_t sw = mr_screen_w > 0 ? mr_screen_w : skyengine_config.screen_width;
+    int32_t sh = mr_screen_h > 0 ? mr_screen_h : skyengine_config.screen_height;
     int32_t bit = 16;
     m->screen_w = sw;
     m->screen_h = sh;
@@ -1074,11 +1092,11 @@ static void init_table(ArmExtModule *m) {
      * 部分游戏的 exRam 预算计算（= 固定值 − origin_mem_len）溢出为负，
      * 导致 SCRRAM 分配被跳过、图像资源无法渲染。默认取与真机一致的
      * 1MB(sky_istore 启动时校验堆容量,512KB 会报"内存不足");需要
-     * 更大堆的应用用 --memory/VMRP_MEMORY 调整(1M-16M)。arm_alloc 仍
+     * 更大堆的应用用 --memory/SKYENGINE_MEMORY 调整(1M-16M)。arm_alloc 仍
      * 可提供远超此值的实际内存。
      * 池在 ARM 16MB 空间的 bump 堆(0x200000 起)上分配,还需避开栈区/
      * 代码区与顶部屏幕保留区,过大的档位(16M)放不下,钳制到 8MB。 */
-    m->origin_mem_len = vmrp_memory_bytes(vmrp_config.memory_mb);
+    m->origin_mem_len = SKYENGINE_MEMORY_bytes(skyengine_config.memory_mb);
     {
         uint32_t ext_pool_max = 8u * 1024u * 1024u;
         if (m->origin_mem_len > ext_pool_max) {
@@ -1180,11 +1198,6 @@ int arm_ext_load(ArmExtModule **out, const uint8 *code, uint32 len, int32 load_c
     m->host_code = code;
 
     arm_ext_init_pack_names(m);
-    m->profile = app_compat_select(m->pack_host_path[0] ?
-                                   m->pack_host_path :
-                                   mr_get_pack_filename());
-    if (m->profile && m->profile->init)
-        m->app_state = m->profile->init(m);
 
     uc_err err = uc_open(UC_ARCH_ARM, UC_MODE_ARM, &m->uc);
     if (err != UC_ERR_OK) goto fail;
@@ -1379,7 +1392,7 @@ static const char *arm_ext_diag_filename_slot(ArmExtModule *m, uint32_t slot,
 
 static int arm_ext_lifecycle_diag(void) {
     static int cached = -1;
-    if (cached < 0) cached = getenv("VMRP_LIFECYCLE_DIAG") ? 1 : 0;
+    if (cached < 0) cached = getenv("SKYENGINE_LIFECYCLE_DIAG") ? 1 : 0;
     return cached;
 }
 
@@ -1544,7 +1557,7 @@ static void arm_ext_restore_modal_fg_snapshot(ArmExtModule *m) {
 }
 
 /*
- * ── wrapper 静态区外来写屏障(journal) ──
+ * ── wrapper ER_RW 无主写入屏障(journal) ──
  *
  * 私有 loader 把 child 迁入 arena 后的 staging 窗口(mr_cacheSync 已过、
  * 注册未确认)存在已证实的宿主 R9 语义分歧:进 wrapper 代码时 R9 被切为
@@ -1558,19 +1571,26 @@ static void arm_ext_restore_modal_fg_snapshot(ArmExtModule *m) {
  * 真机上这些写全部落在 child 自己的 RW,对 wrapper 从未发生。完整修复
  * (staging 窗口按 child P[0] 恢复 R9)已验证可消除腐蚀,但它让 SKY
  * 推广/计费框架真正跑通启动流程(联网上报、termsync/gbreg 注册),game
- * 随即等待 vmrp 尚未模拟的完成信号——当前全部通过用例都建立在该框架
+ * 随即等待 skyengine 尚未模拟的完成信号——当前全部通过用例都建立在该框架
  * 瘫痪的基线上。在补齐那条链路之前,宿主以与真机一致的最小语义兜住分歧:
- * 「wrapper 静态区只有 wrapper 本体代码(和宿主)能持久写入」。
+ * 「没有 wrapper/已确认 child 代码所有权的 staging 写入不得
+ * 污染 wrapper ER_RW」。
  *
- * 机制:对 wrapper ER_RW 挂 ranged 写钩子;外来 PC(不在 EXT_CODE_ADDR..
- * +code_len)写入时按字节记录旧值并置位;wrapper 本体 PC 随后写同一字节
- * 则清位(wrapper 合法写接管,不回滚);arm_ext_call 入口且无 pending
- * staging 窗口时把仍置位的字节回滚为旧值。窗口内不回滚——staged child
- * 还要从借来的 R9 读回自己刚写的 GOT 桥。无指令签名、无布局偏移、无
- * 应用特判;取代此前按字段各写一个的三个症状修复(事件层收缩、命令队列
- * 复位、包上下文重发布)。
+ * 机制:对 wrapper ER_RW 挂 ranged 写钩子;没有 wrapper 或已登记 nested
+ * module 所有权的 PC 写入时按字节记录旧值并置位;已确认 owner 随后写
+ * 同一字节则清位(合法状态接管,不回滚);arm_ext_call 入口且无
+ * pending staging 窗口时把仍置位的字节回滚为旧值。窗口内不回滚——
+ * staged child 还要从借来的 R9 读回自己刚写的 GOT 桥。
+ *
+ * 已登记 child 必须允许写 wrapper ER_RW:该区也承载 wrapper 分配并传给
+ * child 的共享对象,gwyaz GUI 的事件 root+4 就由 GUI 模块写入当前页面。
+ * 把所有非 wrapper PC 都视为外来写会在首个事件前把这个合法指针回滚为
+ * 0。真正的 staging 分歧 PC 没有已确认模块所有权;geyaxz 中登记后补写的
+ * 陈旧 staging PC 同样不落在登记后的 runtime image,仍会被本机制捕获。
+ * 该判据无指令签名、布局偏移或应用特判;取代此前按字段各写一个的三个
+ * 症状修复(事件层收缩、命令队列复位、包上下文重发布)。
  */
-static void hook_wrapper_rw_foreign_write(uc_engine *uc, uc_mem_type type,
+static void hook_wrapper_rw_unowned_write(uc_engine *uc, uc_mem_type type,
                                           uint64_t address, int size,
                                           int64_t value, void *user_data) {
     (void)type;
@@ -1580,22 +1600,25 @@ static void hook_wrapper_rw_foreign_write(uc_engine *uc, uc_mem_type type,
     uint32_t len = m->wrapper_rw_journal_len;
     if ((uint32_t)address < base || (uint32_t)address >= base + len) return;
     uint32_t pc = reg_read32(uc, UC_ARM_REG_PC);
-    int foreign = !(pc >= EXT_CODE_ADDR && pc < EXT_CODE_ADDR + m->code_len);
+    int wrapper_owned =
+        pc >= EXT_CODE_ADDR && pc < EXT_CODE_ADDR + m->code_len;
+    int nested_owned = arm_ext_find_nested_module(m, pc) != NULL;
+    int unowned = !wrapper_owned && !nested_owned;
     for (int i = 0; i < size; ++i) {
         uint32_t off = (uint32_t)address + (uint32_t)i - base;
         if (off >= len) break;
         uint8_t *mark = &m->wrapper_rw_journal_mark[off >> 3];
         uint8_t bit = (uint8_t)(1u << (off & 7u));
-        if (foreign) {
+        if (unowned) {
             if (!(*mark & bit)) {
-                /* 首次外来触碰:写钩子先于写入提交执行,此刻读到的仍是旧值 */
+                /* 首次无主触碰:写钩子先于写入提交执行,此刻读到的仍是旧值 */
                 m->wrapper_rw_journal_shadow[off] =
                     *(uint8_t *)arm_ptr(m, base + off);
                 *mark |= bit;
                 m->wrapper_rw_journal_dirty++;
             }
         } else if (*mark & bit) {
-            /* wrapper 本体重写该字节:合法状态接管,不再回滚 */
+            /* 已确认 owner 重写该字节:合法状态接管,不再回滚 */
             *mark &= (uint8_t)~bit;
             m->wrapper_rw_journal_dirty--;
         }
@@ -1603,8 +1626,9 @@ static void hook_wrapper_rw_foreign_write(uc_engine *uc, uc_mem_type type,
 }
 
 /* journal 挂载:wrapper P 结构的 ER_RW 基址/长度首次可用时挂 ranged 写
- * 钩子并分配 shadow/位图。ER_RW 是 wrapper 的静态数据段,init 后终生
- * 不变,因此只挂载一次。 */
+ * 钩子并分配 shadow/位图。P[0]/P[4] 是模块加载后稳定的区间身份;
+ * 区间内容仍可包含分配后传给 child 的共享对象,因此只挂载一次
+ * 并由 PC 所有权区分合法写入。 */
 static void arm_ext_wrapper_rw_journal_install(ArmExtModule *m) {
     uint32_t rw = 0, rw_len = 0;
     if (!m || m->wrapper_rw_journal_base || !m->p_addr ||
@@ -1618,7 +1642,7 @@ static void arm_ext_wrapper_rw_journal_install(ArmExtModule *m) {
     m->wrapper_rw_journal_mark = (uint8_t *)calloc((rw_len + 7u) / 8u, 1u);
     if (!m->wrapper_rw_journal_shadow || !m->wrapper_rw_journal_mark ||
         uc_hook_add(m->uc, &m->wrapper_rw_journal_hook, UC_HOOK_MEM_WRITE,
-                    hook_wrapper_rw_foreign_write, m, rw,
+                    hook_wrapper_rw_unowned_write, m, rw,
                     rw + rw_len - 1u) != UC_ERR_OK) {
         /* 分配或挂钩失败即放弃本机制并大声报错;不留半初始化状态 */
         printf("arm_ext_executor: FATAL wrapper rw journal install failed (rw=0x%X len=%u)\n",
@@ -1633,7 +1657,7 @@ static void arm_ext_wrapper_rw_journal_install(ArmExtModule *m) {
     m->wrapper_rw_journal_len = rw_len;
 }
 
-/* journal 回滚:把仍置位的字节恢复为外来写覆盖前的旧值。pending staging
+/* journal 回滚:把仍置位的字节恢复为无主写覆盖前的旧值。pending staging
  * 窗口开启时跳过(此刻 staged child 仍会读回自己刚写的值),窗口关闭由
  * 注册确认路径清 pending 保证。 */
 static void arm_ext_wrapper_rw_journal_flush(ArmExtModule *m) {
@@ -1798,8 +1822,8 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
 
     uint32_t rw_base = 0;
     memcpy(&rw_base, arm_ptr(m, call_p_addr), 4);
-    /* staging 窗口 R9 分歧的外来写在 dispatch 边界统一回滚(机制与语义
-     * 见 hook_wrapper_rw_foreign_write 前的注释) */
+    /* staging 窗口 R9 分歧的无主写在 dispatch 边界统一回滚(机制与语义
+     * 见 hook_wrapper_rw_unowned_write 前的注释) */
     arm_ext_wrapper_rw_journal_install(m);
     arm_ext_wrapper_rw_journal_flush(m);
     if (arm_ext_diag_on()) {
@@ -2861,9 +2885,6 @@ uint32_t arm_ext_host_motion_acc_slot(ArmExtModule *m,
 
 void arm_ext_unload(ArmExtModule *m) {
     if (!m) return;
-    if (m->profile && m->profile->cleanup)
-        m->profile->cleanup(m->app_state);
-    m->app_state = NULL;
     mrp_cache_free(m);
     if (m->uc) uc_close(m->uc);
     free(m->wrapper_rw_journal_shadow);

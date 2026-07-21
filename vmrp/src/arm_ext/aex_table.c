@@ -8,7 +8,7 @@
  */
 #include "../include/arm_ext_priv.h"
 #include "../include/network.h"
-#include "../include/fileLib.h"
+#include "../include/file_lib.h"
 #include "../include/utils.h"
 
 #include <ctype.h>
@@ -777,11 +777,11 @@ static void aex_t042(ArmExtModule *m, AexTableCtx *c) {
  {
             const char *info_name = arm_str(m, r0);
             ret = mr_info(arm_ext_pack_to_host_path(m, info_name));
-            /* 磁盘上不存在时检查 MRP 缓存 */
-            if (ret != MRP_IS_FILE && m->mrp_cache_count > 0) {
-                if (mrp_cache_find(m, info_name))
-                    ret = MRP_IS_FILE;
-            }
+            /* table[42] is the platform filesystem-state query used by guest
+             * installers before extracting bundled files.  An entry in the
+             * current MRP is a source payload, not an already-installed EFS
+             * file; reporting it as MRP_IS_FILE skips the guest's manifest
+             * extraction and leaves the next RESTART without its package. */
             if (arm_ext_diag_on()) {
                 uint32_t owner_p = 0, owner_h = 0;
                 ArmExtNestedModule *owner =
@@ -810,34 +810,16 @@ static void aex_t043(ArmExtModule *m, AexTableCtx *c) {
              * success.  Match table[44]/mr_read: an unmapped span is an ABI
              * failure and must never be dereferenced by the host. */
             void *src = arm_ptr_span(m, r1, r2 ? r2 : 1u);
-            uint32_t len = r2;
-            int substituted = 0;
-            void *new_src = NULL;
-            uint32_t new_len = 0;
-            if (m->profile && m->profile->intercept_write &&
-                m->profile->intercept_write(m, m->app_state, r0, r1, r2,
-                                            &new_src, &new_len)) {
-                src = new_src;
-                len = new_len;
-                substituted = 1;
-            }
-            ret = src ? mr_write((int32)r0, src, len) : MR_FAILED;
-            if (substituted) {
-                if (m->profile && m->profile->post_write_cleanup)
-                    m->profile->post_write_cleanup(m->app_state);
-                /* ret 为 uint32_t,与 len 直接比较即位模式相等判定(与原
-                 * (int32_t) 强转比较数值等价),消除符号比较告警 */
-                if (ret == len) ret = (int32_t)r2;
-            }
+            ret = src ? mr_write((int32)r0, src, r2) : MR_FAILED;
             if (arm_ext_diag_on()) {
                 char preview[192];
                 uint32_t owner_p = 0, owner_h = 0, owner_file = 0, owner_len = 0;
-                arm_ext_diag_preview_bytes(src, len, preview, sizeof(preview));
+                arm_ext_diag_preview_bytes(src, r2, preview, sizeof(preview));
                 arm_ext_diag_owner_for_lr(m, &owner_p, &owner_h,
                                           &owner_file, &owner_len);
-                printf("DIAG table43 fd=%d name='%s' src=0x%X len=%u ret=0x%X subst=%d preview='%s' lr=0x%X ownerP=0x%X ownerH=0x%X ownerFile=0x%X ownerLen=%u activeP=0x%X primaryP=0x%X\n",
+                printf("DIAG table43 fd=%d name='%s' src=0x%X len=%u ret=0x%X preview='%s' lr=0x%X ownerP=0x%X ownerH=0x%X ownerFile=0x%X ownerLen=%u activeP=0x%X primaryP=0x%X\n",
                        (int32_t)r0, arm_ext_diag_fd_name(m, (int32_t)r0),
-                       r1, r2, ret, substituted, preview,
+                       r1, r2, ret, preview,
                        reg_read32(m->uc, UC_ARM_REG_LR),
                        owner_p, owner_h, owner_file, owner_len,
                        m->active_p_addr, m->primary_p_addr);
@@ -1547,6 +1529,96 @@ aex_done:
     c->ret = ret;
 }
 
+static void aex_t121(ArmExtModule *m, AexTableCtx *c) {
+    uint32_t ret = MR_SUCCESS;
+    uint32_t trans_addr = arg_read(m, 4);
+    uint16_t trans_color = (uint16_t)arg_read(m, 5);
+
+    /* The ARM ABI uses a 4-byte pointer and therefore a 12-byte bitmap
+     * descriptor. Decode it field by field before constructing the native
+     * descriptor; casting it on a 64-bit host shifts every field after p. */
+    const uint8_t *src_desc = arm_ptr_span(m, c->r0, 12u);
+    const uint8_t *dst_desc = arm_ptr_span(m, c->r1, 12u);
+    const uint8_t *trans_desc = arm_ptr_span(m, trans_addr, 10u);
+    if (!src_desc || !dst_desc || !trans_desc) goto aex_done;
+
+    uint32_t src_p = 0;
+    uint16_t src_w = 0, src_h = 0, src_x = 0, src_y = 0;
+    uint32_t dst_p = 0;
+    uint16_t dst_w = 0, dst_h = 0, dst_x = 0, dst_y = 0;
+    int16_t A = 0, B = 0, C = 0, D = 0;
+    uint16_t rop = 0;
+    memcpy(&src_p, src_desc, 4u);
+    memcpy(&src_w, src_desc + 4u, 2u);
+    memcpy(&src_h, src_desc + 6u, 2u);
+    memcpy(&src_x, src_desc + 8u, 2u);
+    memcpy(&src_y, src_desc + 10u, 2u);
+    memcpy(&dst_p, dst_desc, 4u);
+    memcpy(&dst_w, dst_desc + 4u, 2u);
+    memcpy(&dst_h, dst_desc + 6u, 2u);
+    memcpy(&dst_x, dst_desc + 8u, 2u);
+    memcpy(&dst_y, dst_desc + 10u, 2u);
+    memcpy(&A, trans_desc, 2u);
+    memcpy(&B, trans_desc + 2u, 2u);
+    memcpy(&C, trans_desc + 4u, 2u);
+    memcpy(&D, trans_desc + 6u, 2u);
+    memcpy(&rop, trans_desc + 8u, 2u);
+
+    uint16_t w = (uint16_t)c->r2;
+    uint16_t h = (uint16_t)c->r3;
+    uint64_t src_len = (uint64_t)src_w * src_h * sizeof(uint16_t);
+    uint64_t dst_len = (uint64_t)dst_w * dst_h * sizeof(uint16_t);
+    if (!src_p || !dst_p || !src_len || !dst_len ||
+        src_len > UINT32_MAX || dst_len > UINT32_MAX) {
+        goto aex_done;
+    }
+    /* The renderer clips transformed output to the destination, but it assumes
+     * the requested source rectangle is wholly contained in the source bitmap. */
+    if (src_x > src_w || src_y > src_h ||
+        w > src_w - src_x || h > src_h - src_y) {
+        goto aex_done;
+    }
+    uint16_t *src_pixels =
+        (uint16_t *)arm_ptr_span(m, src_p, (uint32_t)src_len);
+    uint16_t *dst_pixels =
+        (uint16_t *)arm_ptr_span(m, dst_p, (uint32_t)dst_len);
+    /* DrawBitmapEx applies the inverse transform; a zero determinant has no
+     * inverse and would otherwise divide by zero in the native renderer. */
+    int32_t determinant = (int32_t)A * D - (int32_t)B * C;
+    if (!src_pixels || !dst_pixels || determinant == 0) goto aex_done;
+
+    uint32_t claim_p = 0;
+    uint32_t claim_helper = 0;
+    if (!arm_ext_should_accept_screen_write(m, &claim_p, &claim_helper)) {
+        claim_p = 0;
+        claim_helper = 0;
+    }
+    ArmExtScreenContext screen_ctx;
+    int have_screen_ctx = arm_ext_push_draw_screen_context(m, &screen_ctx);
+    int targets_primary = have_screen_ctx &&
+        arm_ext_screen_context_targets_primary(m, &screen_ctx) &&
+        dst_p == screen_ctx.target_addr;
+    uint16_t *before = targets_primary ? arm_ext_snapshot_screen(m) : NULL;
+
+    mr_drawBitmapExHost(
+        src_pixels, src_w, src_h, src_x, src_y,
+        dst_pixels, dst_w, dst_h, dst_x, dst_y,
+        w, h, A, B, C, D, rop, trans_color);
+
+    if (have_screen_ctx) arm_ext_pop_draw_screen_context(&screen_ctx);
+    if (before) {
+        arm_ext_note_screen_damage_diff(m, before);
+        arm_ext_claim_foreground_screen_diff(m, claim_p, claim_helper, before);
+        free(before);
+        arm_ext_finish_screen_cache_write(m, &screen_ctx, claim_p,
+                                          claim_helper);
+    }
+    ret = 0;
+
+aex_done:
+    c->ret = ret;
+}
+
 static void aex_t122(ArmExtModule *m, AexTableCtx *c) {
     (void)m;
     uint32_t r0 = c->r0;
@@ -1991,8 +2063,7 @@ static void aex_t003(ArmExtModule *m, AexTableCtx *c) {
                     if (m->got_snapshot[i] >= EXT_TABLE_ADDR &&
                         m->got_snapshot[i] < EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4 &&
                         addr >= r0 && addr + 4 <= cpy_end &&
-                        !arm_ext_should_skip_got_snapshot_restore(m, addr) &&
-                        !app_should_protect_got_addr(m, addr)) {
+                        !arm_ext_should_skip_got_snapshot_restore(m, addr)) {
                         memcpy(arm_ptr(m, addr), &m->got_snapshot[i], 4);
                     }
                 }
@@ -2025,8 +2096,7 @@ static void aex_t014(ArmExtModule *m, AexTableCtx *c) {
                     if (m->got_snapshot[i] >= EXT_TABLE_ADDR &&
                         m->got_snapshot[i] < EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4 &&
                         addr >= r0 && addr + 4 <= set_end &&
-                        !arm_ext_should_skip_got_snapshot_restore(m, addr) &&
-                        !app_should_protect_got_addr(m, addr)) {
+                        !arm_ext_should_skip_got_snapshot_restore(m, addr)) {
                         memcpy(arm_ptr(m, addr), &m->got_snapshot[i], 4);
                     }
                 }
@@ -2137,6 +2207,36 @@ static void aex_t038(ArmExtModule *m, AexTableCtx *c) {
                            diag_owner_h, diag_owner_file, diag_owner_len,
                            m->active_p_addr, m->primary_p_addr);
                 }
+                goto aex_done;
+            }
+            if (r0 / 10u == 222u && r0 % 10u != 0u) {
+                /* MR_MEDIA_OPEN_MUTICHANNEL carries {guest_data,len,loop}.
+                 * Translate the nested address here: replacing it in-place
+                 * would truncate a 64-bit host pointer into the 32-bit ABI. */
+                uint32_t open_args[3];
+                void *guest_args = arm_ptr_span(m, r1, sizeof(open_args));
+                ret = MR_FAILED;
+                if (r2 == sizeof(open_args) && guest_args) {
+                    memcpy(open_args, guest_args, sizeof(open_args));
+                    const void *data = arm_ptr_span(m, open_args[0], open_args[1]);
+                    if (data) {
+                        ret = dsm_media_open_channel_host(
+                            (int)(r0 % 10u), data, open_args[1],
+                            (int32)open_args[2]);
+                    }
+                }
+                goto aex_done;
+            }
+            if (r0 / 10u >= 223u && r0 / 10u <= 225u &&
+                r0 % 10u != 0u) {
+                /* PLAY/STOP/CLOSE each carry exactly one 32-bit handle.  The
+                 * generic bridge only maps the first byte, so validate the
+                 * complete guest payload here before DSM copies four bytes. */
+                void *handle_arg = arm_ptr_span(m, r1, sizeof(uint32_t));
+                ret = (r2 == sizeof(uint32_t) && handle_arg)
+                    ? mr_platEx((int32)r0, handle_arg, (int32)r2,
+                                NULL, NULL, NULL)
+                    : MR_FAILED;
                 goto aex_done;
             }
             uint32_t outputp_addr = r3;
@@ -2254,8 +2354,6 @@ static void aex_t044(ArmExtModule *m, AexTableCtx *c) {
                        m->active_p_addr, m->primary_p_addr,
                        overlap_lo, overlap_hi);
             }
-            if (m->profile && m->profile->post_read_hook)
-                m->profile->post_read_hook(m, m->app_state, r1, r2, ret, hp);
             if ((int32_t)ret > 0)
                 arm_ext_retire_modules_overwritten_by_data_read(
                     m, r1, (uint32_t)ret);
@@ -2285,8 +2383,7 @@ static void aex_t044(ArmExtModule *m, AexTableCtx *c) {
                         if (m->got_snapshot[i] >= EXT_TABLE_ADDR &&
                             m->got_snapshot[i] < EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4 &&
                             addr >= r1 && addr + 4 <= read_end &&
-                            !arm_ext_should_skip_got_snapshot_restore(m, addr) &&
-                            !app_should_protect_got_addr(m, addr)) {
+                            !arm_ext_should_skip_got_snapshot_restore(m, addr)) {
                             memcpy(arm_ptr(m, addr), &m->got_snapshot[i], 4);
                         }
                     }
@@ -2494,14 +2591,10 @@ aex_done:
 }
 
 const AexTableHandler aex_table_handlers[EXT_TABLE_COUNT] = {
-    [125] = aex_t125,
-    [44] = aex_t044,
-    [38] = aex_t038,
-    [14] = aex_t014,
-    [3] = aex_t003,
     [0] = aex_t000,
     [1] = aex_t001,
     [2] = aex_t002,
+    [3] = aex_t003,
     [4] = aex_t004,
     [5] = aex_t005,
     [6] = aex_t006,
@@ -2512,6 +2605,7 @@ const AexTableHandler aex_table_handlers[EXT_TABLE_COUNT] = {
     [11] = aex_t011,
     [12] = aex_t012,
     [13] = aex_t013,
+    [14] = aex_t014,
     [15] = aex_t015,
     [16] = aex_t016,
     [17] = aex_t017,
@@ -2532,11 +2626,13 @@ const AexTableHandler aex_table_handlers[EXT_TABLE_COUNT] = {
     [35] = aex_t035,
     [36] = aex_t036,
     [37] = aex_t037,
+    [38] = aex_t038,
     [39] = aex_t039,
     [40] = aex_t040,
     [41] = aex_t041,
     [42] = aex_t042,
     [43] = aex_t043,
+    [44] = aex_t044,
     [45] = aex_t045,
     [46] = aex_t046,
     [47] = aex_t047,
@@ -2582,9 +2678,11 @@ const AexTableHandler aex_table_handlers[EXT_TABLE_COUNT] = {
     [118] = aex_t118,
     [119] = aex_t119,
     [120] = aex_t120,
+    [121] = aex_t121,
     [122] = aex_t122,
     [123] = aex_t123,
     [124] = aex_t124,
+    [125] = aex_t125,
     [126] = aex_t126,
     [127] = aex_t127,
     [130] = aex_t130,

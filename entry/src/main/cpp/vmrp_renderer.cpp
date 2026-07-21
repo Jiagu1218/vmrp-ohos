@@ -266,6 +266,7 @@ static const char *kOutputFrag =
     "uniform int u_screen_effect;\n"
     "uniform float u_screen_effect_strength;\n"
     "uniform float u_barrel_k;\n"
+    "uniform int u_rotation;\n"
     "\n"
     "vec2 distortUV(vec2 uv) {\n"
     "  vec2 cc = uv - 0.5;\n"
@@ -274,11 +275,21 @@ static const char *kOutputFrag =
     "  return cc * d + 0.5;\n"
     "}\n"
     "\n"
+    "vec2 rotateUV(vec2 uv) {\n"
+    "  uv = uv - 0.5;\n"
+    "  if (u_rotation == 1) uv = vec2(-uv.y, uv.x);\n"
+    "  else if (u_rotation == 2) uv = vec2(-uv.x, -uv.y);\n"
+    "  else if (u_rotation == 3) uv = vec2(uv.y, -uv.x);\n"
+    "  return uv + 0.5;\n"
+    "}\n"
+    "\n"
     "void main() {\n"
     "  vec2 uv = v_uv;\n"
-    "  // CRT barrel distortion\n"
     "  if (u_screen_effect == 1 && u_screen_effect_strength > 0.0) {\n"
     "    uv = distortUV(uv);\n"
+    "  }\n"
+    "  if (u_rotation != 0) {\n"
+    "    uv = rotateUV(uv);\n"
     "  }\n"
     "  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {\n"
     "    frag = vec4(0.0, 0.0, 0.0, 1.0);\n"
@@ -370,6 +381,7 @@ int VmrpRenderer::InitGL() {
     ul_out_u_screen_effect_ = glGetUniformLocation(prog_output_, "u_screen_effect");
     ul_out_u_screen_effect_strength_ = glGetUniformLocation(prog_output_, "u_screen_effect_strength");
     ul_out_u_barrel_k_ = glGetUniformLocation(prog_output_, "u_barrel_k");
+    ul_out_u_rotation_ = glGetUniformLocation(prog_output_, "u_rotation");
 
     // 源纹理
     glGenTextures(1, &texture_);
@@ -637,32 +649,35 @@ void VmrpRenderer::ApplyOutputUniforms() {
     glUniform1f(ul_out_u_screen_effect_strength_, screen_effect_strength_);
     float barrel_k = (screen_effect_ == 1) ? 0.06f * screen_effect_strength_ : 0.0f;
     glUniform1f(ul_out_u_barrel_k_, barrel_k);
+    glUniform1i(ul_out_u_rotation_, current_rotation_);
     glUniform1i(ul_out_u_tex_, 0);
 }
 
-int VmrpRenderer::Render(const uint16_t *src, int32_t screen_w, int32_t screen_h) {
-    if (!Ready() || !src || screen_w <= 0 || screen_h <= 0) return -1;
+int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
+    if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
+    current_rotation_ = rotation & 3;
     EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
     if (!mc) return -1;
 
     // 上传源纹理
-    if (tex_w_ != screen_w || tex_h_ != screen_h) {
+    if (tex_w_ != display_w || tex_h_ != display_h) {
         glBindTexture(GL_TEXTURE_2D, texture_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, screen_w, screen_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        tex_w_ = screen_w;
-        tex_h_ = screen_h;
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, display_w, display_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        tex_w_ = display_w;
+        tex_h_ = display_h;
+        prev_filter_type_ = -1;
     }
-    const size_t pixels = static_cast<size_t>(screen_w) * screen_h;
+    const size_t pixels = static_cast<size_t>(display_w) * display_h;
     uint32_t *rgba = static_cast<uint32_t *>(malloc(pixels * 4));
     if (!rgba) return -1;
     ConvertRgb565ToRgba(src, rgba, static_cast<int32_t>(pixels));
     glBindTexture(GL_TEXTURE_2D, texture_);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, screen_w, screen_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     free(rgba);
 
     // FBO尺寸: FSRCNNX时2x放大，其他1x
-    int32_t needed_w = (filter_type_ == 4) ? screen_w * 2 : screen_w;
-    int32_t needed_h = (filter_type_ == 4) ? screen_h * 2 : screen_h;
+    int32_t needed_w = (filter_type_ == 4) ? display_w * 2 : display_w;
+    int32_t needed_h = (filter_type_ == 4) ? display_h * 2 : display_h;
     if (fbo_w_ != needed_w || fbo_h_ != needed_h) {
         CreateFBOs(needed_w, needed_h);
     }
@@ -694,8 +709,8 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t screen_w, int32_t screen_h
 
     // ── Pass3: 输出到屏幕 ──
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    int32_t vp_w = surface_w_ > 0 ? surface_w_ : screen_w;
-    int32_t vp_h = surface_h_ > 0 ? surface_h_ : screen_h;
+    int32_t vp_w = surface_w_ > 0 ? surface_w_ : display_w;
+    int32_t vp_h = surface_h_ > 0 ? surface_h_ : display_h;
     glViewport(0, 0, vp_w, vp_h);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -721,22 +736,24 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t screen_w, int32_t screen_h
     return 0;
 }
 
-int VmrpRenderer::Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h) {
-    if (!Ready() || !rgba || screen_w <= 0 || screen_h <= 0) return -1;
+int VmrpRenderer::Render(const uint8_t *rgba, int32_t display_w, int32_t display_h, int rotation) {
+    if (!Ready() || !rgba || display_w <= 0 || display_h <= 0) return -1;
+    current_rotation_ = rotation & 3;
     EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
     if (!mc) return -1;
 
-    if (tex_w_ != screen_w || tex_h_ != screen_h) {
+    if (tex_w_ != display_w || tex_h_ != display_h) {
         glBindTexture(GL_TEXTURE_2D, texture_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, screen_w, screen_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        tex_w_ = screen_w;
-        tex_h_ = screen_h;
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, display_w, display_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        tex_w_ = display_w;
+        tex_h_ = display_h;
+        prev_filter_type_ = -1;
     }
     glBindTexture(GL_TEXTURE_2D, texture_);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, screen_w, screen_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
 
-    int32_t needed_w = (filter_type_ == 4) ? screen_w * 2 : screen_w;
-    int32_t needed_h = (filter_type_ == 4) ? screen_h * 2 : screen_h;
+    int32_t needed_w = (filter_type_ == 4) ? display_w * 2 : display_w;
+    int32_t needed_h = (filter_type_ == 4) ? display_h * 2 : display_h;
     if (fbo_w_ != needed_w || fbo_h_ != needed_h) {
         CreateFBOs(needed_w, needed_h);
     }
@@ -768,8 +785,8 @@ int VmrpRenderer::Render(const uint8_t *rgba, int32_t screen_w, int32_t screen_h
 
     // Pass3
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    int32_t vp_w = surface_w_ > 0 ? surface_w_ : screen_w;
-    int32_t vp_h = surface_h_ > 0 ? surface_h_ : screen_h;
+    int32_t vp_w = surface_w_ > 0 ? surface_w_ : display_w;
+    int32_t vp_h = surface_h_ > 0 ? surface_h_ : display_h;
     glViewport(0, 0, vp_w, vp_h);
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
