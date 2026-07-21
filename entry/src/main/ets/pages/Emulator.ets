@@ -916,6 +916,7 @@ struct EmulatorPage {
     }
     .backgroundColor($r('app.color.immersive_bg'))
     .hideTitleBar(true)
+    .systemTransition(NavigationSystemTransitionType.SLIDE_BOTTOM)
     .onReady((context: NavDestinationContext) => {
       this.navPathStack = context.pathStack;
       this.mrpPath = context.pathInfo.param as string;

@@ -4,6 +4,7 @@ import {
   ScrollEffectType, hdsMaterial
 } from '@kit.UIDesignKit';
 import { i18n } from '@kit.LocalizationKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { MrpInfoData, MrpInfo } from '../vmrp/MrpInfo';
 import { gAbilityContext } from '../entryability/EntryAbility';
@@ -13,6 +14,9 @@ import { HapticManager } from '../common/HapticManager';
 
 const CARD_RADIUS = 20;
 const PLATFORM_NAMES: string[] = ['', 'MTK', '展讯', '', '', '', '', '', '', '斯凯'];
+const DELETE_TRANSITION = TransitionEffect.OPACITY
+  .combine(TransitionEffect.scale({ x: 0.8, y: 0.8 }))
+  .animation({ duration: 300, curve: Curve.EaseInOut });
 
 interface MrpGroup {
   letter: string;
@@ -252,6 +256,41 @@ struct Index {
     this.navPathStack.pushPathByName('Settings', null);
   }
 
+  private deleteMrp(item: MrpInfoData): void {
+    HapticManager.performClick();
+    try {
+      fs.unlinkSync(item.filePath);
+    } catch (_e) {
+      return;
+    }
+    this.rawList = this.rawList.filter((i: MrpInfoData) => i.filePath !== item.filePath);
+    this.getUIContext()?.animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+      this.applySort();
+    });
+  }
+
+  @Builder
+  swipeDeleteButton(item: MrpInfoData) {
+    Row() {
+      Column() {
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(18)
+          .fontColor([Color.White])
+      }
+      .width(44)
+      .height(44)
+      .borderRadius(22)
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor($r('app.color.accent_color'))
+      .onClick(() => this.deleteMrp(item))
+    }
+    .width(70)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
+  }
+
   @Builder
   groupHeader(letter: string) {
     Text(letter)
@@ -341,6 +380,8 @@ struct Index {
                       })
                     }
                     .padding({ left: 16, right: 16 })
+                    .swipeAction({ end: this.swipeDeleteButton(item) })
+                    .transition(DELETE_TRANSITION)
                   }, (item: MrpInfoData) => item.filePath)
                 }
               }, (group: MrpGroup) => group.letter)
@@ -353,6 +394,8 @@ struct Index {
                   })
                 }
                 .padding({ left: 16, right: 16 })
+                .swipeAction({ end: this.swipeDeleteButton(item) })
+                .transition(DELETE_TRANSITION)
               }, (item: MrpInfoData) => item.filePath)
             }
           }
@@ -387,7 +430,7 @@ struct Index {
               .selectedFont({ size: 12, weight: FontWeight.Bold })
               .popupFont({ size: 24, weight: FontWeight.Bold })
               .itemSize(24)
-              .alignStyle(IndexerAlign.Right)
+              .alignStyle(IndexerAlign.Left)
               .popupPosition({ x: -72, y: 0 })
               .width(24)
               .height('100%')
@@ -402,7 +445,7 @@ struct Index {
         }
         .width('100%')
         .layoutWeight(1)
-        .align(Alignment.TopStart)
+        .align(Alignment.TopEnd)
       }
       .titleBar({
       content: {

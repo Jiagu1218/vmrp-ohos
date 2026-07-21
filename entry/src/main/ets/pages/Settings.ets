@@ -839,6 +839,7 @@ export struct SettingsPage {
     })
     .backgroundColor($r('app.color.immersive_bg'))
     .bindToScrollable([this.listScroller])
+    .systemTransition(NavigationSystemTransitionType.SLIDE_BOTTOM)
     .onReady((context: NavDestinationContext) => {
       this.navPathStack = context.pathStack;
     })
