@@ -290,10 +290,7 @@ if(EXISTS "${_VMRP_DSM}")
                         _dsm_text "${_dsm_text}")
         set(_dsm_patched TRUE)
     endif()
-    string(REPLACE "#define MIDI_MAX_EVENTS 4096"
-                   "#define MIDI_MAX_EVENTS 16384  /* OHOS: 部分游戏MIDI事件数>4096,如gxrxd240 */"
-                   _dsm_text "${_dsm_text}")
-    set(_dsm_patched TRUE)
+
     if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
         message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT)")
