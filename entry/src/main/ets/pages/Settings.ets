@@ -63,10 +63,15 @@ const SCREEN_SIZE_W: number[] = [176, 240, 240, 320, 320, 480];
 const SCREEN_SIZE_H: number[] = [220, 320, 400, 480, 240, 800];
 const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
 const KEY_SPEED_MULT = 'speed_multiplier';
+const KEY_GAMEPAD_MAP = 'gamepad_mapping';
 const SPEED_OPTIONS: SelectOption[] = [
   { value: '1x 正常' }, { value: '2x 加速' }, { value: '3x 高速' }, { value: '4x 极速' }
 ];
 const SPEED_VALUES: number[] = [1, 2, 3, 4];
+const GAMEPAD_MAP_OPTIONS: SelectOption[] = [
+  { value: '经典' }, { value: '方向优先' }, { value: '数字键盘' }
+];
+const GAMEPAD_MAP_VALUES: number[] = [0, 1, 2];
 
 const CARD_RADIUS = 20;
 const ROW_H = 56;
@@ -221,6 +226,7 @@ export struct SettingsPage {
   @Local ditherEnabled: number = DITHER_DEFAULT;
   @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
   @Local speedMultIndex: number = 0;
+  @Local gamepadMapIndex: number = 0;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -265,6 +271,9 @@ export struct SettingsPage {
       const speedMult = pref.getSync(KEY_SPEED_MULT, 1) as number;
       this.speedMultIndex = SPEED_VALUES.indexOf(speedMult);
       if (this.speedMultIndex < 0) this.speedMultIndex = 0;
+      const gamepadMap = pref.getSync(KEY_GAMEPAD_MAP, 0) as number;
+      this.gamepadMapIndex = GAMEPAD_MAP_VALUES.indexOf(gamepadMap);
+      if (this.gamepadMapIndex < 0) this.gamepadMapIndex = 0;
     } catch (_e) {
     }
   }
@@ -324,6 +333,14 @@ export struct SettingsPage {
     const pref = this.getPref();
     if (!pref) return;
     pref.putSync(KEY_SPEED_MULT, mult);
+    pref.flush();
+  }
+
+  saveGamepadMap(index: number): void {
+    this.gamepadMapIndex = index;
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_GAMEPAD_MAP, GAMEPAD_MAP_VALUES[index]);
     pref.flush();
   }
 
@@ -733,6 +750,16 @@ export struct SettingsPage {
                 .enabled(this.hapticEnabled)
                 .opacity(this.hapticEnabled ? 1 : 0.35)
                 SDesc({ text: '调节按键触控时的震动反馈力度，选择后即时体验。' })
+                SDivider()
+                SRow({ label: '手柄映射' }) {
+                  SSelect({
+                    opts: GAMEPAD_MAP_OPTIONS,
+                    selected: this.gamepadMapIndex,
+                    value: GAMEPAD_MAP_OPTIONS[this.gamepadMapIndex].value as string,
+                    onSelect: (index: number) => { this.saveGamepadMap(index); }
+                  })
+                }
+                SDesc({ text: '经典:A=确认 B=返回; 方向优先:A=确认 DPad=方向; 数字键盘:A=1 B=2 X=3 Y=4' })
               }
             }
           }

@@ -1,6 +1,7 @@
 import { abilityAccessCtrl } from '@kit.AbilityKit';
 import { NodeContent, ComponentContent, AppStorageV2, display } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
+import { KeyCode } from '@kit.InputKit';
 import {
   HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType, hdsMaterial
 } from '@kit.UIDesignKit';
@@ -8,7 +9,8 @@ import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
   MR_KEY_UP, MR_KEY_DOWN, MR_KEY_LEFT, MR_KEY_RIGHT,
   MR_KEY_SELECT, MR_KEY_SOFTLEFT, MR_KEY_SOFTRIGHT,
-  MR_KEY_STAR, MR_KEY_POUND
+  MR_KEY_STAR, MR_KEY_POUND, MR_KEY_SEND, MR_KEY_POWER,
+  MR_KEY_0, MR_KEY_1, MR_KEY_2, MR_KEY_3, MR_KEY_4, MR_KEY_5, MR_KEY_6
 } from '../vmrp/VmrpEngine';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { gAbilityContext } from '../entryability/EntryAbility';
@@ -66,6 +68,66 @@ const STATUS_TEXT = '#8888AA';
 const RUN_DOT = '#4ADE80';
 const SHELL_BORDER = '#2A2A4E';
 const ACCENT_COLOR = '#E94560';
+
+const STICK_DEADZONE = 0.3;
+
+interface GamepadMapping {
+  buttonA: number;
+  buttonB: number;
+  buttonX: number;
+  buttonY: number;
+  buttonL1: number;
+  buttonR1: number;
+  buttonStart: number;
+  buttonSelect: number;
+}
+
+function defaultGamepadMapping(): GamepadMapping {
+  const m: GamepadMapping = {
+    buttonA: MR_KEY_SELECT,
+    buttonB: MR_KEY_SOFTRIGHT,
+    buttonX: MR_KEY_SOFTLEFT,
+    buttonY: MR_KEY_STAR,
+    buttonL1: MR_KEY_SEND,
+    buttonR1: MR_KEY_POUND,
+    buttonStart: MR_KEY_POWER,
+    buttonSelect: MR_KEY_SOFTLEFT
+  };
+  return m;
+}
+
+function keyCodeToMrKey(keyCode: number, mapping: GamepadMapping): number {
+  switch (keyCode) {
+    case KeyCode.KEYCODE_DPAD_UP:
+      return MR_KEY_UP;
+    case KeyCode.KEYCODE_DPAD_DOWN:
+      return MR_KEY_DOWN;
+    case KeyCode.KEYCODE_DPAD_LEFT:
+      return MR_KEY_LEFT;
+    case KeyCode.KEYCODE_DPAD_RIGHT:
+      return MR_KEY_RIGHT;
+    case KeyCode.KEYCODE_DPAD_CENTER:
+      return MR_KEY_SELECT;
+    case KeyCode.KEYCODE_BUTTON_A:
+      return mapping.buttonA;
+    case KeyCode.KEYCODE_BUTTON_B:
+      return mapping.buttonB;
+    case KeyCode.KEYCODE_BUTTON_X:
+      return mapping.buttonX;
+    case KeyCode.KEYCODE_BUTTON_Y:
+      return mapping.buttonY;
+    case KeyCode.KEYCODE_BUTTON_L1:
+      return mapping.buttonL1;
+    case KeyCode.KEYCODE_BUTTON_R1:
+      return mapping.buttonR1;
+    case KeyCode.KEYCODE_BUTTON_START:
+      return mapping.buttonStart;
+    case KeyCode.KEYCODE_BUTTON_SELECT:
+      return mapping.buttonSelect;
+    default:
+      return -1;
+  }
+}
 
 @ComponentV2
 struct EditDialogContent {
@@ -434,10 +496,14 @@ struct EmulatorPage {
   @Local dualAreaW: number = 400;
   @Local dualAreaH: number = 600;
   @Local speedMultiplier: number = 1;
+  @Local gamepadConnected: boolean = false;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private navPathStack: NavPathStack = new NavPathStack();
   private engine: VmrpEngineTs = new VmrpEngineTs();
   private pressedKeys: Set<number> = new Set();
+  private gamepadMapping: GamepadMapping = defaultGamepadMapping();
+  private stickAxes: Map<AxisModel, number> = new Map();
+  private stickPressedKeys: Set<number> = new Set();
   private nodeContent: NodeContent = new NodeContent();
   private mrpPath: string = '';
   private gridColumns: GridRowColumns = { sm: 1, md: 2, lg: 2 };
@@ -537,6 +603,8 @@ struct EmulatorPage {
           this.speedMultiplier = speedMult;
           this.engine.setSpeedMultiplier(speedMult);
         }
+        const gamepadMap = (await pref.get('gamepad_mapping', 0)) as number;
+        this.applyGamepadMapping(gamepadMap);
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }
@@ -615,6 +683,120 @@ struct EmulatorPage {
         this.pressedKeys.delete(key);
         this.engine.sendKey(VMRP_KEY_RELEASE, key);
       }
+    }
+  }
+
+  private onGamepadKeyEvent(event: KeyEvent): void {
+    const mrKey = keyCodeToMrKey(event.keyCode, this.gamepadMapping);
+    if (mrKey < 0) return;
+    if (event.type === KeyType.Down) {
+      if (!this.pressedKeys.has(mrKey)) {
+        this.pressedKeys.add(mrKey);
+        this.engine.sendKey(VMRP_KEY_PRESS, mrKey);
+        HapticManager.performClick();
+        this.gamepadConnected = true;
+      }
+    } else if (event.type === KeyType.Up) {
+      if (this.pressedKeys.has(mrKey)) {
+        this.pressedKeys.delete(mrKey);
+        this.engine.sendKey(VMRP_KEY_RELEASE, mrKey);
+      }
+    }
+  }
+
+  private applyGamepadMapping(mapId: number): void {
+    switch (mapId) {
+      case 1:
+        this.gamepadMapping = {
+          buttonA: MR_KEY_SELECT,
+          buttonB: MR_KEY_POWER,
+          buttonX: MR_KEY_SOFTLEFT,
+          buttonY: MR_KEY_SOFTRIGHT,
+          buttonL1: MR_KEY_STAR,
+          buttonR1: MR_KEY_POUND,
+          buttonStart: MR_KEY_SOFTRIGHT,
+          buttonSelect: MR_KEY_SOFTLEFT
+        };
+        break;
+      case 2:
+        this.gamepadMapping = {
+          buttonA: MR_KEY_1,
+          buttonB: MR_KEY_2,
+          buttonX: MR_KEY_3,
+          buttonY: MR_KEY_4,
+          buttonL1: MR_KEY_5,
+          buttonR1: MR_KEY_6,
+          buttonStart: MR_KEY_SELECT,
+          buttonSelect: MR_KEY_STAR
+        };
+        break;
+      default:
+        this.gamepadMapping = defaultGamepadMapping();
+        break;
+    }
+  }
+
+  private updateStickDirection(): void {
+    const lx = this.stickAxes.get(AxisModel.ABS_X) ?? 0;
+    const ly = this.stickAxes.get(AxisModel.ABS_Y) ?? 0;
+    const rx = this.stickAxes.get(AxisModel.ABS_RZ) ?? 0;
+    const ry = this.stickAxes.get(AxisModel.ABS_Z) ?? 0;
+    const hatX = this.stickAxes.get(AxisModel.ABS_HAT0X) ?? 0;
+    const hatY = this.stickAxes.get(AxisModel.ABS_HAT0Y) ?? 0;
+
+    const combinedX = Math.max(-1, Math.min(1, lx + rx + hatX));
+    const combinedY = Math.max(-1, Math.min(1, ly + ry + hatY));
+
+    const wantUp = combinedY < -STICK_DEADZONE;
+    const wantDown = combinedY > STICK_DEADZONE;
+    const wantLeft = combinedX < -STICK_DEADZONE;
+    const wantRight = combinedX > STICK_DEADZONE;
+
+    const newPressed: Set<number> = new Set();
+    if (wantUp) newPressed.add(MR_KEY_UP);
+    if (wantDown) newPressed.add(MR_KEY_DOWN);
+    if (wantLeft) newPressed.add(MR_KEY_LEFT);
+    if (wantRight) newPressed.add(MR_KEY_RIGHT);
+
+    const toRelease: number[] = [];
+    this.stickPressedKeys.forEach((key: number) => {
+      if (!newPressed.has(key)) {
+        toRelease.push(key);
+      }
+    });
+    const toPress: number[] = [];
+    newPressed.forEach((key: number) => {
+      if (!this.stickPressedKeys.has(key) && !this.pressedKeys.has(key)) {
+        toPress.push(key);
+      }
+    });
+
+    for (const key of toRelease) {
+      this.stickPressedKeys.delete(key);
+      this.engine.sendKey(VMRP_KEY_RELEASE, key);
+    }
+    for (const key of toPress) {
+      this.stickPressedKeys.add(key);
+      this.engine.sendKey(VMRP_KEY_PRESS, key);
+    }
+  }
+
+  private onGamepadAxisEvent(event: FocusAxisEvent): void {
+    const keys: AxisModel[] = [
+      AxisModel.ABS_X, AxisModel.ABS_Y, AxisModel.ABS_Z, AxisModel.ABS_RZ,
+      AxisModel.ABS_HAT0X, AxisModel.ABS_HAT0Y
+    ];
+    let changed = false;
+    for (const k of keys) {
+      const val = event.axisMap.get(k);
+      if (val !== undefined) {
+        this.stickAxes.set(k, val);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.gamepadConnected = true;
+      this.updateStickDirection();
     }
   }
 
@@ -707,6 +889,9 @@ struct EmulatorPage {
              this.engine.setSpeedMultiplier(next);
            }
          })
+         if (this.gamepadConnected) {
+           StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT })
+         }
          StatusBarChip({ chipLabel: '设置', onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
         StatusBarChip({
           chipLabel: '数字',
@@ -943,6 +1128,14 @@ struct EmulatorPage {
       .width('100%')
       .height('100%')
       .backgroundColor('#0D0D1A')
+      .focusScopeId('emulatorGroup', true, false)
+      .defaultFocus(true)
+      .onKeyEvent((event: KeyEvent) => {
+        this.onGamepadKeyEvent(event);
+      })
+      .onFocusAxisEvent((event: FocusAxisEvent) => {
+        this.onGamepadAxisEvent(event);
+      })
     }
     .backgroundColor($r('app.color.immersive_bg'))
     .hideTitleBar(true)
