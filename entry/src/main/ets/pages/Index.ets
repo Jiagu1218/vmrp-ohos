@@ -175,6 +175,7 @@ struct Index {
   @Local groupedItems: MrpGroup[] = [];
   @Local indexArray: string[] = ['#'];
   @Local isScanning: boolean = false;
+  @Local isRefreshing: boolean = false;
   @Local sortMode: number = 0;
   @Local selectedIndex: number = 0;
   @Local searchMode: boolean = false;
@@ -325,6 +326,7 @@ struct Index {
   build() {
     HdsNavigation(this.navPathStack) {
       Stack({ alignContent: Alignment.End }) {
+        Refresh({ refreshing: $$this.isRefreshing }) {
         List({ space: 8, scroller: this.listScroller }) {
           if (this.searchMode) {
             ListItem() {
@@ -438,6 +440,13 @@ struct Index {
               }
             }
           })
+        }
+        .refreshOffset(64)
+        .pullToRefresh(true)
+        .onRefreshing(() => {
+          this.scanMrpFiles();
+          this.isRefreshing = false;
+        })
 
           if (this.sortMode === 1 && this.mrpList.length > 0 && this.searchQuery.length === 0) {
             AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
