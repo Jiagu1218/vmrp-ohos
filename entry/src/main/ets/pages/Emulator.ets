@@ -286,21 +286,24 @@ struct TopScreen {
   @Param scaleVal: number = 1;
   @Param bufW: number = 240;
   @Param bufH: number = 320;
+  @Param screenVisible: boolean = true;
 
   build() {
     Column() {
       Stack() {
         Stack() {
-          Stack() {
-            ContentSlot(this.nodeContent)
-          }
-          .width(this.bufW)
-          .height(this.bufH)
-          .backgroundColor(SCREEN_BG)
-          .borderRadius(6)
-          .clip(true)
-          .scale({ x: this.scaleVal, y: this.scaleVal })
-          .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+           Stack() {
+             if (this.screenVisible) {
+               ContentSlot(this.nodeContent)
+             }
+           }
+           .width(this.bufW)
+           .height(this.bufH)
+           .backgroundColor(SCREEN_BG)
+           .borderRadius(6)
+           .clip(true)
+           .scale({ x: this.scaleVal, y: this.scaleVal })
+           .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
         }
         .width(this.bufW * this.scaleVal)
         .height(this.bufH * this.scaleVal)
@@ -332,28 +335,6 @@ struct TopScreen {
 }
 
 @ComponentV2
-struct ActionChip {
-  @Param chipLabel: string = '';
-  @Param onChipClick: () => void = () => {};
-
-  build() {
-    Column() {
-      ImmersiveLightWrapper({ radius: 13, lightHeight: 80 }) {
-        Stack() {
-          Text(this.chipLabel)
-            .fontSize(11)
-            .fontColor('#CCCCCC')
-        }
-        .height(26)
-        .padding({ left: 14, right: 14 })
-        .backgroundColor(Color.Transparent)
-      }
-    }
-    .onClick(() => { HapticManager.performClick(); this.onChipClick(); })
-  }
-}
-
-@ComponentV2
 struct StatusBarChip {
   @Param chipLabel: string = '';
   @Param chipFontColor: ResourceColor = NUMKEY_TEXT;
@@ -381,7 +362,6 @@ struct StatusBarChip {
 @ComponentV2
 struct BottomControls {
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param onStartDefault: () => void = () => {};
   @Param runningState: boolean = false;
   @Param dpadSizeVal: number = 110;
   @Param btnSizeVal: number = 30;
@@ -394,11 +374,6 @@ struct BottomControls {
       if (this.showNumPadVal) {
         NumPad({ onKeyTouch: this.onKeyTouch, btnSizeVal: this.btnSizeVal })
       }
-
-      Row({ space: 8 }) {
-        ActionChip({ chipLabel: '重启', onChipClick: this.onStartDefault })
-      }
-      .padding({ top: 4, bottom: 4 })
     }
     .width('100%')
     .alignItems(HorizontalAlign.Center)
@@ -435,6 +410,7 @@ struct PhoneControls {
 struct EmulatorPage {
   @Local statusText: string = '未启动';
   @Local runningState: boolean = false;
+  @Local screenVisible: boolean = true;
   @Local editText: string = '';
   @Local currentBp: string = 'sm';
   @Local showControls: boolean = true;
@@ -608,8 +584,10 @@ struct EmulatorPage {
         this.exitPollTimer = setInterval(() => {
           if (!this.engine.isRunning()) {
             this.runningState = false;
+            this.screenVisible = false;
             clearInterval(this.exitPollTimer);
             this.exitPollTimer = -1;
+            try { this.engine.stop(); } catch (_e) {}
             this.navPathStack.pop();
           }
         }, 500);
@@ -645,14 +623,14 @@ struct EmulatorPage {
           runningState: this.runningState,
           scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / this.bufW, (this.dualAreaH * 0.5 - 36) / this.bufH),
           bufW: this.bufW,
-          bufH: this.bufH
+          bufH: this.bufH,
+          screenVisible: this.screenVisible
         })
       } else {
         Scroll() {
           Column() {
             BottomControls({
               onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
-              onStartDefault: () => this.startMrp(),
               runningState: this.runningState,
               dpadSizeVal: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
               btnSizeVal: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36),
@@ -675,12 +653,14 @@ struct EmulatorPage {
   phoneLayout() {
     Column() {
       Stack() {
-        Stack() {
-          ContentSlot(this.nodeContent)
-        }
-        .width(this.bufW)
-        .height(this.bufH)
-        .backgroundColor(SCREEN_BG)
+           Stack() {
+             if (this.screenVisible) {
+               ContentSlot(this.nodeContent)
+             }
+           }
+           .width(this.bufW)
+           .height(this.bufH)
+           .backgroundColor(SCREEN_BG)
         .scale({
           x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH),
           y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH)
@@ -708,8 +688,7 @@ struct EmulatorPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
-        StatusBarChip({ chipLabel: '重启', onChipClick: () => this.startMrp() })
-        StatusBarChip({ chipLabel: '设置', onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
+         StatusBarChip({ chipLabel: '设置', onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
         StatusBarChip({
           chipLabel: '数字',
           chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
@@ -761,15 +740,17 @@ struct EmulatorPage {
   foldExpandedLayout() {
     Column() {
       Column() {
-        Stack() {
-          Stack() {
-            ContentSlot(this.nodeContent)
-          }
-          .width(this.bufW)
-          .height(this.bufH)
-          .backgroundColor(SCREEN_BG)
-          .borderRadius(6)
-          .clip(true)
+         Stack() {
+           Stack() {
+             if (this.screenVisible) {
+               ContentSlot(this.nodeContent)
+             }
+           }
+           .width(this.bufW)
+           .height(this.bufH)
+           .backgroundColor(SCREEN_BG)
+           .borderRadius(6)
+           .clip(true)
           .scale({
             x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH),
             y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH)
@@ -828,7 +809,6 @@ struct EmulatorPage {
               .alignItems(VerticalAlign.Center)
 
               Row({ space: 8 }) {
-                ActionChip({ chipLabel: '重启', onChipClick: () => this.startMrp() })
                 Column() {
                   ImmersiveLightWrapper({ radius: 13, lightHeight: 80 }) {
                     Stack() {
@@ -942,6 +922,10 @@ struct EmulatorPage {
     .onReady((context: NavDestinationContext) => {
       this.navPathStack = context.pathStack;
       this.mrpPath = context.pathInfo.param as string;
+    })
+    .onWillDisappear(() => {
+      this.screenVisible = false;
+      try { this.engine.stop(); } catch (_e) {}
     })
   }
 }
