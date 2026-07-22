@@ -453,6 +453,7 @@ struct EmulatorPage {
   private pressedKeys: Set<number> = new Set();
   private nodeContent: NodeContent = new NodeContent();
   private mrpPath: string = '';
+  private exitPollTimer: number = -1;
   private gridColumns: GridRowColumns = { sm: 1, md: 2, lg: 2 };
   private gridGutter: GridRowGutter = { x: 8, y: 6 };
   private gridBreakpoints: GridRowBreakpoints = {
@@ -494,6 +495,10 @@ struct EmulatorPage {
   }
 
   aboutToDisappear(): void {
+    if (this.exitPollTimer >= 0) {
+      clearInterval(this.exitPollTimer);
+      this.exitPollTimer = -1;
+    }
     try {
       this.engine.stop();
     } catch (_e) {}
@@ -592,6 +597,16 @@ struct EmulatorPage {
       const r = this.engine.start(this.mrpPath, 'start.mr', '_dsm');
       this.runningState = this.engine.isRunning();
       this.statusText = `${r}, ${this.runningState ? '运行中' : '已停止'}`;
+      if (this.runningState && this.exitPollTimer < 0) {
+        this.exitPollTimer = setInterval(() => {
+          if (!this.engine.isRunning()) {
+            this.runningState = false;
+            clearInterval(this.exitPollTimer);
+            this.exitPollTimer = -1;
+            this.navPathStack.pop();
+          }
+        }, 500);
+      }
     } catch (e) {
       const err = e as Error;
       this.statusText = `失败: ${err?.message ?? String(e)}`;
