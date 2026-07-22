@@ -64,14 +64,57 @@ const SCREEN_SIZE_H: number[] = [220, 320, 400, 480, 240, 800];
 const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
 const KEY_SPEED_MULT = 'speed_multiplier';
 const KEY_GAMEPAD_MAP = 'gamepad_mapping';
+const KEY_GAMEPAD_CUSTOM = 'gamepad_custom';
 const SPEED_OPTIONS: SelectOption[] = [
   { value: '1x 正常' }, { value: '2x 加速' }, { value: '3x 高速' }, { value: '4x 极速' }
 ];
 const SPEED_VALUES: number[] = [1, 2, 3, 4];
 const GAMEPAD_MAP_OPTIONS: SelectOption[] = [
-  { value: '经典' }, { value: '方向优先' }, { value: '数字键盘' }
+  { value: '经典' }, { value: '方向优先' }, { value: '数字键盘' }, { value: '自定义' }
 ];
-const GAMEPAD_MAP_VALUES: number[] = [0, 1, 2];
+const GAMEPAD_MAP_VALUES: number[] = [0, 1, 2, 3];
+const GAMEPAD_BTN_LABELS: string[] = ['A', 'B', 'X', 'Y', 'L1', 'R1', 'Start', 'Select'];
+const GAMEPAD_BTN_KEYS: string[] = ['a', 'b', 'x', 'y', 'l1', 'r1', 'start', 'select'];
+const MR_KEY_NAMES: string[] = [
+  '方向上', '方向下', '方向左', '方向右', '确认', '左软键', '右软键',
+  '✱ 星号', '# 井号', '电源', '拨号',
+  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
+];
+const MR_KEY_VALUES: number[] = [
+  12, 13, 14, 15, 20, 17, 18,
+  10, 11, 16, 19,
+  0, 1, 2, 3, 4, 5, 6, 7, 8, 9
+];
+const MRP_KEY_OPTIONS: SelectOption[] = MR_KEY_NAMES.map((name: string, i: number) => {
+  const opt: SelectOption = { value: name };
+  return opt;
+});
+
+interface GamepadCustomMap {
+  a: number;
+  b: number;
+  x: number;
+  y: number;
+  l1: number;
+  r1: number;
+  start: number;
+  select: number;
+}
+
+function classicMap(): GamepadCustomMap {
+  const m: GamepadCustomMap = { a: 20, b: 18, x: 17, y: 10, l1: 19, r1: 11, start: 16, select: 17 };
+  return m;
+}
+
+function directionFirstMap(): GamepadCustomMap {
+  const m: GamepadCustomMap = { a: 20, b: 16, x: 17, y: 18, l1: 10, r1: 11, start: 18, select: 17 };
+  return m;
+}
+
+function numpadMap(): GamepadCustomMap {
+  const m: GamepadCustomMap = { a: 1, b: 2, x: 3, y: 4, l1: 5, r1: 6, start: 20, select: 10 };
+  return m;
+}
 
 const CARD_RADIUS = 20;
 const ROW_H = 56;
@@ -227,6 +270,7 @@ export struct SettingsPage {
   @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
   @Local speedMultIndex: number = 0;
   @Local gamepadMapIndex: number = 0;
+  @Local customMap: GamepadCustomMap = classicMap();
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -274,6 +318,7 @@ export struct SettingsPage {
       const gamepadMap = pref.getSync(KEY_GAMEPAD_MAP, 0) as number;
       this.gamepadMapIndex = GAMEPAD_MAP_VALUES.indexOf(gamepadMap);
       if (this.gamepadMapIndex < 0) this.gamepadMapIndex = 0;
+      this.loadCustomMap(pref);
     } catch (_e) {
     }
   }
@@ -338,10 +383,87 @@ export struct SettingsPage {
 
   saveGamepadMap(index: number): void {
     this.gamepadMapIndex = index;
+    if (index === 0) this.customMap = classicMap();
+    else if (index === 1) this.customMap = directionFirstMap();
+    else if (index === 2) this.customMap = numpadMap();
     const pref = this.getPref();
     if (!pref) return;
     pref.putSync(KEY_GAMEPAD_MAP, GAMEPAD_MAP_VALUES[index]);
+    this.flushCustomMap(pref);
     pref.flush();
+  }
+
+  loadCustomMap(pref: preferences.Preferences): void {
+    if (this.gamepadMapIndex === 0) { this.customMap = classicMap(); return; }
+    if (this.gamepadMapIndex === 1) { this.customMap = directionFirstMap(); return; }
+    if (this.gamepadMapIndex === 2) { this.customMap = numpadMap(); return; }
+    try {
+      const raw = pref.getSync(KEY_GAMEPAD_CUSTOM, '') as string;
+      if (raw.length > 0) {
+        const obj = JSON.parse(raw) as Record<string, number>;
+        this.customMap = {
+          a: obj['a'] ?? 20,
+          b: obj['b'] ?? 18,
+          x: obj['x'] ?? 17,
+          y: obj['y'] ?? 10,
+          l1: obj['l1'] ?? 19,
+          r1: obj['r1'] ?? 11,
+          start: obj['start'] ?? 16,
+          select: obj['select'] ?? 17
+        };
+      } else {
+        this.customMap = classicMap();
+      }
+    } catch (_e) {
+      this.customMap = classicMap();
+    }
+  }
+
+  flushCustomMap(pref: preferences.Preferences): void {
+    const obj: Record<string, number> = {
+      'a': this.customMap.a, 'b': this.customMap.b,
+      'x': this.customMap.x, 'y': this.customMap.y,
+      'l1': this.customMap.l1, 'r1': this.customMap.r1,
+      'start': this.customMap.start, 'select': this.customMap.select
+    };
+    pref.putSync(KEY_GAMEPAD_CUSTOM, JSON.stringify(obj));
+  }
+
+  saveCustomMapKey(btnKey: string, mrKeyIndex: number): void {
+    const val = MR_KEY_VALUES[mrKeyIndex];
+    switch (btnKey) {
+      case 'a': this.customMap.a = val; break;
+      case 'b': this.customMap.b = val; break;
+      case 'x': this.customMap.x = val; break;
+      case 'y': this.customMap.y = val; break;
+      case 'l1': this.customMap.l1 = val; break;
+      case 'r1': this.customMap.r1 = val; break;
+      case 'start': this.customMap.start = val; break;
+      case 'select': this.customMap.select = val; break;
+      default: return;
+    }
+    if (this.gamepadMapIndex !== 3) {
+      this.gamepadMapIndex = 3;
+    }
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_GAMEPAD_MAP, 3);
+    this.flushCustomMap(pref);
+    pref.flush();
+  }
+
+  getCustomMapKeyVal(btnKey: string): number {
+    switch (btnKey) {
+      case 'a': return this.customMap.a;
+      case 'b': return this.customMap.b;
+      case 'x': return this.customMap.x;
+      case 'y': return this.customMap.y;
+      case 'l1': return this.customMap.l1;
+      case 'r1': return this.customMap.r1;
+      case 'start': return this.customMap.start;
+      case 'select': return this.customMap.select;
+      default: return 20;
+    }
   }
 
   async saveHaptic(enabled: boolean): Promise<void> {
@@ -751,7 +873,7 @@ export struct SettingsPage {
                 .opacity(this.hapticEnabled ? 1 : 0.35)
                 SDesc({ text: '调节按键触控时的震动反馈力度，选择后即时体验。' })
                 SDivider()
-                SRow({ label: '手柄映射' }) {
+                SRow({ label: '手柄预设' }) {
                   SSelect({
                     opts: GAMEPAD_MAP_OPTIONS,
                     selected: this.gamepadMapIndex,
@@ -759,7 +881,27 @@ export struct SettingsPage {
                     onSelect: (index: number) => { this.saveGamepadMap(index); }
                   })
                 }
-                SDesc({ text: '经典:A=确认 B=返回; 方向优先:A=确认 DPad=方向; 数字键盘:A=1 B=2 X=3 Y=4' })
+                ForEach(GAMEPAD_BTN_KEYS, (btnKey: string, idx: number) => {
+                  SDivider()
+                  Row() {
+                    Text(GAMEPAD_BTN_LABELS[idx])
+                      .fontSize(14)
+                      .fontColor($r('app.color.accent_color'))
+                      .fontWeight(FontWeight.Bold)
+                      .width(52)
+                    SSelect({
+                      opts: MRP_KEY_OPTIONS,
+                      selected: MR_KEY_VALUES.indexOf(this.getCustomMapKeyVal(btnKey)),
+                      value: MR_KEY_NAMES[MR_KEY_VALUES.indexOf(this.getCustomMapKeyVal(btnKey))] as string,
+                      onSelect: (mrIdx: number) => { this.saveCustomMapKey(btnKey, mrIdx); }
+                    })
+                  }
+                  .width('100%')
+                  .height(ROW_H)
+                  .alignItems(VerticalAlign.Center)
+                  .padding({ left: PAD_H, right: PAD_H })
+                }, (btnKey: string) => btnKey)
+                SDesc({ text: '选择预设或逐个自定义手柄按键映射到MRP功能键。修改即时生效。' })
               }
             }
           }

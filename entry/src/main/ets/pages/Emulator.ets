@@ -604,7 +604,8 @@ struct EmulatorPage {
           this.engine.setSpeedMultiplier(speedMult);
         }
         const gamepadMap = (await pref.get('gamepad_mapping', 0)) as number;
-        this.applyGamepadMapping(gamepadMap);
+        const gamepadCustom = (await pref.get('gamepad_custom', '')) as string;
+        this.applyGamepadMapping(gamepadMap, gamepadCustom);
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }
@@ -704,7 +705,7 @@ struct EmulatorPage {
     }
   }
 
-  private applyGamepadMapping(mapId: number): void {
+  private applyGamepadMapping(mapId: number, customJson: string): void {
     switch (mapId) {
       case 1:
         this.gamepadMapping = {
@@ -729,6 +730,23 @@ struct EmulatorPage {
           buttonStart: MR_KEY_SELECT,
           buttonSelect: MR_KEY_STAR
         };
+        break;
+      case 3:
+        try {
+          const obj = JSON.parse(customJson) as Record<string, number>;
+          this.gamepadMapping = {
+            buttonA: obj['a'] ?? MR_KEY_SELECT,
+            buttonB: obj['b'] ?? MR_KEY_SOFTRIGHT,
+            buttonX: obj['x'] ?? MR_KEY_SOFTLEFT,
+            buttonY: obj['y'] ?? MR_KEY_STAR,
+            buttonL1: obj['l1'] ?? MR_KEY_SEND,
+            buttonR1: obj['r1'] ?? MR_KEY_POUND,
+            buttonStart: obj['start'] ?? MR_KEY_POWER,
+            buttonSelect: obj['select'] ?? MR_KEY_SOFTLEFT
+          };
+        } catch (_e) {
+          this.gamepadMapping = defaultGamepadMapping();
+        }
         break;
       default:
         this.gamepadMapping = defaultGamepadMapping();
