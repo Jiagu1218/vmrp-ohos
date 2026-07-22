@@ -172,11 +172,14 @@ struct MrpCard {
 @ComponentV2
 struct Index {
   @Local mrpList: MrpInfoData[] = [];
+  @Local groupedItems: MrpGroup[] = [];
+  @Local indexArray: string[] = ['#'];
   @Local isScanning: boolean = false;
   @Local sortMode: number = 0;
   @Local selectedIndex: number = 0;
   @Local searchMode: boolean = false;
   @Local searchQuery: string = '';
+  @Local listVersion: number = 0;
   private navPathStack: NavPathStack = new NavPathStack();
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private listScroller: Scroller = new Scroller();
@@ -234,6 +237,18 @@ struct Index {
       });
     }
     this.mrpList = list;
+    this.rebuildGroups();
+    this.listVersion++;
+  }
+
+  private rebuildGroups(): void {
+    if (this.sortMode === 1 && this.searchQuery.length === 0) {
+      this.groupedItems = groupByLetter(this.mrpList);
+      this.indexArray = buildIndexArray(this.groupedItems);
+    } else {
+      this.groupedItems = [];
+      this.indexArray = ['#'];
+    }
   }
 
   private toggleSort(): void {
@@ -376,7 +391,7 @@ struct Index {
                 .padding({ top: 60, bottom: 60 })
               }
             } else if (this.sortMode === 1 && this.searchQuery.length === 0) {
-              ForEach(groupByLetter(this.mrpList), (group: MrpGroup) => {
+              ForEach(this.groupedItems, (group: MrpGroup) => {
                 ListItemGroup({ header: this.groupHeader(group.letter), space: 8 }) {
                   ForEach(group.items, (item: MrpInfoData) => {
                     ListItem() {
@@ -388,9 +403,9 @@ struct Index {
                     .padding({ left: 16, right: 16 })
                     .swipeAction({ end: this.swipeDeleteButton(item) })
                     .transition(DELETE_TRANSITION)
-                  }, (item: MrpInfoData) => item.filePath)
+                  }, (item: MrpInfoData) => item.filePath + '_' + this.listVersion)
                 }
-              }, (group: MrpGroup) => group.letter)
+              }, (group: MrpGroup) => group.letter + '_' + group.items.length + '_' + this.listVersion)
             } else {
               ForEach(this.mrpList, (item: MrpInfoData) => {
                 ListItem() {
@@ -402,7 +417,7 @@ struct Index {
                 .padding({ left: 16, right: 16 })
                 .swipeAction({ end: this.swipeDeleteButton(item) })
                 .transition(DELETE_TRANSITION)
-              }, (item: MrpInfoData) => item.filePath)
+              }, (item: MrpInfoData) => item.filePath + '_' + this.listVersion)
             }
           }
           .width('100%')
@@ -414,10 +429,10 @@ struct Index {
           .expandSafeArea()
           .onScrollIndex((start: number) => {
             if (this.sortMode !== 1 || this.mrpList.length === 0) return;
-            const groups = groupByLetter(this.mrpList);
+            const groups = this.groupedItems;
             if (start >= 0 && start < groups.length) {
               const letter = groups[start].letter;
-              const idx = this.currentIndexArray.indexOf(letter);
+              const idx = this.indexArray.indexOf(letter);
               if (idx >= 0) {
                 this.selectedIndex = idx;
               }
@@ -425,7 +440,7 @@ struct Index {
           })
 
           if (this.sortMode === 1 && this.mrpList.length > 0 && this.searchQuery.length === 0) {
-            AlphabetIndexer({ arrayValue: this.currentIndexArray, selected: this.selectedIndex })
+            AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
               .color($r('app.color.settings_desc_color'))
               .selectedColor($r('app.color.accent_color'))
               .popupColor($r('app.color.accent_color'))
@@ -442,7 +457,7 @@ struct Index {
               .height('100%')
               .margin({ right: 4 })
               .onSelect((index: number) => {
-                const groups = groupByLetter(this.mrpList);
+                const groups = this.groupedItems;
                 if (index >= 0 && index < groups.length) {
                   this.listScroller.scrollToIndex(index, false, ScrollAlign.CENTER);
                 }
@@ -507,7 +522,4 @@ struct Index {
     .mode(NavigationMode.Stack)
   }
 
-  private get currentIndexArray(): string[] {
-    return buildIndexArray(groupByLetter(this.mrpList));
-  }
 }
