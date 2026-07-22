@@ -287,6 +287,8 @@ struct TopScreen {
   @Param bufW: number = 240;
   @Param bufH: number = 320;
   @Param screenVisible: boolean = true;
+  @Param speedMultiplier: number = 1;
+  @Param onSpeedChange: (mult: number) => void = () => {};
 
   build() {
     Column() {
@@ -324,7 +326,15 @@ struct TopScreen {
           .fontColor(STATUS_TEXT)
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
+           .layoutWeight(1)
+         StatusBarChip({
+           chipLabel: `${this.speedMultiplier}x`,
+           chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
+           onChipClick: () => {
+             const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
+             this.onSpeedChange(next);
+           }
+         })
       }
       .width('100%')
       .padding({ left: 8, right: 8, top: 4, bottom: 2 })
@@ -423,6 +433,7 @@ struct EmulatorPage {
   @Local bufH: number = 320;
   @Local dualAreaW: number = 400;
   @Local dualAreaH: number = 600;
+  @Local speedMultiplier: number = 1;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private navPathStack: NavPathStack = new NavPathStack();
   private engine: VmrpEngineTs = new VmrpEngineTs();
@@ -521,6 +532,11 @@ struct EmulatorPage {
         const dither = (await pref.get('dither', 1)) as number;
         this.engine.setDisplayFilter(displayFilter, screenEffect, screenEffectStrength,
           brightness, contrast, saturation, subpixelRender, gammaCorrect, dither);
+        const speedMult = (await pref.get('speed_multiplier', 1)) as number;
+        if (speedMult >= 1 && speedMult <= 4) {
+          this.speedMultiplier = speedMult;
+          this.engine.setSpeedMultiplier(speedMult);
+        }
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }
@@ -613,7 +629,12 @@ struct EmulatorPage {
           scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / this.bufW, (this.dualAreaH * 0.5 - 36) / this.bufH),
           bufW: this.bufW,
           bufH: this.bufH,
-          screenVisible: this.screenVisible
+          screenVisible: this.screenVisible,
+          speedMultiplier: this.speedMultiplier,
+          onSpeedChange: (mult: number) => {
+            this.speedMultiplier = mult;
+            this.engine.setSpeedMultiplier(mult);
+          }
         })
       } else {
         Scroll() {
@@ -677,6 +698,15 @@ struct EmulatorPage {
           .maxLines(1)
           .textOverflow({ overflow: TextOverflow.Ellipsis })
           .layoutWeight(1)
+         StatusBarChip({
+           chipLabel: `${this.speedMultiplier}x`,
+           chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
+           onChipClick: () => {
+             const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
+             this.speedMultiplier = next;
+             this.engine.setSpeedMultiplier(next);
+           }
+         })
          StatusBarChip({ chipLabel: '设置', onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
         StatusBarChip({
           chipLabel: '数字',
@@ -763,6 +793,15 @@ struct EmulatorPage {
             .maxLines(1)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .layoutWeight(1)
+         StatusBarChip({
+           chipLabel: `${this.speedMultiplier}x`,
+           chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
+           onChipClick: () => {
+             const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
+             this.speedMultiplier = next;
+             this.engine.setSpeedMultiplier(next);
+           }
+         })
         }
         .width('100%')
         .padding({ left: 8, right: 8, top: 2, bottom: 2 })

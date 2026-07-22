@@ -62,6 +62,11 @@ const SCREEN_SIZE_OPTIONS: SelectOption[] = [
 const SCREEN_SIZE_W: number[] = [176, 240, 240, 320, 320, 480];
 const SCREEN_SIZE_H: number[] = [220, 320, 400, 480, 240, 800];
 const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
+const KEY_SPEED_MULT = 'speed_multiplier';
+const SPEED_OPTIONS: SelectOption[] = [
+  { value: '1x 正常' }, { value: '2x 加速' }, { value: '3x 高速' }, { value: '4x 极速' }
+];
+const SPEED_VALUES: number[] = [1, 2, 3, 4];
 
 const CARD_RADIUS = 20;
 const ROW_H = 56;
@@ -215,6 +220,7 @@ export struct SettingsPage {
   @Local gammaCorrect: number = GAMMA_CORRECT_DEFAULT;
   @Local ditherEnabled: number = DITHER_DEFAULT;
   @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
+  @Local speedMultIndex: number = 0;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -256,6 +262,9 @@ export struct SettingsPage {
       const sh = pref.getSync(KEY_SCREEN_H, 320) as number;
       const screenIdx = SCREEN_SIZE_W.indexOf(sw);
       this.screenSizeIndex = (screenIdx >= 0 && SCREEN_SIZE_H[screenIdx] === sh) ? screenIdx : SCREEN_SIZE_DEFAULT_INDEX;
+      const speedMult = pref.getSync(KEY_SPEED_MULT, 1) as number;
+      this.speedMultIndex = SPEED_VALUES.indexOf(speedMult);
+      if (this.speedMultIndex < 0) this.speedMultIndex = 0;
     } catch (_e) {
     }
   }
@@ -305,6 +314,16 @@ export struct SettingsPage {
     const pref = this.getPref();
     if (!pref) return;
     pref.putSync(KEY_MEMORY, mb);
+    pref.flush();
+  }
+
+  saveSpeedMult(index: number): void {
+    this.speedMultIndex = index;
+    const mult = SPEED_VALUES[index];
+    this.engine.setSpeedMultiplier(mult);
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_SPEED_MULT, mult);
     pref.flush();
   }
 
@@ -543,8 +562,20 @@ export struct SettingsPage {
                     }
                   })
                 }
-                SDesc({ text: '内存大小决定 MRP 可见的堆空间，需在下一次启动时生效。' })
-              }
+                 SDesc({ text: '内存大小决定 MRP 可见的堆空间，需在下一次启动时生效。' })
+                 SDivider()
+                 SRow({ label: '模拟速度' }) {
+                   SSelect({
+                     opts: SPEED_OPTIONS,
+                     selected: this.speedMultIndex,
+                     value: SPEED_OPTIONS[this.speedMultIndex].value as string,
+                     onSelect: (index: number) => {
+                       this.saveSpeedMult(index);
+                     }
+                   })
+                 }
+                 SDesc({ text: '加快游戏运行速度，1x为正常速度，4x为极速。运行中也可在模拟器页面临时切换。' })
+               }
             }
           }
         }
@@ -659,6 +690,7 @@ export struct SettingsPage {
                        this.gammaCorrect = GAMMA_CORRECT_DEFAULT;
     this.ditherEnabled = DITHER_DEFAULT;
     this.screenSizeIndex = SCREEN_SIZE_DEFAULT_INDEX;
+    this.speedMultIndex = 0;
                        this.saveDisplayFilter();
                     })
                 }

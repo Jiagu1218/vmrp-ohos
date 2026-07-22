@@ -49,6 +49,8 @@
 #define LOGE(...) OH_LOG_ERROR(LOG_APP, __VA_ARGS__)
 
 namespace {
+extern "C" void skyengine_set_speed_multiplier(int mult);
+
 // 全局状态：渲染器与音频在 XComponent 回调线程上创建/销毁。
 VmrpRenderer g_renderer;
 VmrpAudio    g_audio;
@@ -565,6 +567,16 @@ static napi_value SetExitCallback(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+static napi_value SetSpeedMultiplier(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t mult = 1;
+    napi_get_value_int32(env, args[0], &mult);
+    skyengine_set_speed_multiplier(mult);
+    return nullptr;
+}
+
 // native 触摸事件回调：PointerEvent_GetX/Y + GetAction → SendEvent（不经 ArkTS）。
 static void OnNodeTouchEvent(ArkUI_NodeEvent *event) {
     const ArkUI_UIInputEvent *input = OH_ArkUI_NodeEvent_GetInputEvent(event);
@@ -714,6 +726,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"mediaResume", nullptr, MediaResume, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setEditCallback", nullptr, SetEditCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setExitCallback", nullptr, SetExitCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setSpeedMultiplier", nullptr, SetSpeedMultiplier, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"createSurfaceNode", nullptr, CreateSurfaceNode, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);
