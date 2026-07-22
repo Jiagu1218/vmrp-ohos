@@ -32,6 +32,11 @@ cmake_install.cmake
 # qemu/configure 临时目录
 /scripts/config-temp/
 
+# 测试构建产物和临时文件
+/build-test-merge/
+/FSRCNNX_x2_*.glsl
+/upstream-issue-*.md
+
 # ===== IDE / 编辑器 =====
 .vscode/
 *.iml

@@ -781,6 +781,45 @@ endif()
 # 已移除: 用户在设置里选 1MB 内存即可。origin_mem_len = vmrp_memory_bytes(1) = 1MB,
 # 跟真机标准一致。不需要强制覆盖。
 
+# --- Patch skyengine_api.c: 模拟速度倍率 (OHOS_SPEED_MULT) ---
+# 添加 speed_multiplier 全局变量(1/2/3/4),修改 timerStart() 中 api_timer_due_ms 计算
+# 为 api_now_ms() + t / speed_multiplier,缩短等待实现加速。
+# 添加 skyengine_set_speed_multiplier() 函数,切换时唤醒 worker 线程并立即使 timer 到期。
+set(_VMRP_SPEED_C "${VMRP_SRC_DIR}/src/skyengine_api.c")
+if(EXISTS "${_VMRP_SPEED_C}")
+    file(READ "${_VMRP_SPEED_C}" _spd)
+    if(NOT _spd MATCHES "OHOS_SPEED_MULT")
+        string(REPLACE
+            "static int pending_timer_ms = 0;"
+            "static int speed_multiplier = 1; /* OHOS_SPEED_MULT: 模拟速度倍率(1/2/3/4) */\nstatic int pending_timer_ms = 0;"
+            _spd "${_spd}")
+        string(REPLACE
+            "        api_timer_due_ms = api_now_ms() + (uint64_t)t;"
+            "        api_timer_due_ms = api_now_ms() + (uint64_t)t / speed_multiplier; /* OHOS_SPEED_MULT */"
+            _spd "${_spd}")
+        string(REPLACE
+            "int32_t timerStop(void) {"
+            "/* OHOS_SPEED_MULT: 设置模拟速度倍率。切换时唤醒worker线程,\n * 若timer正在等待则设立即到期让下次tick以新倍速重调度。 */\nVMRP_EXPORT void skyengine_set_speed_multiplier(int mult) {\n    if (mult < 1) mult = 1;\n    if (mult > 4) mult = 4;\n#if VMRP_API_ASYNC_RUNNER\n    api_lock();\n    speed_multiplier = mult;\n    if (api_timer_active) {\n        api_timer_due_ms = api_now_ms();\n    }\n    api_signal();\n    api_unlock();\n#else\n    speed_multiplier = mult;\n#endif\n}\n\nint32_t timerStop(void) {"
+            _spd "${_spd}")
+        file(WRITE "${_VMRP_SPEED_C}" "${_spd}")
+        message(STATUS "[OHOS] Patched skyengine_api.c speed_multiplier + timerStart (OHOS_SPEED_MULT)")
+    endif()
+endif()
+
+# --- Patch skyengine_api.h: 声明 skyengine_set_speed_multiplier (OHOS_SPEED_DECL) ---
+set(_VMRP_SPEED_H "${VMRP_SRC_DIR}/src/include/skyengine_api.h")
+if(EXISTS "${_VMRP_SPEED_H}")
+    file(READ "${_VMRP_SPEED_H}" _spdh)
+    if(NOT _spdh MATCHES "OHOS_SPEED_DECL")
+        string(REPLACE
+            "VMRP_EXPORT void skyengine_api_audio_stop(void);"
+            "/* OHOS_SPEED_DECL: 模拟速度控制。mult=1/2/3/4,1为正常速度。 */\nVMRP_EXPORT void skyengine_api_set_speed_multiplier(int mult);\n\nVMRP_EXPORT void skyengine_api_audio_stop(void);"
+            _spdh "${_spdh}")
+        file(WRITE "${_VMRP_SPEED_H}" "${_spdh}")
+        message(STATUS "[OHOS] Patched skyengine_api.h (OHOS_SPEED_DECL)")
+    endif()
+endif()
+
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
 # --- Patch skyengine-shared OUTPUT_NAME: 保持输出 libvmrp.so 而非 libskyengine.so ---

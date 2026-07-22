@@ -1,6 +1,11 @@
 {
   "routerMap": [
     {
+      "name": "Emulator",
+      "pageSourceFile": "src/main/ets/pages/Emulator.ets",
+      "buildFunction": "EmulatorBuilder"
+    },
+    {
       "name": "Settings",
       "pageSourceFile": "src/main/ets/pages/Settings.ets",
       "buildFunction": "SettingsBuilder"

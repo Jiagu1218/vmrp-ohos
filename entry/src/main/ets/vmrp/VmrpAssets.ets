@@ -175,6 +175,25 @@ export class VmrpAssets {
     fs.rmdirSync(dir);
   }
 
+  // 扫描 mythroad 根目录下所有 .mrp 文件（仅根层，不递归子目录）。
+  static listMrpFiles(ctx: common.Context): string[] {
+    const mythroadDir = VmrpAssets.getMythroadDir(ctx);
+    const result: string[] = [];
+    try {
+      if (!fs.accessSync(mythroadDir)) return result;
+      const names: string[] = fs.listFileSync(mythroadDir);
+      for (const name of names) {
+        if (!name.toLowerCase().endsWith('.mrp')) continue;
+        const child = `${mythroadDir}/${name}`;
+        try {
+          if (!fs.statSync(child).isFile()) continue;
+        } catch (_e) { continue; }
+        result.push(child);
+      }
+    } catch (_e) {}
+    return result;
+  }
+
   // 把用户选择的 MRP 文件复制到 mythroad 目录，返回目标路径。
   static async importMrp(ctx: common.Context, srcUri: string): Promise<string> {
     const mythroadDir = VmrpAssets.getMythroadDir(ctx);

@@ -1,961 +1,525 @@
-import { picker } from '@kit.CoreFileKit';
-import { abilityAccessCtrl } from '@kit.AbilityKit';
-import { NodeContent, ComponentContent, AppStorageV2, display } from '@kit.ArkUI';
-import { preferences } from '@kit.ArkData';
+import { AppStorageV2, LengthMetrics } from '@kit.ArkUI';
 import {
   HdsNavigation, HdsNavigationTitleMode,
   ScrollEffectType, hdsMaterial
 } from '@kit.UIDesignKit';
-import {
-  VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
-  MR_KEY_UP, MR_KEY_DOWN, MR_KEY_LEFT, MR_KEY_RIGHT,
-  MR_KEY_SELECT, MR_KEY_SOFTLEFT, MR_KEY_SOFTRIGHT,
-  MR_KEY_STAR, MR_KEY_POUND
-} from '../vmrp/VmrpEngine';
+import { i18n } from '@kit.LocalizationKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
+import { MrpInfoData, MrpInfo } from '../vmrp/MrpInfo';
 import { gAbilityContext } from '../entryability/EntryAbility';
 import { AvoidData } from '../common/AvoidData';
-import { HapticManager } from '../common/HapticManager';
 import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
-import { GlassPanel } from '../common/GlassPanel';
+import { HapticManager } from '../common/HapticManager';
 
-interface ScreenShellParam {
-  isTop: boolean;
+const CARD_RADIUS = 20;
+const DELETE_TRANSITION = TransitionEffect.OPACITY
+  .combine(TransitionEffect.scale({ x: 0.8, y: 0.8 }))
+  .animation({ duration: 300, curve: Curve.EaseInOut });
+
+interface MrpGroup {
+  letter: string;
+  items: MrpInfoData[];
 }
 
-interface GridRowColumns {
-  sm: number;
-  md: number;
-  lg: number;
+const latnTransliterator: i18n.Transliterator = i18n.Transliterator.getInstance('Any-Latn');
+const asciiTransliterator: i18n.Transliterator = i18n.Transliterator.getInstance('Latin-ASCII');
+
+function emptyMrpInfoData(): MrpInfoData {
+  const d: MrpInfoData = {
+    filename: '', appname: '', appid: 0, version: 0,
+    vendor: '', description: '', fileSize: 0, filePath: '', mtime: 0
+  };
+  return d;
 }
 
-interface GridRowGutter {
-  x: number;
-  y: number;
+function getPinyinInitial(name: string): string {
+  if (name.length === 0) return '#';
+  const ch = name.charAt(0).toUpperCase();
+  if (ch >= 'A' && ch <= 'Z') return ch;
+  try {
+    const latn = latnTransliterator.transform(name.charAt(0));
+    const ascii = asciiTransliterator.transform(latn);
+    const letter = ascii.charAt(0).toUpperCase();
+    if (letter >= 'A' && letter <= 'Z') return letter;
+  } catch (_e) {}
+  return '#';
 }
 
-interface GridColSpan {
-  sm: number;
-  md: number;
-  lg: number;
+function groupByLetter(list: MrpInfoData[]): MrpGroup[] {
+  const map: Record<string, MrpInfoData[]> = {};
+  const order: string[] = [];
+  for (const item of list) {
+    const letter = getPinyinInitial(item.appname);
+    if (!map[letter]) {
+      map[letter] = [];
+      order.push(letter);
+    }
+    map[letter].push(item);
+  }
+  order.sort();
+  const groups: MrpGroup[] = [];
+  for (const letter of order) {
+    groups.push({ letter: letter, items: map[letter] });
+  }
+  return groups;
 }
 
-interface GridRowBreakpoints {
-  value: string[];
-  reference: BreakpointsReference;
+function buildIndexArray(groups: MrpGroup[]): string[] {
+  const arr: string[] = [];
+  for (const g of groups) {
+    arr.push(g.letter);
+  }
+  if (arr.length === 0) return ['#'];
+  return arr;
 }
-
-interface EditDialogContentBuilderParams {
-  editText: string;
-  onTextChange: (v: string) => void;
-  onSubmit: (text: string) => void;
-  onCancel: () => void;
-}
-
-interface EditDialogOptions {
-  alignment: DialogAlignment;
-  autoCancel: boolean;
-}
-
-const SHELL_COLOR = '#1A1A2E';
-const SCREEN_BG = '#000000';
-const DPAD_BG = '#16213E';
-const DPAD_ARROW = '#E94560';
-const SOFTKEY_BG = '#0F3460';
-const NUMKEY_BG = '#1A1A2E';
-const NUMKEY_TEXT = '#A7A7C4';
-const STATUS_TEXT = '#8888AA';
-const RUN_DOT = '#4ADE80';
-const SHELL_BORDER = '#2A2A4E';
-const ACCENT_COLOR = '#E94560';
 
 @ComponentV2
-struct EditDialogContent {
-  @Param editText: string = '';
-  @Event onTextChange: (v: string) => void = () => {};
-  @Event onSubmit: (text: string) => void = () => {};
-  @Event onCancel: () => void = () => {};
-  @Local private inputText: string = '';
-
-  aboutToAppear(): void {
-    this.inputText = this.editText;
-  }
+struct MrpCard {
+  @Param info: MrpInfoData = emptyMrpInfoData();
+  @Param onLaunch: (item: MrpInfoData) => void = () => {};
 
   build() {
     Column() {
-      Text('请输入文字')
-        .fontSize(16)
-        .fontColor('#CCCCCC')
-        .margin({ top: 16, bottom: 10 })
-      TextArea({ text: this.inputText })
-        .onChange((v: string) => { this.inputText = v; })
-        .width('90%')
-        .layoutWeight(1)
-        .fontSize(16)
-        .backgroundColor('#1A1A2E')
-        .fontColor('#FFFFFF')
-      Row() {
-        Button('取消')
-          .width(100)
-          .height(40)
-          .backgroundColor('#333355')
-          .fontColor('#CCCCCC')
-          .onClick(() => {
-            this.onCancel();
-          })
-        Button('确定')
-          .width(100)
-          .height(40)
-          .backgroundColor(ACCENT_COLOR)
-          .fontColor('#FFFFFF')
-          .onClick(() => {
-            this.onSubmit(this.inputText);
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.SpaceEvenly)
-      .margin({ top: 12, bottom: 16 })
-    }
-    .width('82%')
-    .height(340)
-    .backgroundColor(SHELL_COLOR)
-    .borderRadius(16)
-  }
-}
-
-@ComponentV2
-struct DPadBtn {
-  @Param label: string = '';
-  @Param labelFontSize: number = 14;
-  @Param labelFontColor: ResourceColor = DPAD_ARROW;
-  @Param btnSize: number = 44;
-  @Param isRound: boolean = false;
-  @Param keyVal: number = 0;
-  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-
-  build() {
-    Column() {
-      ImmersiveLightWrapper({ radius: this.isRound ? this.btnSize / 2 : 8, lightHeight: 80 }) {
-        Stack() {
-          Text(this.label)
-            .fontSize(this.labelFontSize)
-            .fontColor(this.labelFontColor)
-            .fontWeight(FontWeight.Bold)
-        }
-        .width(this.btnSize)
-        .height(this.btnSize)
-        .borderRadius(this.isRound ? this.btnSize / 2 : 8)
-        .backgroundColor(Color.Transparent)
-      }
-    }
-    .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
-  }
-}
-
-@ComponentV2
-struct SoftKeyBtn {
-  @Param chipLabel: string = '';
-  @Param keyVal: number = 0;
-  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param softKeyH: number = 28;
-
-  build() {
-    Column() {
-      ImmersiveLightWrapper({ radius: this.softKeyH / 2, lightHeight: 80 }) {
-        Stack() {
-          Text(this.chipLabel)
-            .fontSize(12)
-            .fontColor('#CCCCCC')
-            .fontWeight(FontWeight.Medium)
-        }
-        .height(this.softKeyH)
-        .padding({ left: 16, right: 16 })
-        .backgroundColor(Color.Transparent)
-      }
-    }
-    .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
-  }
-}
-
-@ComponentV2
-struct DPadWithFunc {
-  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param dpadSize: number = 130;
-  @Param softKeyH: number = 28;
-
-  build() {
-    Column({ space: 14 }) {
-      Row({ space: 12 }) {
-        SoftKeyBtn({ chipLabel: '左软', keyVal: MR_KEY_SOFTLEFT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
-
-        DPadBtn({
-          label: '▲', labelFontSize: this.dpadSize * 0.2, labelFontColor: DPAD_ARROW,
-          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_UP,
-          onKeyTouch: this.onKeyTouch
-        })
-
-        SoftKeyBtn({ chipLabel: '右软', keyVal: MR_KEY_SOFTRIGHT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
-      }
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-
-      Row({ space: 16 }) {
-        DPadBtn({
-          label: '◀', labelFontSize: this.dpadSize * 0.17, labelFontColor: DPAD_ARROW,
-          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_LEFT,
-          onKeyTouch: this.onKeyTouch
-        })
-
-        DPadBtn({
-          label: 'OK', labelFontSize: 14, labelFontColor: '#FFFFFF',
-          btnSize: this.dpadSize * 0.28,
-          isRound: true, keyVal: MR_KEY_SELECT, onKeyTouch: this.onKeyTouch
-        })
-
-        DPadBtn({
-          label: '▶', labelFontSize: this.dpadSize * 0.17, labelFontColor: DPAD_ARROW,
-          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_RIGHT,
-          onKeyTouch: this.onKeyTouch
-        })
-      }
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-
-      Row() {
-        DPadBtn({
-          label: '▼', labelFontSize: this.dpadSize * 0.2, labelFontColor: DPAD_ARROW,
-          btnSize: this.dpadSize * 0.36, keyVal: MR_KEY_DOWN,
-          onKeyTouch: this.onKeyTouch
-        })
-      }
-      .justifyContent(FlexAlign.Center)
-    }
-    .alignItems(HorizontalAlign.Center)
-  }
-}
-
-@ComponentV2
-struct NumPadItem {
-  @Param itemKey: number = 0;
-  @Param btnSizeVal: number = 36;
-  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-
-  build() {
-    Column() {
-      ImmersiveLightWrapper({ radius: this.btnSizeVal / 2, lightHeight: 60 }) {
-        Stack() {
-          Text(`${this.itemKey === MR_KEY_STAR ? '✱' : this.itemKey === MR_KEY_POUND ? '#' : this.itemKey}`)
-            .fontSize(this.btnSizeVal * 0.4)
-            .fontColor(NUMKEY_TEXT)
-            .fontWeight(FontWeight.Medium)
-        }
-        .width(this.btnSizeVal)
-        .height(this.btnSizeVal)
-        .backgroundColor(Color.Transparent)
-      }
-    }
-    .onTouch((e: TouchEvent) => this.onKeyTouch(this.itemKey, e))
-  }
-}
-
-@ComponentV2
-struct NumPad {
-  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param btnSizeVal: number = 36;
-
-  build() {
-    Grid() {
-      ForEach([1, 2, 3, 4, 5, 6, 7, 8, 9, MR_KEY_STAR, 0, MR_KEY_POUND], (k: number) => {
-        GridItem() {
-          NumPadItem({ itemKey: k, btnSizeVal: this.btnSizeVal, onKeyTouch: this.onKeyTouch })
-        }
-      }, (k: number) => `num-${k}`)
-    }
-    .columnsTemplate('1fr 1fr 1fr')
-    .rowsTemplate('1fr 1fr 1fr 1fr')
-    .columnsGap(10)
-    .rowsGap(10)
-    .width('45%')
-    .height(this.btnSizeVal * 4 + 50)
-  }
-}
-
-@ComponentV2
-struct TopScreen {
-  @Param nodeContent: NodeContent = new NodeContent();
-  @Param statusText: string = '';
-  @Param runningState: boolean = false;
-  @Param scaleVal: number = 1;
-  @Param bufW: number = 240;
-  @Param bufH: number = 320;
-
-  build() {
-    Column() {
-      Stack() {
-        Stack() {
-          Stack() {
-            ContentSlot(this.nodeContent)
+      ImmersiveLightWrapper({
+        radius: CARD_RADIUS,
+        lightHeight: 80,
+        bgColor: $r('app.color.settings_card_bg'),
+        blurRadius: 30
+      }) {
+        Column() {
+          Row() {
+            Text(this.info.appname)
+              .fontSize(17)
+              .fontColor($r('app.color.settings_about_title'))
+              .fontWeight(FontWeight.Bold)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            Text(`v${this.info.version}`)
+              .fontSize(12)
+              .fontColor($r('app.color.settings_desc_color'))
+              .margin({ left: 8 })
           }
-          .width(this.bufW)
-          .height(this.bufH)
-          .backgroundColor(SCREEN_BG)
-          .borderRadius(6)
-          .clip(true)
-          .scale({ x: this.scaleVal, y: this.scaleVal })
-          .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+          .width('100%')
+
+          if (this.info.vendor.length > 0) {
+            Text(this.info.vendor)
+              .fontSize(12)
+              .fontColor($r('app.color.settings_desc_color'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .margin({ top: 4 })
+          }
+
+          if (this.info.description.length > 0) {
+            Text(this.info.description)
+              .fontSize(13)
+              .fontColor($r('app.color.settings_desc_color'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .width('100%')
+              .margin({ top: 6 })
+          }
+
+          Row() {
+            Text(this.info.filename)
+              .fontSize(12)
+              .fontColor($r('app.color.settings_desc_color'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            Text(this.getBaseName(this.info.filePath))
+              .fontSize(12)
+              .fontColor($r('app.color.settings_desc_color'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ left: 12 })
+            Text(this.formatSize(this.info.fileSize))
+              .fontSize(12)
+              .fontColor($r('app.color.settings_desc_color'))
+              .margin({ left: 12 })
+          }
+          .width('100%')
+          .margin({ top: 8 })
         }
-        .width(this.bufW * this.scaleVal)
-        .height(this.bufH * this.scaleVal)
-        .alignContent(Alignment.Center)
-        .clip(true)
+        .padding(16)
+        .width('100%')
       }
-      .width('100%')
-
-      Row() {
-        Row()
-          .width(6)
-          .height(6)
-          .borderRadius(3)
-          .backgroundColor(this.runningState ? RUN_DOT : '#555577')
-          .margin({ right: 6 })
-        Text(this.statusText)
-          .fontSize(10)
-          .fontColor(STATUS_TEXT)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-      }
-      .width('100%')
-      .padding({ left: 8, right: 8, top: 4, bottom: 2 })
-      .constraintSize({ maxWidth: 240 * this.scaleVal + 16 })
-    }
-    .alignItems(HorizontalAlign.Center)
-  }
-}
-
-@ComponentV2
-struct ActionChip {
-  @Param chipLabel: string = '';
-  @Param onChipClick: () => void = () => {};
-
-  build() {
-    Column() {
-      ImmersiveLightWrapper({ radius: 13, lightHeight: 80 }) {
-        Stack() {
-          Text(this.chipLabel)
-            .fontSize(11)
-            .fontColor('#CCCCCC')
-        }
-        .height(26)
-        .padding({ left: 14, right: 14 })
-        .backgroundColor(Color.Transparent)
-      }
-    }
-    .onClick(() => { HapticManager.performClick(); this.onChipClick(); })
-  }
-}
-
-@ComponentV2
-struct StatusBarChip {
-  @Param chipLabel: string = '';
-  @Param chipFontColor: ResourceColor = NUMKEY_TEXT;
-  @Param chipBgColor: ResourceColor = NUMKEY_BG;
-  @Param onChipClick: () => void = () => {};
-
-  build() {
-    Column() {
-      ImmersiveLightWrapper({ radius: 9, lightHeight: 60 }) {
-        Stack() {
-          Text(this.chipLabel)
-            .fontSize(9)
-            .fontColor(this.chipFontColor)
-        }
-        .height(18)
-        .padding({ left: 6, right: 6 })
-        .backgroundColor(Color.Transparent)
-      }
-    }
-    .margin({ right: 4 })
-    .onClick(() => { HapticManager.performClick(); this.onChipClick(); })
-  }
-}
-
-@ComponentV2
-struct BottomControls {
-  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param onPickMrp: () => void = () => {};
-  @Param onStartDefault: () => void = () => {};
-  @Param runningState: boolean = false;
-  @Param dpadSizeVal: number = 110;
-  @Param btnSizeVal: number = 30;
-  @Param showNumPadVal: boolean = true;
-
-  build() {
-    Column() {
-      DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: this.dpadSizeVal })
-
-      if (this.showNumPadVal) {
-        NumPad({ onKeyTouch: this.onKeyTouch, btnSizeVal: this.btnSizeVal })
-      }
-
-      Row({ space: 8 }) {
-        ActionChip({ chipLabel: '选择MRP', onChipClick: this.onPickMrp })
-        ActionChip({ chipLabel: '启动默认', onChipClick: this.onStartDefault })
-      }
-      .padding({ top: 4, bottom: 4 })
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Center)
-    .justifyContent(FlexAlign.Center)
-    .padding({ left: 8, right: 8, top: 4, bottom: 8 })
+    .onClick(() => {
+      HapticManager.performClick();
+      this.onLaunch(this.info);
+    })
   }
-}
 
-@ComponentV2
-struct PhoneControls {
-  @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
-  @Param runningState: boolean = false;
-  @Param showNumPadVal: boolean = true;
+  private formatSize(bytes: number): string {
+    if (bytes <= 0) return '';
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  }
 
-  build() {
-    Column({ space: 6 }) {
-      Row() {
-        DPadWithFunc({ onKeyTouch: this.onKeyTouch, dpadSize: 110 })
-
-        if (this.showNumPadVal) {
-          NumPad({ onKeyTouch: this.onKeyTouch, btnSizeVal: 30 })
-        }
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .alignItems(VerticalAlign.Center)
-    }
-    .width('100%')
-    .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+  private getBaseName(path: string): string {
+    const slash = path.lastIndexOf('/');
+    return slash >= 0 ? path.substring(slash + 1) : path;
   }
 }
 
 @Entry
 @ComponentV2
 struct Index {
-  @Local statusText: string = '未启动';
-  @Local runningState: boolean = false;
-  @Local editText: string = '';
-  @Local currentBp: string = 'sm';
-  @Local showControls: boolean = true;
-  @Local showNumPadVal: boolean = true;
-  @Local isFoldable: boolean = false;
-  @Local foldStatus: display.FoldStatus = display.FoldStatus.FOLD_STATUS_UNKNOWN;
-  @Local screenAreaW: number = 240;
-  @Local screenAreaH: number = 320;
-  @Local bufW: number = 240;
-  @Local bufH: number = 320;
-  @Local dualAreaW: number = 400;
-  @Local dualAreaH: number = 600;
-  private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
+  @Local mrpList: MrpInfoData[] = [];
+  @Local groupedItems: MrpGroup[] = [];
+  @Local indexArray: string[] = ['#'];
+  @Local isScanning: boolean = false;
+  @Local sortMode: number = 0;
+  @Local selectedIndex: number = 0;
+  @Local searchMode: boolean = false;
+  @Local searchQuery: string = '';
+  @Local listVersion: number = 0;
   private navPathStack: NavPathStack = new NavPathStack();
-  private engine: VmrpEngineTs = new VmrpEngineTs();
-  private pressedKeys: Set<number> = new Set();
-  private nodeContent: NodeContent = new NodeContent();
-  private gridColumns: GridRowColumns = { sm: 1, md: 2, lg: 2 };
-  private gridGutter: GridRowGutter = { x: 8, y: 6 };
-  private gridBreakpoints: GridRowBreakpoints = {
-    value: ['520vp', '840vp'],
-    reference: BreakpointsReference.WindowSize
-  };
-  private topSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
-  private bottomSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
+  private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
+  private listScroller: Scroller = new Scroller();
+  private rawList: MrpInfoData[] = [];
 
   aboutToAppear(): void {
+    this.scanMrpFiles();
+  }
+
+  onPageShow(): void {
+    this.scanMrpFiles();
+  }
+
+  private scanMrpFiles(): void {
+    const ctx = gAbilityContext;
+    if (!ctx) return;
+    this.isScanning = true;
     try {
-      const d = display.getDefaultDisplaySync();
-      const wVP = this.getUIContext().px2vp(d.width);
-      const hVP = this.getUIContext().px2vp(d.height);
-      this.isFoldable = display.isFoldable();
-      if (this.isFoldable) {
-        this.foldStatus = display.getFoldStatus();
+      const files = VmrpAssets.listMrpFiles(ctx);
+      const list: MrpInfoData[] = [];
+      for (const filePath of files) {
+        const info = MrpInfo.parse(filePath);
+        if (info !== null) {
+          list.push(info);
+        }
       }
-      if (wVP >= 840) {
-        this.currentBp = 'lg';
-      } else if (wVP >= 520) {
-        this.currentBp = 'md';
-      } else {
-        this.currentBp = 'sm';
-      }
-      this.screenAreaW = wVP;
-      this.screenAreaH = hVP;
-      this.dualAreaW = wVP / 2 - 4;
-      this.dualAreaH = hVP;
-      if (this.isFoldable) {
-        display.on('foldStatusChange', (status: display.FoldStatus) => {
-          this.foldStatus = status;
-        });
-      }
+      this.rawList = list;
+      this.applySort();
     } catch (_e) {
-      this.currentBp = 'sm';
+      this.rawList = [];
+      this.mrpList = [];
     }
-    this.bootstrap();
+    this.isScanning = false;
   }
 
-  async bootstrap(): Promise<void> {
-    try {
-      this.statusText = '正在加载...';
-      await this.engine.init();
-      const ctx = gAbilityContext ?? this.getUIContext().getHostContext();
-      if (!ctx) {
-        this.statusText = '初始化失败';
-        return;
-      }
-      this.statusText = '准备资源...';
-      const workDir = await VmrpAssets.ensureRuntime(ctx);
-      let ok = this.engine.loadLib('libvmrp.so');
-      if (!ok) {
-        ok = this.engine.loadLib(`${ctx.bundleCodeDir}/lib/arm64/libvmrp.so`);
-      }
-      if (!ok) {
-        this.statusText = '加载失败';
-        return;
-      }
-      this.engine.setScreen(240, 320);
-      try {
-        const pref = await preferences.getPreferences(ctx, 'vmrp_settings');
-        const mem = (await pref.get('memory_mb', 1)) as number;
-        this.engine.setMemory(mem);
-        const sensitivity = (await pref.get('motion_sensitivity', 1.0)) as number;
-        this.engine.setMotionSensitivity(sensitivity);
-        const shakeIntensity = (await pref.get('shake_intensity', 1)) as number;
-        this.engine.setShakeIntensity(shakeIntensity);
-        const displayFilter = (await pref.get('display_filter', 0)) as number;
-        const screenEffect = (await pref.get('screen_effect', 0)) as number;
-        const screenEffectStrength = (await pref.get('screen_effect_strength', 0.5)) as number;
-        const brightness = (await pref.get('brightness', 0.0)) as number;
-        const contrast = (await pref.get('contrast', 1.0)) as number;
-        const saturation = (await pref.get('saturation', 1.0)) as number;
-        const subpixelRender = (await pref.get('subpixel_render', 0)) as number;
-        const gammaCorrect = (await pref.get('gamma_correct', 1)) as number;
-        const dither = (await pref.get('dither', 1)) as number;
-        this.engine.setDisplayFilter(displayFilter, screenEffect, screenEffectStrength,
-          brightness, contrast, saturation, subpixelRender, gammaCorrect, dither);
-        await HapticManager.loadPref(ctx);
-      } catch (_e) {
-      }
-      try {
-        const atManager = abilityAccessCtrl.createAtManager();
-        await atManager.requestPermissionsFromUser(ctx, ['ohos.permission.ACCELEROMETER']);
-      } catch (_e) {
-      }
-      this.engine.setWorkDir(workDir);
-      this.engine.setEditCallback((editText: string) => {
-        this.editText = editText;
-        this.openEditDialog();
+  private applySort(): void {
+    let list = [...this.rawList];
+    if (this.searchQuery.length > 0) {
+      const q = this.searchQuery.toLowerCase();
+      list = list.filter((item: MrpInfoData) => {
+        return item.appname.toLowerCase().indexOf(q) >= 0 ||
+          item.vendor.toLowerCase().indexOf(q) >= 0 ||
+          item.filename.toLowerCase().indexOf(q) >= 0;
       });
-      this.engine.createSurfaceNode(this.nodeContent);
-      this.statusText = '启动中...';
-      await this.startDefault();
-    } catch (e) {
-      const err = e as Error;
-      this.statusText = `失败: ${err?.message ?? String(e)}`;
+    }
+    if (this.sortMode === 0) {
+      list.sort((a: MrpInfoData, b: MrpInfoData) => b.mtime - a.mtime);
+    } else {
+      list.sort((a: MrpInfoData, b: MrpInfoData) => {
+        const na = a.appname.toLowerCase();
+        const nb = b.appname.toLowerCase();
+        if (na < nb) return -1;
+        if (na > nb) return 1;
+        return 0;
+      });
+    }
+    this.mrpList = list;
+    this.rebuildGroups();
+    this.listVersion++;
+  }
+
+  private rebuildGroups(): void {
+    if (this.sortMode === 1 && this.searchQuery.length === 0) {
+      this.groupedItems = groupByLetter(this.mrpList);
+      this.indexArray = buildIndexArray(this.groupedItems);
+    } else {
+      this.groupedItems = [];
+      this.indexArray = ['#'];
     }
   }
 
-  private openEditDialog(): void {
-    const uiCtx = this.getUIContext();
-    const prompt = uiCtx.getPromptAction();
-    const params: EditDialogContentBuilderParams = {
-      editText: this.editText,
-      onTextChange: (_v: string) => {},
-      onSubmit: (t: string) => {
-        this.engine.submitEdit(t);
-        prompt.closeCustomDialog(contentNode);
-      },
-      onCancel: () => {
-        this.engine.cancelEdit();
-        prompt.closeCustomDialog(contentNode);
-      }
-    };
-    const contentNode = new ComponentContent(uiCtx, wrapBuilder(EditDialogContentBuilder), params);
-    const opts: EditDialogOptions = {
-      alignment: DialogAlignment.Center,
-      autoCancel: false
-    };
-    prompt.openCustomDialog(contentNode, opts);
+  private toggleSort(): void {
+    this.sortMode = this.sortMode === 0 ? 1 : 0;
+    this.applySort();
   }
 
-  async startDefault(): Promise<void> {
+  private toggleSearch(): void {
+    this.searchMode = !this.searchMode;
+    if (!this.searchMode) {
+      this.searchQuery = '';
+      this.applySort();
+    }
+  }
+
+  private onSearchInput(query: string): void {
+    this.searchQuery = query;
+    this.applySort();
+  }
+
+  private launchMrp(item: MrpInfoData): void {
+    this.navPathStack.pushPathByName('Emulator', item.filePath);
+  }
+
+  private openSettings(): void {
+    this.navPathStack.pushPathByName('Settings', null);
+  }
+
+  private deleteMrp(item: MrpInfoData): void {
+    HapticManager.performClick();
     try {
-      const ctx = this.getUIContext().getHostContext();
-      if (!ctx) {
-        this.statusText = '无法获取上下文';
-        return;
-      }
-      const workDir = await VmrpAssets.ensureRuntime(ctx);
-      const dst = `${VmrpAssets.getMythroadDir(ctx)}/dsm_gm.mrp`;
-      this.statusText = '启动中';
-      const r = this.engine.start(dst, 'start.mr', '_dsm');
-      this.runningState = this.engine.isRunning();
-      this.statusText = `${r}, ${this.runningState ? '运行中' : '已停止'}`;
-    } catch (e) {
-      const err = e as Error;
-      this.statusText = `失败: ${err?.message ?? String(e)}`;
+      fs.unlinkSync(item.filePath);
+    } catch (_e) {
+      return;
     }
-  }
-
-  async pickAndStart(): Promise<void> {
-    try {
-      const opt = new picker.DocumentSelectOptions();
-      opt.maxSelectNumber = 1;
-      opt.fileSuffixFilters = ['.mrp'];
-      const docPicker = new picker.DocumentViewPicker();
-      const uris = await docPicker.select(opt);
-      if (!uris || uris.length === 0) return;
-      const ctx = this.getUIContext().getHostContext();
-      if (!ctx) {
-        this.statusText = '无法获取上下文';
-        return;
-      }
-      const dst = await VmrpAssets.importMrp(ctx, uris[0]);
-      this.statusText = `启动: ${dst}`;
-      const r = this.engine.start(dst, 'start.mr', '_dsm');
-      this.runningState = this.engine.isRunning();
-      this.statusText = `${r}, ${this.runningState ? '运行中' : '已停止'}`;
-    } catch (e) {
-      this.statusText = `选择失败: ${JSON.stringify(e)}`;
-    }
-  }
-
-  onKeyTouch(key: number, event: TouchEvent): void {
-    if (event.type === TouchType.Down) {
-      if (!this.pressedKeys.has(key)) {
-        this.pressedKeys.add(key);
-        this.engine.sendKey(VMRP_KEY_PRESS, key);
-        HapticManager.performClick();
-      }
-    } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-      if (this.pressedKeys.has(key)) {
-        this.pressedKeys.delete(key);
-        this.engine.sendKey(VMRP_KEY_RELEASE, key);
-      }
-    }
+    this.rawList = this.rawList.filter((i: MrpInfoData) => i.filePath !== item.filePath);
+    this.getUIContext()?.animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+      this.applySort();
+    });
   }
 
   @Builder
-  screenShell($$: ScreenShellParam) {
-    Column() {
-      if ($$.isTop) {
-        TopScreen({
-          nodeContent: this.nodeContent,
-          statusText: this.statusText,
-          runningState: this.runningState,
-          scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / this.bufW, (this.dualAreaH * 0.5 - 36) / this.bufH),
-          bufW: this.bufW,
-          bufH: this.bufH
-        })
-      } else {
-        Scroll() {
-          Column() {
-            BottomControls({
-              onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
-              onPickMrp: () => this.pickAndStart(),
-              onStartDefault: () => this.startDefault(),
-              runningState: this.runningState,
-              dpadSizeVal: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
-              btnSizeVal: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36),
-              showNumPadVal: this.showNumPadVal
-            })
-          }
-        }
-        .scrollBar(BarState.Off)
-        .width('100%')
-        .height('100%')
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .alignItems(HorizontalAlign.Center)
-    .justifyContent(FlexAlign.Center)
-  }
-
-  @Builder
-  phoneLayout() {
-    Column() {
-      Stack() {
-        Stack() {
-          ContentSlot(this.nodeContent)
-        }
-        .width(this.bufW)
-        .height(this.bufH)
-        .backgroundColor(SCREEN_BG)
-        .scale({
-          x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH),
-          y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH)
-        })
-      }
-      .width('100%')
-      .layoutWeight(1)
-      .alignContent(Alignment.Center)
-      .clip(true)
-      .onAreaChange((_old: Area, newVal: Area) => {
-        this.screenAreaW = newVal.width as number;
-        this.screenAreaH = newVal.height as number;
-      })
-
-      Row() {
-        Row()
-          .width(6)
-          .height(6)
-          .borderRadius(3)
-          .backgroundColor(this.runningState ? RUN_DOT : '#555577')
-          .margin({ right: 6 })
-        Text(this.statusText)
-          .fontSize(10)
-          .fontColor(STATUS_TEXT)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        StatusBarChip({ chipLabel: 'MRP', onChipClick: () => this.pickAndStart() })
-        StatusBarChip({ chipLabel: '默认', onChipClick: () => this.startDefault() })
-        StatusBarChip({ chipLabel: '设置', onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
-        StatusBarChip({
-          chipLabel: '数字',
-          chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
-          onChipClick: () => { this.showNumPadVal = !this.showNumPadVal; }
-        })
-        StatusBarChip({
-          chipLabel: this.showControls ? '收起' : '按键',
-          chipFontColor: DPAD_ARROW,
-          onChipClick: () => { this.showControls = !this.showControls; }
-        })
-      }
-      .width('100%')
-      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
-
-      if (this.showControls) {
-        Column() {
-          GlassPanel({
-            blurRadius: 30,
-            panelBorderRadius: 16,
-            panelBorderColor: SHELL_BORDER,
-            panelBgColor: '#0A0A1ECC',
-            panelBorderWidth: 1
-          }) {
-            Scroll() {
-              Column() {
-                PhoneControls({
-                  onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
-                  runningState: this.runningState,
-                  showNumPadVal: this.showNumPadVal
-                })
-              }
-              .width('100%')
-              .padding({ top: 4, bottom: 4 })
-            }
-            .constraintSize({ maxHeight: '46%' })
-            .width('100%')
-            .scrollBar(BarState.Off)
-          }
-        }
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .padding({ bottom: this.avoidData.bottomVp })
-  }
-
-  @Builder
-  foldExpandedLayout() {
-    Column() {
+  swipeDeleteButton(item: MrpInfoData) {
+    Row() {
       Column() {
-        Stack() {
-          Stack() {
-            ContentSlot(this.nodeContent)
-          }
-          .width(this.bufW)
-          .height(this.bufH)
-          .backgroundColor(SCREEN_BG)
-          .borderRadius(6)
-          .clip(true)
-          .scale({
-            x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH),
-            y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH)
-          })
-          .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
-        }
-        .width('100%')
-        .height('50%')
-        .alignContent(Alignment.Center)
-
-        Row() {
-          Row()
-            .width(6)
-            .height(6)
-            .borderRadius(3)
-            .backgroundColor(this.runningState ? RUN_DOT : '#555577')
-            .margin({ right: 6 })
-          Text(this.statusText)
-            .fontSize(10)
-            .fontColor(STATUS_TEXT)
-            .maxLines(1)
-            .textOverflow({ overflow: TextOverflow.Ellipsis })
-            .layoutWeight(1)
-        }
-        .width('100%')
-        .padding({ left: 8, right: 8, top: 2, bottom: 2 })
+        SymbolGlyph($r('sys.symbol.trash'))
+          .fontSize(18)
+          .fontColor([Color.White])
       }
-      .width('100%')
-      .height('50%')
-      .alignItems(HorizontalAlign.Center)
+      .width(44)
+      .height(44)
+      .borderRadius(22)
       .justifyContent(FlexAlign.Center)
-      .onAreaChange((_old: Area, newVal: Area) => {
-        this.screenAreaW = newVal.width as number;
-        this.screenAreaH = newVal.height as number;
-      })
-
-      Column() {
-        GlassPanel({
-          blurRadius: 30,
-          panelBorderRadius: 16,
-          panelBorderColor: SHELL_BORDER,
-          panelBgColor: '#0A0A1ECC',
-          panelBorderWidth: 1
-        }) {
-          Scroll() {
-            Column() {
-              Row() {
-                DPadWithFunc({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), dpadSize: Math.min(this.screenAreaW * 0.22, 120) })
-
-                if (this.showNumPadVal) {
-                  NumPad({ onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e), btnSizeVal: Math.min(this.screenAreaW * 0.07, 34) })
-                }
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.Center)
-              .alignItems(VerticalAlign.Center)
-
-              Row({ space: 8 }) {
-                ActionChip({ chipLabel: '选择MRP', onChipClick: () => this.pickAndStart() })
-                ActionChip({ chipLabel: '启动默认', onChipClick: () => this.startDefault() })
-                Column() {
-                  ImmersiveLightWrapper({ radius: 13, lightHeight: 80 }) {
-                    Stack() {
-                      Text(this.showNumPadVal ? '收起数字' : '数字')
-                        .fontSize(11)
-                        .fontColor(this.showNumPadVal ? DPAD_ARROW : '#CCCCCC')
-                    }
-                    .height(26)
-                    .padding({ left: 14, right: 14 })
-                    .backgroundColor(Color.Transparent)
-                  }
-                }
-                .onClick(() => { HapticManager.performClick(); this.showNumPadVal = !this.showNumPadVal; })
-              }
-              .padding({ top: 4, bottom: 4 })
-            }
-            .width('100%')
-            .alignItems(HorizontalAlign.Center)
-            .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-          }
-          .width('100%')
-          .layoutWeight(1)
-          .scrollBar(BarState.Off)
-        }
-      }
-      .width('100%')
+      .alignItems(HorizontalAlign.Center)
+      .backgroundColor($r('app.color.accent_color'))
+      .onClick(() => this.deleteMrp(item))
     }
-    .width('100%')
+    .width(70)
     .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
-  dualScreenLayout() {
-    GridRow({
-      columns: this.gridColumns,
-      gutter: this.gridGutter,
-      breakpoints: this.gridBreakpoints
-    }) {
-      GridCol({ span: this.topSpan }) {
-        Column() {
-          Column() {
-            GlassPanel({
-              blurRadius: 20,
-              panelBorderRadius: 16,
-              panelBorderColor: SHELL_BORDER,
-              panelBgColor: '#0A0A1ECC',
-              panelBorderWidth: 1
-            }) {
-              this.screenShell({ isTop: true })
-            }
-          }
-          .width('100%')
-          .height('100%')
-        }
-        .width('100%')
-        .height('100%')
-      }
-      .height('100%')
-
-      GridCol({ span: this.bottomSpan }) {
-        Column() {
-          Column() {
-            GlassPanel({
-              blurRadius: 20,
-              panelBorderRadius: 16,
-              panelBorderColor: SHELL_BORDER,
-              panelBgColor: '#0A0A1ECC',
-              panelBorderWidth: 1
-            }) {
-              this.screenShell({ isTop: false })
-            }
-          }
-          .width('100%')
-          .height('100%')
-        }
-        .width('100%')
-        .height('100%')
-      }
-      .height('100%')
-    }
-    .width('100%')
-    .height('100%')
-    .onBreakpointChange((bp: string) => {
-      this.currentBp = bp;
-    })
-    .onAreaChange((_old: Area, newVal: Area) => {
-      this.dualAreaW = (newVal.width as number) / 2 - 4;
-      this.dualAreaH = newVal.height as number;
-    })
+  groupHeader(letter: string) {
+    Text(letter)
+      .fontSize(14)
+      .fontColor($r('app.color.settings_desc_color'))
+      .fontWeight(FontWeight.Medium)
+      .width('100%')
+      .padding({ left: 20, top: 16, bottom: 4 })
   }
 
   build() {
     HdsNavigation(this.navPathStack) {
-      Column() {
-        if (this.isFoldable && (this.foldStatus === display.FoldStatus.FOLD_STATUS_EXPANDED ||
-          this.foldStatus === display.FoldStatus.FOLD_STATUS_HALF_FOLDED)) {
-          this.foldExpandedLayout()
-        } else if (this.currentBp === 'sm') {
-          this.phoneLayout()
-        } else {
-          this.dualScreenLayout()
+      Stack({ alignContent: Alignment.End }) {
+        List({ space: 8, scroller: this.listScroller }) {
+          if (this.searchMode) {
+            ListItem() {
+              Search({ value: this.searchQuery, placeholder: '搜索游戏名称、厂商...' })
+                .width('100%')
+                .height(40)
+                .backgroundColor($r('app.color.settings_card_bg'))
+                .placeholderColor($r('app.color.settings_desc_color'))
+                .placeholderFont({ size: 14 })
+                .textFont({ size: 14 })
+                .fontColor($r('app.color.settings_about_title'))
+                .onSubmit((value: string) => this.onSearchInput(value))
+                .onChange((value: string) => this.onSearchInput(value))
+            }
+            .padding({ left: 16, right: 16 })
+          }
+            if (this.isScanning) {
+              ListItem() {
+                Column() {
+                  LoadingProgress()
+                    .width(40)
+                    .height(40)
+                    .color($r('app.color.accent_color'))
+                  Text('扫描中...')
+                    .fontSize(13)
+                    .fontColor($r('app.color.settings_desc_color'))
+                    .margin({ top: 12 })
+                }
+                .width('100%')
+                .height(200)
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
+              }
+            } else if (this.mrpList.length === 0) {
+              ListItem() {
+                Column() {
+                  Text('暂无游戏')
+                    .fontSize(18)
+                    .fontColor($r('app.color.settings_about_title'))
+                    .fontWeight(FontWeight.Medium)
+                  Text('在设置中导入 .mrp 游戏文件')
+                    .fontSize(13)
+                    .fontColor($r('app.color.settings_desc_color'))
+                    .margin({ top: 6 })
+                  Column() {
+                    ImmersiveLightWrapper({ radius: 22, lightHeight: 80 }) {
+                      Stack() {
+                        Text('前往设置')
+                          .fontSize(14)
+                          .fontColor('#FFFFFF')
+                          .fontWeight(FontWeight.Medium)
+                      }
+                      .width(140)
+                      .height(44)
+                      .backgroundColor(Color.Transparent)
+                    }
+                  }
+                  .margin({ top: 24 })
+                  .onClick(() => { HapticManager.performClick(); this.openSettings(); })
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Center)
+                .alignItems(HorizontalAlign.Center)
+                .padding({ top: 60, bottom: 60 })
+              }
+            } else if (this.sortMode === 1 && this.searchQuery.length === 0) {
+              ForEach(this.groupedItems, (group: MrpGroup) => {
+                ListItemGroup({ header: this.groupHeader(group.letter), space: 8 }) {
+                  ForEach(group.items, (item: MrpInfoData) => {
+                    ListItem() {
+                      MrpCard({
+                        info: item,
+                        onLaunch: (item: MrpInfoData) => this.launchMrp(item)
+                      })
+                    }
+                    .padding({ left: 16, right: 16 })
+                    .swipeAction({ end: this.swipeDeleteButton(item) })
+                    .transition(DELETE_TRANSITION)
+                  }, (item: MrpInfoData) => item.filePath + '_' + this.listVersion)
+                }
+              }, (group: MrpGroup) => group.letter + '_' + group.items.length + '_' + this.listVersion)
+            } else {
+              ForEach(this.mrpList, (item: MrpInfoData) => {
+                ListItem() {
+                  MrpCard({
+                    info: item,
+                    onLaunch: (item: MrpInfoData) => this.launchMrp(item)
+                  })
+                }
+                .padding({ left: 16, right: 16 })
+                .swipeAction({ end: this.swipeDeleteButton(item) })
+                .transition(DELETE_TRANSITION)
+              }, (item: MrpInfoData) => item.filePath + '_' + this.listVersion)
+            }
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .scrollBar(BarState.Off)
+          .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
+          .clip(false)
+          .cachedCount(2, true)
+          .expandSafeArea()
+          .onScrollIndex((start: number) => {
+            if (this.sortMode !== 1 || this.mrpList.length === 0) return;
+            const groups = this.groupedItems;
+            if (start >= 0 && start < groups.length) {
+              const letter = groups[start].letter;
+              const idx = this.indexArray.indexOf(letter);
+              if (idx >= 0) {
+                this.selectedIndex = idx;
+              }
+            }
+          })
+
+          if (this.sortMode === 1 && this.mrpList.length > 0 && this.searchQuery.length === 0) {
+            AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
+              .color($r('app.color.settings_desc_color'))
+              .selectedColor($r('app.color.accent_color'))
+              .popupColor($r('app.color.accent_color'))
+              .selectedBackgroundColor($r('app.color.settings_card_bg'))
+              .popupBackground($r('app.color.settings_card_bg'))
+              .usingPopup(true)
+              .font({ size: 10 })
+              .selectedFont({ size: 12, weight: FontWeight.Bold })
+              .popupFont({ size: 24, weight: FontWeight.Bold })
+              .itemSize(24)
+              .alignStyle(IndexerAlign.Left)
+              .popupPosition({ x: -72, y: 0 })
+              .width(24)
+              .height('100%')
+              .margin({ right: 4 })
+              .onSelect((index: number) => {
+                const groups = this.groupedItems;
+                if (index >= 0 && index < groups.length) {
+                  this.listScroller.scrollToIndex(index, false, ScrollAlign.CENTER);
+                }
+              })
+          }
         }
+        .width('100%')
+        .layoutWeight(1)
+        .align(Alignment.TopEnd)
       }
-      .width('100%')
-      .height('100%')
-      .backgroundColor('#0D0D1A')
-    }
-    .width('100%')
-    .height('100%')
-    .hideTitleBar(true)
+      .titleBar({
+      content: {
+        title: { mainTitle: 'MRP 游戏库' },
+        menu: {
+          value: [
+            {
+              content: {
+                label: '搜索',
+                icon: $r('sys.symbol.magnifyingglass'),
+                isEnabled: true,
+                action: () => this.toggleSearch()
+              }
+            },
+            {
+              content: {
+                label: this.sortMode === 0 ? '按时间' : '按名称',
+                icon: $r('sys.symbol.sort'),
+                isEnabled: true,
+                action: () => this.toggleSort()
+              }
+            },
+            {
+              content: {
+                label: '设置',
+                icon: $r('sys.symbol.gearshape'),
+                isEnabled: true,
+                action: () => this.openSettings()
+              }
+            }
+          ]
+        }
+      },
+      style: {
+        scrollEffectOpts: {
+          enableScrollEffect: true,
+          scrollEffectType: ScrollEffectType.GRADIENT_BLUR,
+          blurEffectiveStartOffset: LengthMetrics.vp(0),
+          blurEffectiveEndOffset: LengthMetrics.vp(20),
+        },
+        systemMaterialEffect: {
+          materialType: hdsMaterial.MaterialType.ADAPTIVE,
+          materialLevel: hdsMaterial.MaterialLevel.ADAPTIVE,
+        },
+      },
+      enableComponentSafeArea: true,
+      avoidLayoutSafeArea: true
+    })
     .titleMode(HdsNavigationTitleMode.MINI)
+    .hideBackButton(true)
+    .backgroundColor($r('app.color.immersive_bg'))
+    .bindToScrollable([this.listScroller])
     .mode(NavigationMode.Stack)
   }
-}
 
-@Builder
-function EditDialogContentBuilder($$: EditDialogContentBuilderParams) {
-  EditDialogContent({
-    editText: $$.editText,
-    onTextChange: $$.onTextChange,
-    onSubmit: $$.onSubmit,
-    onCancel: $$.onCancel
-  })
 }

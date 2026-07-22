@@ -49,6 +49,8 @@
 #define LOGE(...) OH_LOG_ERROR(LOG_APP, __VA_ARGS__)
 
 namespace {
+extern "C" void skyengine_set_speed_multiplier(int mult);
+
 // 全局状态：渲染器与音频在 XComponent 回调线程上创建/销毁。
 VmrpRenderer g_renderer;
 VmrpAudio    g_audio;
@@ -61,6 +63,9 @@ std::atomic<bool> g_engine_running{false};
 
 // 编辑回调：把编辑状态通知到 ArkTS（通过 napi_threadsafe_function）。
 napi_threadsafe_function g_edit_tsfn = nullptr;
+
+// 退出回调：引擎停止时通知 ArkTS（通过 napi_threadsafe_function）。
+napi_threadsafe_function g_exit_tsfn = nullptr;
 
 // 触摸事件码由 skyengine_api.h 宏提供。
 } // namespace
@@ -177,6 +182,11 @@ static void TimerLoop() {
         VmrpEngine::Instance().PollMotionShake();
         if (!VmrpEngine::Instance().IsRunning()) {
             g_engine_running.store(false);
+            if (g_exit_tsfn) {
+                napi_acquire_threadsafe_function(g_exit_tsfn);
+                napi_call_threadsafe_function(g_exit_tsfn, nullptr, napi_tsfn_nonblocking);
+                napi_release_threadsafe_function(g_exit_tsfn, napi_tsfn_release);
+            }
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(16));
@@ -533,6 +543,40 @@ static napi_value SetEditCallback(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// ---- 退出回调 threadsafe function ----
+static void CallJsExit(napi_env env, napi_value js_cb, void * /*context*/, void *data) {
+    if (env && js_cb) {
+        napi_value undefined;
+        napi_get_undefined(env, &undefined);
+        napi_call_function(env, undefined, js_cb, 0, nullptr, nullptr);
+    }
+}
+
+static napi_value SetExitCallback(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (g_exit_tsfn) {
+        napi_release_threadsafe_function(g_exit_tsfn, napi_tsfn_release);
+        g_exit_tsfn = nullptr;
+    }
+    napi_value name;
+    napi_create_string_utf8(env, "vmrp_exit_cb", NAPI_AUTO_LENGTH, &name);
+    napi_create_threadsafe_function(env, args[0], nullptr, name, 0, 1, nullptr,
+                                    nullptr, nullptr, CallJsExit, &g_exit_tsfn);
+    return nullptr;
+}
+
+static napi_value SetSpeedMultiplier(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t mult = 1;
+    napi_get_value_int32(env, args[0], &mult);
+    skyengine_set_speed_multiplier(mult);
+    return nullptr;
+}
+
 // native 触摸事件回调：PointerEvent_GetX/Y + GetAction → SendEvent（不经 ArkTS）。
 static void OnNodeTouchEvent(ArkUI_NodeEvent *event) {
     const ArkUI_UIInputEvent *input = OH_ArkUI_NodeEvent_GetInputEvent(event);
@@ -681,6 +725,8 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"mediaPause", nullptr, MediaPause, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mediaResume", nullptr, MediaResume, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setEditCallback", nullptr, SetEditCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setExitCallback", nullptr, SetExitCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setSpeedMultiplier", nullptr, SetSpeedMultiplier, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"createSurfaceNode", nullptr, CreateSurfaceNode, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

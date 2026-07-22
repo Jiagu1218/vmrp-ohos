@@ -23,6 +23,8 @@ const KEY_SATURATION = 'saturation';
 const KEY_SUBPIXEL_RENDER = 'subpixel_render';
 const KEY_GAMMA_CORRECT = 'gamma_correct';
 const KEY_DITHER = 'dither';
+const KEY_SCREEN_W = 'screen_width';
+const KEY_SCREEN_H = 'screen_height';
 const SENSITIVITY_DEFAULT = 1.0;
 const MEMORY_OPTIONS: SelectOption[] = [
   { value: '1 MB' }, { value: '2 MB' }, { value: '4 MB' },
@@ -53,6 +55,18 @@ const SATURATION_DEFAULT: number = 1.0;
 const SUBPIXEL_RENDER_DEFAULT: number = 0;
 const GAMMA_CORRECT_DEFAULT: number = 1;
 const DITHER_DEFAULT: number = 1;
+const SCREEN_SIZE_OPTIONS: SelectOption[] = [
+  { value: '176×220' }, { value: '240×320' }, { value: '240×400' },
+  { value: '320×480' }, { value: '320×240' }, { value: '480×800' }
+];
+const SCREEN_SIZE_W: number[] = [176, 240, 240, 320, 320, 480];
+const SCREEN_SIZE_H: number[] = [220, 320, 400, 480, 240, 800];
+const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
+const KEY_SPEED_MULT = 'speed_multiplier';
+const SPEED_OPTIONS: SelectOption[] = [
+  { value: '1x 正常' }, { value: '2x 加速' }, { value: '3x 高速' }, { value: '4x 极速' }
+];
+const SPEED_VALUES: number[] = [1, 2, 3, 4];
 
 const CARD_RADIUS = 20;
 const ROW_H = 56;
@@ -205,6 +219,8 @@ export struct SettingsPage {
   @Local subpixelRender: number = SUBPIXEL_RENDER_DEFAULT;
   @Local gammaCorrect: number = GAMMA_CORRECT_DEFAULT;
   @Local ditherEnabled: number = DITHER_DEFAULT;
+  @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
+  @Local speedMultIndex: number = 0;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -242,6 +258,13 @@ export struct SettingsPage {
       this.subpixelRender = pref.getSync(KEY_SUBPIXEL_RENDER, SUBPIXEL_RENDER_DEFAULT) as number;
       this.gammaCorrect = pref.getSync(KEY_GAMMA_CORRECT, GAMMA_CORRECT_DEFAULT) as number;
       this.ditherEnabled = pref.getSync(KEY_DITHER, DITHER_DEFAULT) as number;
+      const sw = pref.getSync(KEY_SCREEN_W, 240) as number;
+      const sh = pref.getSync(KEY_SCREEN_H, 320) as number;
+      const screenIdx = SCREEN_SIZE_W.indexOf(sw);
+      this.screenSizeIndex = (screenIdx >= 0 && SCREEN_SIZE_H[screenIdx] === sh) ? screenIdx : SCREEN_SIZE_DEFAULT_INDEX;
+      const speedMult = pref.getSync(KEY_SPEED_MULT, 1) as number;
+      this.speedMultIndex = SPEED_VALUES.indexOf(speedMult);
+      if (this.speedMultIndex < 0) this.speedMultIndex = 0;
     } catch (_e) {
     }
   }
@@ -294,6 +317,16 @@ export struct SettingsPage {
     pref.flush();
   }
 
+  saveSpeedMult(index: number): void {
+    this.speedMultIndex = index;
+    const mult = SPEED_VALUES[index];
+    this.engine.setSpeedMultiplier(mult);
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_SPEED_MULT, mult);
+    pref.flush();
+  }
+
   async saveHaptic(enabled: boolean): Promise<void> {
     this.hapticEnabled = enabled;
     const ctx = this.getUIContext().getHostContext();
@@ -319,6 +352,15 @@ export struct SettingsPage {
     const pref = this.getPref();
     if (!pref) return;
     pref.putSync(KEY_SENSITIVITY, val);
+    pref.flush();
+  }
+
+  saveScreenSize(index: number): void {
+    this.screenSizeIndex = index;
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_SCREEN_W, SCREEN_SIZE_W[index]);
+    pref.putSync(KEY_SCREEN_H, SCREEN_SIZE_H[index]);
     pref.flush();
   }
 
@@ -360,6 +402,8 @@ export struct SettingsPage {
     pref.putSync(KEY_SUBPIXEL_RENDER, SUBPIXEL_RENDER_DEFAULT);
     pref.putSync(KEY_GAMMA_CORRECT, GAMMA_CORRECT_DEFAULT);
     pref.putSync(KEY_DITHER, DITHER_DEFAULT);
+    pref.putSync(KEY_SCREEN_W, 240);
+    pref.putSync(KEY_SCREEN_H, 320);
     pref.flush();
     this.applyDisplayFilter();
     const ctx = this.getUIContext().getHostContext();
@@ -496,8 +540,18 @@ export struct SettingsPage {
           Column() {
             SectionHeader({ title: '模拟器' })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
-              Column() {
-                SRow({ label: '内存大小' }) {
+               Column() {
+                 SRow({ label: '屏幕分辨率' }) {
+                   SSelect({
+                     opts: SCREEN_SIZE_OPTIONS,
+                     selected: this.screenSizeIndex,
+                     value: SCREEN_SIZE_OPTIONS[this.screenSizeIndex].value as string,
+                     onSelect: (index: number) => { this.saveScreenSize(index); }
+                   })
+                 }
+                 SDesc({ text: '设置模拟器屏幕分辨率，需在下一次启动时生效。不同 MRP 应用可能需要匹配其原始设备的分辨率。' })
+                 SDivider()
+                 SRow({ label: '内存大小' }) {
                   SSelect({
                     opts: MEMORY_OPTIONS,
                     selected: this.selectedIndex,
@@ -508,8 +562,20 @@ export struct SettingsPage {
                     }
                   })
                 }
-                SDesc({ text: '内存大小决定 MRP 可见的堆空间，需在下一次启动时生效。' })
-              }
+                 SDesc({ text: '内存大小决定 MRP 可见的堆空间，需在下一次启动时生效。' })
+                 SDivider()
+                 SRow({ label: '模拟速度' }) {
+                   SSelect({
+                     opts: SPEED_OPTIONS,
+                     selected: this.speedMultIndex,
+                     value: SPEED_OPTIONS[this.speedMultIndex].value as string,
+                     onSelect: (index: number) => {
+                       this.saveSpeedMult(index);
+                     }
+                   })
+                 }
+                 SDesc({ text: '加快游戏运行速度，1x为正常速度，4x为极速。运行中也可在模拟器页面临时切换。' })
+               }
             }
           }
         }
@@ -622,7 +688,9 @@ export struct SettingsPage {
                        this.saturationVal = SATURATION_DEFAULT;
                        this.subpixelRender = SUBPIXEL_RENDER_DEFAULT;
                        this.gammaCorrect = GAMMA_CORRECT_DEFAULT;
-                       this.ditherEnabled = DITHER_DEFAULT;
+    this.ditherEnabled = DITHER_DEFAULT;
+    this.screenSizeIndex = SCREEN_SIZE_DEFAULT_INDEX;
+    this.speedMultIndex = 0;
                        this.saveDisplayFilter();
                     })
                 }
@@ -839,6 +907,7 @@ export struct SettingsPage {
     })
     .backgroundColor($r('app.color.immersive_bg'))
     .bindToScrollable([this.listScroller])
+    .systemTransition(NavigationSystemTransitionType.SLIDE_BOTTOM)
     .onReady((context: NavDestinationContext) => {
       this.navPathStack = context.pathStack;
     })

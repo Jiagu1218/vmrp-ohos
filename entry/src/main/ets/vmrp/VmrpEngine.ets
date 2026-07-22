@@ -22,6 +22,8 @@ import {
   startDsmEx as nativeStartDsmEx,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
+  setExitCallback as nativeSetExitCallback,
+  setSpeedMultiplier as nativeSetSpeedMultiplier,
   createSurfaceNode as nativeCreateSurfaceNode,
   mediaPause as nativeMediaPause, mediaResume as nativeMediaResume,
   getScreenInfo as nativeGetScreenInfo
@@ -161,6 +163,14 @@ export class VmrpEngineTs {
   // 注册编辑回调：native 检测到 MRP 请求编辑时回调此处，并携带待编辑的原文本用于回显。
   setEditCallback(cb: (editText: string) => void): void {
     nativeSetEditCallback(cb);
+  }
+
+  setExitCallback(cb: () => void): void {
+    nativeSetExitCallback(cb);
+  }
+
+  setSpeedMultiplier(mult: number): void {
+    nativeSetSpeedMultiplier(mult);
   }
 
   // 把 ArkTS ContentSlot 的 NodeContent 传给 native，native 在其上树时创建 XComponent 节点。
