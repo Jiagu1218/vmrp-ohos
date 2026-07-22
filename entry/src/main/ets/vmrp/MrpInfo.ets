@@ -8,9 +8,6 @@ export interface MrpInfoData {
   version: number;
   vendor: string;
   description: string;
-  screenW: number;
-  screenH: number;
-  platform: number;
   fileSize: number;
   filePath: string;
   mtime: number;
@@ -41,19 +38,6 @@ export class MrpInfo {
       const vendor = MrpInfo.decodeGbk(view, 88, 40);
       const description = MrpInfo.decodeGbk(view, 128, 64);
 
-      let screenW = 240;
-      let screenH = 320;
-      let platform = 1;
-      if (MRP_HEAD_SIZE >= 210) {
-        screenW = view.getUint16(204, true);
-        screenH = view.getUint16(206, true);
-        platform = view.getUint8(208);
-        if (screenW === 0 || screenH === 0) {
-          screenW = 240;
-          screenH = 320;
-        }
-      }
-
       const slash = filePath.lastIndexOf('/');
       const baseName = slash >= 0 ? filePath.substring(slash + 1) : filePath;
 
@@ -70,9 +54,6 @@ export class MrpInfo {
         version: version,
         vendor: vendor,
         description: description,
-        screenW: screenW,
-        screenH: screenH,
-        platform: platform,
         fileSize: fileLen,
         filePath: filePath,
         mtime: mtime

@@ -13,7 +13,6 @@ import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
 import { HapticManager } from '../common/HapticManager';
 
 const CARD_RADIUS = 20;
-const PLATFORM_NAMES: string[] = ['', 'MTK', '展讯', '', '', '', '', '', '', '斯凯'];
 const DELETE_TRANSITION = TransitionEffect.OPACITY
   .combine(TransitionEffect.scale({ x: 0.8, y: 0.8 }))
   .animation({ duration: 300, curve: Curve.EaseInOut });
@@ -29,8 +28,7 @@ const asciiTransliterator: i18n.Transliterator = i18n.Transliterator.getInstance
 function emptyMrpInfoData(): MrpInfoData {
   const d: MrpInfoData = {
     filename: '', appname: '', appid: 0, version: 0,
-    vendor: '', description: '', screenW: 240, screenH: 320,
-    platform: 0, fileSize: 0, filePath: '', mtime: 0
+    vendor: '', description: '', fileSize: 0, filePath: '', mtime: 0
   };
   return d;
 }
@@ -79,7 +77,7 @@ function buildIndexArray(groups: MrpGroup[]): string[] {
 @ComponentV2
 struct MrpCard {
   @Param info: MrpInfoData = emptyMrpInfoData();
-  @Param onLaunch: (path: string) => void = () => {};
+  @Param onLaunch: (item: MrpInfoData) => void = () => {};
 
   build() {
     Column() {
@@ -126,15 +124,18 @@ struct MrpCard {
           }
 
           Row() {
-            Text(`${this.info.screenW}×${this.info.screenH}`)
+            Text(this.info.filename)
               .fontSize(12)
               .fontColor($r('app.color.settings_desc_color'))
-            if (this.info.platform > 0 && this.info.platform < PLATFORM_NAMES.length) {
-              Text(PLATFORM_NAMES[this.info.platform])
-                .fontSize(12)
-                .fontColor($r('app.color.settings_desc_color'))
-                .margin({ left: 12 })
-            }
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .layoutWeight(1)
+            Text(this.getBaseName(this.info.filePath))
+              .fontSize(12)
+              .fontColor($r('app.color.settings_desc_color'))
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .margin({ left: 12 })
             Text(this.formatSize(this.info.fileSize))
               .fontSize(12)
               .fontColor($r('app.color.settings_desc_color'))
@@ -150,7 +151,7 @@ struct MrpCard {
     .width('100%')
     .onClick(() => {
       HapticManager.performClick();
-      this.onLaunch(this.info.filePath);
+      this.onLaunch(this.info);
     })
   }
 
@@ -159,6 +160,11 @@ struct MrpCard {
     if (bytes < 1024) return `${bytes}B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  }
+
+  private getBaseName(path: string): string {
+    const slash = path.lastIndexOf('/');
+    return slash >= 0 ? path.substring(slash + 1) : path;
   }
 }
 
@@ -248,8 +254,8 @@ struct Index {
     this.applySort();
   }
 
-  private launchMrp(mrpPath: string): void {
-    this.navPathStack.pushPathByName('Emulator', mrpPath);
+  private launchMrp(item: MrpInfoData): void {
+    this.navPathStack.pushPathByName('Emulator', item.filePath);
   }
 
   private openSettings(): void {
@@ -376,7 +382,7 @@ struct Index {
                     ListItem() {
                       MrpCard({
                         info: item,
-                        onLaunch: (path: string) => this.launchMrp(path)
+                        onLaunch: (item: MrpInfoData) => this.launchMrp(item)
                       })
                     }
                     .padding({ left: 16, right: 16 })
@@ -390,7 +396,7 @@ struct Index {
                 ListItem() {
                   MrpCard({
                     info: item,
-                    onLaunch: (path: string) => this.launchMrp(path)
+                    onLaunch: (item: MrpInfoData) => this.launchMrp(item)
                   })
                 }
                 .padding({ left: 16, right: 16 })

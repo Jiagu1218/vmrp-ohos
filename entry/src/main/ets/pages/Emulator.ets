@@ -526,6 +526,13 @@ struct EmulatorPage {
       this.engine.setScreen(240, 320);
       try {
         const pref = await preferences.getPreferences(ctx, 'vmrp_settings');
+        const screenW = (await pref.get('screen_width', 240)) as number;
+        const screenH = (await pref.get('screen_height', 320)) as number;
+        if (screenW > 0 && screenH > 0) {
+          this.engine.setScreen(screenW, screenH);
+          this.bufW = screenW;
+          this.bufH = screenH;
+        }
         const mem = (await pref.get('memory_mb', 1)) as number;
         this.engine.setMemory(mem);
         const sensitivity = (await pref.get('motion_sensitivity', 1.0)) as number;
