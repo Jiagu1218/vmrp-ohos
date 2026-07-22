@@ -31,4 +31,5 @@ export const getScreenInfo: () => ScreenInfo;
 export const mediaPause: () => void;
 export const mediaResume: () => void;
 export const setEditCallback: (cb: (editText: string) => void) => void;
+export const setExitCallback: (cb: () => void) => void;
 export const createSurfaceNode: (nodeContent: object) => void;
