@@ -29,6 +29,8 @@ public:
     int Render(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation);
     // RGBA8888 路径：rgba 行宽 display_w, 纹理尺寸 display_w×display_h
     int Render(const uint8_t *rgba, int32_t display_w, int32_t display_h, int rotation);
+    // RGB565 直传路径：GPU自动565→888位扩展，省CPU转换+减半带宽
+    int RenderRgb565(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation);
 
     bool Ready() const { return egl_display_ != EGL_NO_DISPLAY && texture_ != 0; }
     int32_t SurfaceWidth() const { return surface_w_; }

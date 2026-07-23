@@ -56,6 +56,10 @@ VmrpRenderer g_renderer;
 VmrpAudio    g_audio;
 std::mutex   g_render_mtx;
 
+// RGB565 直传 buffer：引擎写 screen_buf 无锁，渲染线程在 dirty 时快速拷贝。
+uint16_t *g_rgb565_buf = nullptr;
+int32_t   g_rgb565_pixels = 0;
+
 // 定时器驱动线程：仅请求渲染 + 检测引擎退出（timer/event 由 vmrp 内部 worker 自驱）。
 std::thread  g_timer_thread;
 std::atomic<bool> g_timer_running{false};
@@ -144,11 +148,19 @@ void TryRender() {
     g_renderer.SetDirty();
     std::lock_guard<std::mutex> lk(g_render_mtx);
     if (!g_renderer.Ready()) return;
-    const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
     int rot = VmrpEngine::Instance().ScreenRotation();
-    g_renderer.Render(rgba, sw, sh, rot);
+    int32_t pixels = sw * sh;
+    if (pixels != g_rgb565_pixels) {
+        free(g_rgb565_buf);
+        g_rgb565_buf = static_cast<uint16_t *>(malloc(static_cast<size_t>(pixels) * 2));
+        g_rgb565_pixels = pixels;
+    }
+    if (g_rgb565_buf) {
+        VmrpEngine::Instance().CopyScreenRgb565(g_rgb565_buf, pixels);
+        g_renderer.RenderRgb565(g_rgb565_buf, sw, sh, rot);
+    }
 }
 
 // 在非渲染线程（timer/key/touch）请求渲染：置标志，由帧回调线程消费。
@@ -159,11 +171,19 @@ void TryRenderForce() {
     if (!g_engine_running.load()) return;
     std::lock_guard<std::mutex> lk(g_render_mtx);
     if (!g_renderer.Ready()) return;
-    const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
     int rot = VmrpEngine::Instance().ScreenRotation();
-    g_renderer.Render(rgba, sw, sh, rot);
+    int32_t pixels = sw * sh;
+    if (pixels != g_rgb565_pixels) {
+        free(g_rgb565_buf);
+        g_rgb565_buf = static_cast<uint16_t *>(malloc(static_cast<size_t>(pixels) * 2));
+        g_rgb565_pixels = pixels;
+    }
+    if (g_rgb565_buf) {
+        VmrpEngine::Instance().CopyScreenRgb565(g_rgb565_buf, pixels);
+        g_renderer.RenderRgb565(g_rgb565_buf, sw, sh, rot);
+    }
 }
 
 // 渲染驱动循环。
@@ -314,6 +334,9 @@ static napi_value StopEngine(napi_env env, napi_callback_info info) {
     if (g_timer_thread.joinable()) g_timer_thread.join();
     g_audio.Stop();
     VmrpEngine::Instance().Destroy();
+    free(g_rgb565_buf);
+    g_rgb565_buf = nullptr;
+    g_rgb565_pixels = 0;
     return nullptr;
 }
 

@@ -104,6 +104,8 @@ public:
 
     // 屏幕访问（RGB565）。dirty 会在读取后自动清除。
     const uint16_t *ScreenBuffer();
+    // 线程安全拷贝 RGB565 屏幕数据到 dst（async 下加 screen_lock）。
+    void CopyScreenRgb565(uint16_t *dst, int32_t pixels);
     // 屏幕访问（RGBA8888，vmrp 内部 screen_lock 保护，async 下线程安全）。
     const uint8_t *ScreenRgbaBuffer();
     int ScreenWidth();

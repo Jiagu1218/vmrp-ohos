@@ -289,6 +289,12 @@ int VmrpEngine::StepTimer() {
 const uint16_t *VmrpEngine::ScreenBuffer() {
     return api_.get_screen_buffer ? api_.get_screen_buffer() : nullptr;
 }
+void VmrpEngine::CopyScreenRgb565(uint16_t *dst, int32_t pixels) {
+    if (!api_.get_screen_buffer || !dst || pixels <= 0) return;
+    const uint16_t *src = api_.get_screen_buffer();
+    if (!src) return;
+    memcpy(dst, src, static_cast<size_t>(pixels) * 2);
+}
 // 走 vmrp 内部 screen_lock 保护的 RGBA 转换路径，async worker 模型下线程安全。
 const uint8_t *VmrpEngine::ScreenRgbaBuffer() {
     return api_.get_screen_rgba_buffer ? api_.get_screen_rgba_buffer() : nullptr;

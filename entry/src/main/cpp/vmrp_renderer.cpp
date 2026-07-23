@@ -823,6 +823,139 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display
     return 0;
 }
 
+int VmrpRenderer::RenderRgb565(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
+    if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
+    current_rotation_ = rotation & 3;
+
+    // ── Dirty skip ──
+    if (!last_frame_dirty_) {
+        idle_swap_count_++;
+        if (idle_swap_count_ > 3) {
+            eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+            eglSwapBuffers(egl_display_, egl_surface_);
+            return 0;
+        }
+    }
+    last_frame_dirty_ = false;
+    idle_swap_count_ = 0;
+
+    EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+    if (!mc) return -1;
+
+    // ── 纹理尺寸变化时重新分配（internalFormat=RGBA，但上传格式=RGB565）──
+    if (tex_w_ != display_w || tex_h_ != display_h) {
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, display_w, display_h, 0,
+                     GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
+        tex_w_ = display_w;
+        tex_h_ = display_h;
+        prev_filter_type_ = -1;
+    }
+
+    // ── PBO 异步上传（565数据量减半）──
+    const size_t data_size = static_cast<size_t>(display_w) * display_h * 2;
+    if (pbo_size_ < static_cast<int32_t>(data_size)) {
+        for (int i = 0; i < 2; ++i) {
+            if (pbo_[i]) glDeleteBuffers(1, &pbo_[i]);
+            glGenBuffers(1, &pbo_[i]);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[i]);
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, data_size, nullptr, GL_STREAM_DRAW);
+        }
+        pbo_size_ = static_cast<int32_t>(data_size);
+        LOGI("PBOs created (rgb565) size=%zu", data_size);
+    }
+
+    pbo_idx_ = 1 - pbo_idx_;
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[pbo_idx_]);
+    void *ptr = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, data_size,
+                                  GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+    bool pbo_ok = false;
+    if (ptr) {
+        memcpy(ptr, src, data_size);
+        glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+        pbo_ok = true;
+    }
+
+    if (pbo_ok) {
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h,
+                        GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    } else {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h,
+                        GL_RGB, GL_UNSIGNED_SHORT_5_6_5, src);
+    }
+
+    // ── Bypass: Nearest+无特效直出屏幕 ──
+    if (CanBypass()) {
+        RenderBypass(display_w, display_h);
+        return 0;
+    }
+
+    int32_t needed_w = (filter_type_ == 4) ? display_w * 2 : display_w;
+    int32_t needed_h = (filter_type_ == 4) ? display_h * 2 : display_h;
+    if (fbo_w_ != needed_w || fbo_h_ != needed_h) {
+        CreateFBOs(needed_w, needed_h);
+    }
+
+    UpdateTextureFilter();
+
+    // Pass1
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_a_);
+    glViewport(0, 0, fbo_w_, fbo_h_);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    ApplyUpscaleUniforms();
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Pass2
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_b_);
+    glViewport(0, 0, fbo_w_, fbo_h_);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex_a_);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex_prev_);
+    ApplyPostprocUniforms();
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // Pass3
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    int32_t vp_w = surface_w_ > 0 ? surface_w_ : display_w;
+    int32_t vp_h = surface_h_ > 0 ? surface_h_ : display_h;
+    glViewport(0, 0, vp_w, vp_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex_b_);
+    ApplyOutputUniforms();
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+
+    // phosphor glow swap
+    if (screen_effect_ == 1) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_b_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo_prev_);
+        glBlitFramebuffer(0, 0, fbo_w_, fbo_h_, 0, 0, fbo_w_, fbo_h_,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
+    GLenum glerr = glGetError();
+    if (glerr != GL_NO_ERROR) {
+        LOGE("GL error after draw: 0x%x", glerr);
+    }
+    eglSwapBuffers(egl_display_, egl_surface_);
+    return 0;
+}
+
 int VmrpRenderer::Render(const uint8_t *rgba, int32_t display_w, int32_t display_h, int rotation) {
     if (!Ready() || !rgba || display_w <= 0 || display_h <= 0) return -1;
     current_rotation_ = rotation & 3;
