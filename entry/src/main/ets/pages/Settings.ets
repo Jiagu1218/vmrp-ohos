@@ -345,8 +345,6 @@ export struct SettingsPage {
   @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
   @Local speedMultIndex: number = 0;
   @Local gpBindings: GpBinding[] = defaultBindings();
-  @Local gpListeningIdx: number = -1;
-  @Local gpListenSrcLabel: string = '';
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -474,53 +472,16 @@ export struct SettingsPage {
     }
   }
 
-  applyGpPreset(index: number): void {
-    if (index === 0) this.gpBindings = defaultBindings();
-    else if (index === 1) this.gpBindings = directionFirstBindings();
-    else if (index === 2) this.gpBindings = numpadBindings();
-    this.saveGpBindings();
-  }
-
-  onGpKeyEventInDialog(event: KeyEvent): void {
-    if (this.gpListeningIdx < 0) return;
-    if (event.type !== KeyType.Down) return;
-    const kc = event.keyCode;
-    let src = '';
-    if (kc === KeyCode.KEYCODE_DPAD_UP) src = 'dpad_up';
-    else if (kc === KeyCode.KEYCODE_DPAD_DOWN) src = 'dpad_down';
-    else if (kc === KeyCode.KEYCODE_DPAD_LEFT) src = 'dpad_left';
-    else if (kc === KeyCode.KEYCODE_DPAD_RIGHT) src = 'dpad_right';
-    else if (kc === KeyCode.KEYCODE_BUTTON_A) src = 'btn_a';
-    else if (kc === KeyCode.KEYCODE_BUTTON_B) src = 'btn_b';
-    else if (kc === KeyCode.KEYCODE_BUTTON_X) src = 'btn_x';
-    else if (kc === KeyCode.KEYCODE_BUTTON_Y) src = 'btn_y';
-    else if (kc === KeyCode.KEYCODE_BUTTON_L1) src = 'btn_l1';
-    else if (kc === KeyCode.KEYCODE_BUTTON_R1) src = 'btn_r1';
-    else if (kc === KeyCode.KEYCODE_BUTTON_START) src = 'btn_start';
-    else if (kc === KeyCode.KEYCODE_BUTTON_SELECT) src = 'btn_select';
-    if (src.length === 0) return;
-    this.gpBindings[this.gpListeningIdx].src = src;
-    this.gpListeningIdx = -1;
-    this.gpListenSrcLabel = '';
-    this.saveGpBindings();
-  }
-
   openGamepadDialog(): void {
     const uiCtx = this.getUIContext();
     const prompt = uiCtx.getPromptAction();
     const params: GamepadDialogParams = {
-      bindings: this.gpBindings,
-      listeningIdx: this.gpListeningIdx,
-      listenSrcLabel: this.gpListenSrcLabel,
-      onBindingClick: (idx: number) => {
-        this.gpListeningIdx = idx;
-        this.gpListenSrcLabel = GP_SRC_LABELS[this.gpBindings[idx].src] ?? this.gpBindings[idx].src;
+      initialBindings: this.gpBindings,
+      onConfirm: (bindings: GpBinding[]) => {
+        this.gpBindings = bindings;
+        this.saveGpBindings();
       },
-      onPreset: (idx: number) => { this.applyGpPreset(idx); },
-      onKeyEvent: (event: KeyEvent) => { this.onGpKeyEventInDialog(event); },
       onClose: () => {
-        this.gpListeningIdx = -1;
-        this.gpListenSrcLabel = '';
         prompt.closeCustomDialog(contentNode);
       }
     };
@@ -1182,26 +1143,36 @@ function BackupNameDialogBuilder($$: BackupNameDialogParams) {
 }
 
 interface GamepadDialogParams {
-  bindings: GpBinding[];
-  listeningIdx: number;
-  listenSrcLabel: string;
-  onBindingClick: (idx: number) => void;
-  onPreset: (idx: number) => void;
-  onKeyEvent: (event: KeyEvent) => void;
+  initialBindings: GpBinding[];
+  onConfirm: (bindings: GpBinding[]) => void;
   onClose: () => void;
 }
 
 @ComponentV2
 struct GamepadDialogContent {
-  @Param bindings: GpBinding[] = [];
-  @Param listeningIdx: number = -1;
-  @Param listenSrcLabel: string = '';
-  @Event onBindingClick: (idx: number) => void = (_idx: number) => {};
-  @Event onPreset: (idx: number) => void = (_idx: number) => {};
-  @Event onGamepadKey: (event: KeyEvent) => void = (_event: KeyEvent) => {};
+  @Param initialBindings: GpBinding[] = [];
+  @Event onConfirm: (bindings: GpBinding[]) => void = (_b: GpBinding[]) => {};
   @Event onClose: () => void = () => {};
-  @Local scrollIdx: number = 0;
+  @Local bindings: GpBinding[] = [];
+  @Local listeningIdx: number = -1;
+  @Local listenSrcLabel: string = '';
   private scroller: Scroller = new Scroller();
+
+  aboutToAppear(): void {
+    const copy: GpBinding[] = [];
+    for (const b of this.initialBindings) {
+      const mrKeys = b.mrKeys.slice();
+      copy.push({ src: b.src, mrKeys: mrKeys });
+    }
+    this.bindings = copy;
+  }
+
+  private handleKeyResult(src: string): void {
+    if (this.listeningIdx < 0) return;
+    this.bindings[this.listeningIdx].src = src;
+    this.listeningIdx = -1;
+    this.listenSrcLabel = '';
+  }
 
   build() {
     Column() {
@@ -1237,7 +1208,13 @@ struct GamepadDialogContent {
             .backgroundColor($r('app.color.settings_slider_value_bg'))
             .borderRadius(6)
             .padding({ left: 10, right: 10 })
-            .onClick(() => { this.onPreset(idx); })
+            .onClick(() => {
+              if (idx === 0) this.bindings = defaultBindings();
+              else if (idx === 1) this.bindings = directionFirstBindings();
+              else if (idx === 2) this.bindings = numpadBindings();
+              this.listeningIdx = -1;
+              this.listenSrcLabel = '';
+            })
         }, (_opt: SelectOption, idx: number) => `${idx}`)
       }
       .width('100%')
@@ -1266,7 +1243,10 @@ struct GamepadDialogContent {
                   .borderRadius(6)
                   .border({ width: 1, color: $r('app.color.accent_color') })
                   .padding({ left: 8, right: 8 })
-                  .onClick(() => { this.onBindingClick(idx); })
+                  .onClick(() => {
+                    this.listeningIdx = idx;
+                    this.listenSrcLabel = GP_SRC_LABELS[b.src] ?? b.src;
+                  })
               }
             }
             .width('100%')
@@ -1291,7 +1271,10 @@ struct GamepadDialogContent {
           .fontColor($r('app.color.settings_cancel_btn_fg'))
           .fontSize(14)
           .borderRadius(8)
-          .onClick(() => { this.onClose(); })
+          .onClick(() => {
+            this.onConfirm(this.bindings);
+            this.onClose();
+          })
       }
       .width('100%')
       .justifyContent(FlexAlign.Center)
@@ -1302,19 +1285,32 @@ struct GamepadDialogContent {
     .borderRadius(16)
     .focusScopeId('gpDialogGroup', true, false)
     .defaultFocus(true)
-    .onKeyEvent((event: KeyEvent) => { this.onGamepadKey(event); })
+    .onKeyEvent((event: KeyEvent) => {
+      if (this.listeningIdx < 0 || event.type !== KeyType.Down) return;
+      const kc = event.keyCode;
+      let src = '';
+      if (kc === KeyCode.KEYCODE_DPAD_UP) src = 'dpad_up';
+      else if (kc === KeyCode.KEYCODE_DPAD_DOWN) src = 'dpad_down';
+      else if (kc === KeyCode.KEYCODE_DPAD_LEFT) src = 'dpad_left';
+      else if (kc === KeyCode.KEYCODE_DPAD_RIGHT) src = 'dpad_right';
+      else if (kc === KeyCode.KEYCODE_BUTTON_A) src = 'btn_a';
+      else if (kc === KeyCode.KEYCODE_BUTTON_B) src = 'btn_b';
+      else if (kc === KeyCode.KEYCODE_BUTTON_X) src = 'btn_x';
+      else if (kc === KeyCode.KEYCODE_BUTTON_Y) src = 'btn_y';
+      else if (kc === KeyCode.KEYCODE_BUTTON_L1) src = 'btn_l1';
+      else if (kc === KeyCode.KEYCODE_BUTTON_R1) src = 'btn_r1';
+      else if (kc === KeyCode.KEYCODE_BUTTON_START) src = 'btn_start';
+      else if (kc === KeyCode.KEYCODE_BUTTON_SELECT) src = 'btn_select';
+      if (src.length > 0) this.handleKeyResult(src);
+    })
   }
 }
 
 @Builder
 function GamepadDialogBuilder($$: GamepadDialogParams) {
   GamepadDialogContent({
-    bindings: $$.bindings,
-    listeningIdx: $$.listeningIdx,
-    listenSrcLabel: $$.listenSrcLabel,
-    onBindingClick: $$.onBindingClick,
-    onPreset: $$.onPreset,
-    onGamepadKey: $$.onKeyEvent,
+    initialBindings: $$.initialBindings,
+    onConfirm: $$.onConfirm,
     onClose: $$.onClose
   })
 }
