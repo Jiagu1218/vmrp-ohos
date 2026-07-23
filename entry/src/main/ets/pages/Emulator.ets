@@ -17,6 +17,7 @@ import { AvoidData } from '../common/AvoidData';
 import { HapticManager } from '../common/HapticManager';
 import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
 import { GlassPanel } from '../common/GlassPanel';
+import { GpBinding, defaultBindings as defaultGpBindings, jsonToBindings as gpJsonToBindings } from '../components/GamepadBinding';
 
 interface ScreenShellParam {
   isTop: boolean;
@@ -69,49 +70,6 @@ const SHELL_BORDER = '#2A2A4E';
 const ACCENT_COLOR = '#E94560';
 
 const STICK_DEADZONE = 0.3;
-
-interface GpBinding {
-  src: string;
-  mrKeys: number[];
-}
-
-function defaultGpBindings(): GpBinding[] {
-  const list: GpBinding[] = [
-    { src: 'dpad_up', mrKeys: [MR_KEY_UP] },
-    { src: 'dpad_down', mrKeys: [MR_KEY_DOWN] },
-    { src: 'dpad_left', mrKeys: [MR_KEY_LEFT] },
-    { src: 'dpad_right', mrKeys: [MR_KEY_RIGHT] },
-    { src: 'dpad_up_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_UP] },
-    { src: 'dpad_down_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_DOWN] },
-    { src: 'dpad_down_left', mrKeys: [MR_KEY_LEFT, MR_KEY_DOWN] },
-    { src: 'dpad_up_left', mrKeys: [MR_KEY_LEFT, MR_KEY_UP] },
-    { src: 'stick_l_up', mrKeys: [MR_KEY_UP] },
-    { src: 'stick_l_down', mrKeys: [MR_KEY_DOWN] },
-    { src: 'stick_l_left', mrKeys: [MR_KEY_LEFT] },
-    { src: 'stick_l_right', mrKeys: [MR_KEY_RIGHT] },
-    { src: 'stick_l_up_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_UP] },
-    { src: 'stick_l_down_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_DOWN] },
-    { src: 'stick_l_down_left', mrKeys: [MR_KEY_LEFT, MR_KEY_DOWN] },
-    { src: 'stick_l_up_left', mrKeys: [MR_KEY_LEFT, MR_KEY_UP] },
-    { src: 'stick_r_up', mrKeys: [MR_KEY_UP] },
-    { src: 'stick_r_down', mrKeys: [MR_KEY_DOWN] },
-    { src: 'stick_r_left', mrKeys: [MR_KEY_LEFT] },
-    { src: 'stick_r_right', mrKeys: [MR_KEY_RIGHT] },
-    { src: 'stick_r_up_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_UP] },
-    { src: 'stick_r_down_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_DOWN] },
-    { src: 'stick_r_down_left', mrKeys: [MR_KEY_LEFT, MR_KEY_DOWN] },
-    { src: 'stick_r_up_left', mrKeys: [MR_KEY_LEFT, MR_KEY_UP] },
-    { src: 'btn_a', mrKeys: [MR_KEY_SELECT] },
-    { src: 'btn_b', mrKeys: [MR_KEY_SOFTRIGHT] },
-    { src: 'btn_x', mrKeys: [MR_KEY_SOFTLEFT] },
-    { src: 'btn_y', mrKeys: [MR_KEY_STAR] },
-    { src: 'btn_l1', mrKeys: [MR_KEY_SEND] },
-    { src: 'btn_r1', mrKeys: [MR_KEY_POUND] },
-    { src: 'btn_start', mrKeys: [MR_KEY_POWER] },
-    { src: 'btn_select', mrKeys: [MR_KEY_SOFTLEFT] }
-  ];
-  return list;
-}
 
 function keyCodeToSrc(keyCode: number): string {
   if (keyCode === KeyCode.KEYCODE_DPAD_UP) return 'dpad_up';
@@ -809,14 +767,7 @@ struct EmulatorPage {
   private applyGpBindings(bindingsJson: string): void {
     if (bindingsJson.length > 0) {
       try {
-        const arr = JSON.parse(bindingsJson) as Record<string, Object>[];
-        const list: GpBinding[] = [];
-        for (const obj of arr) {
-          const src = obj['src'] as string;
-          const mrKeys = obj['mrKeys'] as number[];
-          list.push({ src: src, mrKeys: mrKeys });
-        }
-        this.gpBindings = list;
+        this.gpBindings = gpJsonToBindings(bindingsJson);
       } catch (_e) {
         this.gpBindings = defaultGpBindings();
       }
