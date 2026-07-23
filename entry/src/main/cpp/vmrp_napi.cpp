@@ -391,6 +391,13 @@ static napi_value SetShakeIntensity(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// getXengineUpscaleMode() → number: 0=自研shader, 1=GPU超分, 2=AI超分
+static napi_value GetXengineUpscaleMode(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_int32(env, g_renderer.XengineUpscaleMode(), &result);
+    return result;
+}
+
 // setDisplayFilter(filterType, screenEffect, screenEffectStrength, brightness, contrast, saturation, subpixelRender, gammaCorrect, dither)
 // filterType: 0=Nearest,1=Bilinear,2=EPX,3=xBRZ,4=FSRCNNX
 // screenEffect: 0=关闭,1=完整CRT,2=LCD网格,3=仅扫描线
@@ -741,6 +748,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"setMotionSensitivity", nullptr, SetMotionSensitivity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setShakeIntensity", nullptr, SetShakeIntensity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setDisplayFilter", nullptr, SetDisplayFilter, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getXengineUpscaleMode", nullptr, GetXengineUpscaleMode, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startDsmB", nullptr, StartDsmB, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startDsmC", nullptr, StartDsmC, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startDsmEx", nullptr, StartDsmEx, nullptr, nullptr, nullptr, napi_default, nullptr},

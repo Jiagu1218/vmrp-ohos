@@ -19,6 +19,19 @@
 #include <cstring>
 #include <malloc.h>
 #include <native_window/external_window.h>
+#include <native_buffer/native_buffer.h>
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#ifdef HAS_XENGINE
+#include <xengine/xeg_gles_extension.h>
+#include <xengine/xeg_gles_neural_upscale.h>
+#include <xengine/xeg_gles_spatial_upscale.h>
+#endif
+
+// EGL/GLES extension types not in OHOS standard headers
+typedef EGLImage (EGLAPIENTRYP PFNEGLCREATEIMAGEKHRPROC)(EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint *);
+typedef EGLBoolean (EGLAPIENTRYP PFNEGLDESTROYIMAGEKHRPROC)(EGLDisplay, EGLImage);
+typedef void (GL_APIENTRYP PFNGLEGLIMAGETARGETTEXTURE2DOESPROC)(GLenum, void *);
 
 #undef LOG_TAG
 #define LOG_TAG "vmrp_renderer"
@@ -197,25 +210,27 @@ static const char *kPostprocFrag =
     "uniform int u_gamma_correct;\n"
     "uniform int u_subpixel_render;\n"
     "uniform int u_dither;\n"
+    "uniform int u_flip_y;\n"
     "\n"
     "vec3 srgbToLinear(vec3 c) { return pow(c, vec3(2.2)); }\n"
     "vec3 linearToSrgb(vec3 c) { return pow(c, vec3(0.4545)); }\n"
     "\n"
     "void main() {\n"
+    "  vec2 uv = u_flip_y == 1 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv;\n"
     "  vec4 c;\n"
     "  // 子像素渲染\n"
     "  if (u_subpixel_render == 1) {\n"
     "    float dx3 = 1.0 / (u_texture_size.x * 3.0);\n"
-    "    float r = texture(u_tex, v_uv + vec2(-dx3, 0.0)).r;\n"
-    "    float g = texture(u_tex, v_uv).g;\n"
-    "    float b = texture(u_tex, v_uv + vec2( dx3, 0.0)).b;\n"
+    "    float r = texture(u_tex, uv + vec2(-dx3, 0.0)).r;\n"
+    "    float g = texture(u_tex, uv).g;\n"
+    "    float b = texture(u_tex, uv + vec2( dx3, 0.0)).b;\n"
     "    c = vec4(r, g, b, 1.0);\n"
     "  } else {\n"
-    "    c = texture(u_tex, v_uv);\n"
+    "    c = texture(u_tex, uv);\n"
     "  }\n"
     "  // phosphor glow (前帧混合)\n"
     "  if (u_screen_effect == 1) {\n"
-    "    vec4 prev = texture(u_prev_tex, v_uv);\n"
+    "    vec4 prev = texture(u_prev_tex, uv);\n"
     "    c.rgb = mix(c.rgb, prev.rgb, 0.12 * u_screen_effect_strength);\n"
     "  }\n"
     "  // gamma校正: 转线性空间做亮度/对比度/饱和度调整\n"
@@ -230,13 +245,13 @@ static const char *kPostprocFrag =
     "  }\n"
     "  // CRT扫描线 + shadow mask\n"
     "  if (u_screen_effect == 1 || u_screen_effect == 3) {\n"
-    "    float line = fract(v_uv.y * u_texture_size.y);\n"
+    "    float line = fract(uv.y * u_texture_size.y);\n"
     "    float mask = smoothstep(0.3, 0.7, line);\n"
     "    c.rgb *= mix(1.0, mask, u_screen_effect_strength);\n"
     "  }\n"
     "  // CRT shadow mask (aperture grille)\n"
     "  if (u_screen_effect == 1) {\n"
-    "    float px_x = fract(v_uv.x * u_texture_size.x);\n"
+    "    float px_x = fract(uv.x * u_texture_size.x);\n"
     "    vec3 smask = vec3(\n"
     "      smoothstep(0.0, 0.15, px_x) * (1.0 - smoothstep(0.28, 0.33, px_x)),\n"
     "      smoothstep(0.33, 0.48, px_x) * (1.0 - smoothstep(0.61, 0.66, px_x)),\n"
@@ -247,13 +262,13 @@ static const char *kPostprocFrag =
     "  }\n"
     "  // LCD网格\n"
     "  if (u_screen_effect == 2) {\n"
-    "    float px_x = fract(v_uv.x * u_texture_size.x);\n"
+    "    float px_x = fract(uv.x * u_texture_size.x);\n"
     "    float grid = smoothstep(0.0, 0.05, px_x) * (1.0 - smoothstep(0.95, 1.0, px_x));\n"
     "    c.rgb *= mix(1.0, grid * 0.85 + 0.15, u_screen_effect_strength);\n"
     "  }\n"
     "  // Bayer 4x4 有序抖动（消除565→888色带）\n"
     "  if (u_dither == 1) {\n"
-    "    ivec2 px = ivec2(v_uv * u_texture_size);\n"
+    "    ivec2 px = ivec2(uv * u_texture_size);\n"
     "    int idx = (px.x & 3) + (px.y & 3) * 4;\n"
     "    float bayer[16] = float[16](0.0/16.0, 8.0/16.0, 2.0/16.0, 10.0/16.0,\n"
     "                                12.0/16.0, 4.0/16.0, 14.0/16.0, 6.0/16.0,\n"
@@ -422,6 +437,7 @@ int VmrpRenderer::InitGL() {
     ul_pp_u_gamma_correct_ = glGetUniformLocation(prog_postproc_, "u_gamma_correct");
     ul_pp_u_subpixel_render_ = glGetUniformLocation(prog_postproc_, "u_subpixel_render");
     ul_pp_u_dither_ = glGetUniformLocation(prog_postproc_, "u_dither");
+    ul_pp_u_flip_y_ = glGetUniformLocation(prog_postproc_, "u_flip_y");
 
     ul_out_u_tex_ = glGetUniformLocation(prog_output_, "u_tex");
     ul_out_u_screen_effect_ = glGetUniformLocation(prog_output_, "u_screen_effect");
@@ -449,6 +465,10 @@ int VmrpRenderer::InitGL() {
 
 void VmrpRenderer::DestroyGL() {
     DestroyFBOs();
+#ifdef HAS_XENGINE
+    DestroyFboXeg();
+    DestroyAiInputBuffer();
+#endif
     if (texture_) { glDeleteTextures(1, &texture_); texture_ = 0; }
     if (vao_) { glDeleteVertexArrays(1, &vao_); vao_ = 0; }
     if (pbo_[0] || pbo_[1]) { glDeleteBuffers(2, pbo_); pbo_[0] = pbo_[1] = 0; }
@@ -580,6 +600,7 @@ int VmrpRenderer::OnSurfaceCreated(void *window) {
     surface_h_ = sh;
 
     if (InitGL() != 0) return -1;
+    ProbeXengine();
     glDisable(GL_DEPTH_TEST);
     LOGI("surface created, EGL %d.%d, surface %dx%d", major, minor, surface_w_, surface_h_);
     return 0;
@@ -693,6 +714,7 @@ void VmrpRenderer::ApplyPostprocUniforms() {
     glUniform1i(ul_pp_u_gamma_correct_, gamma_correct_);
     glUniform1i(ul_pp_u_subpixel_render_, subpixel_render_);
     glUniform1i(ul_pp_u_dither_, dither_enabled_);
+    glUniform1i(ul_pp_u_flip_y_, 0);
     glUniform1i(ul_pp_u_tex_, 0);
     glUniform1i(ul_pp_u_prev_tex_, 1);
 }
@@ -706,6 +728,138 @@ void VmrpRenderer::ApplyOutputUniforms() {
     glUniform1i(ul_out_u_rotation_, current_rotation_);
     glUniform1i(ul_out_u_tex_, 0);
 }
+
+void VmrpRenderer::ProbeXengine() {
+    if (xengine_probed_) return;
+    xengine_probed_ = true;
+#ifdef HAS_XENGINE
+    EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+    if (!mc) return;
+
+    const char *extensions = reinterpret_cast<const char *>(HMS_XEG_GetString(XEG_EXTENSIONS));
+    if (!extensions) {
+        LOGI("XEngine: no extensions (device may not support XEngine)");
+        return;
+    }
+    LOGI("XEngine extensions: %s", extensions);
+
+    if (strstr(extensions, XEG_NEURAL_UPSCALE_EXTENSION_NAME)) {
+        xengine_mode_ = 2;
+        LOGI("XEngine: AI neural upscale available");
+    } else if (strstr(extensions, XEG_SPATIAL_UPSCALE_EXTENSION_NAME)) {
+        xengine_mode_ = 1;
+        LOGI("XEngine: GPU spatial upscale available");
+    } else {
+        LOGI("XEngine: no upscale extension found");
+    }
+#else
+    LOGI("XEngine: not available (built without HMS SDK)");
+#endif
+}
+
+#ifdef HAS_XENGINE
+void VmrpRenderer::EnsureFboXeg(int32_t w, int32_t h) {
+    if (fbo_xeg_w_ == w && fbo_xeg_h_ == h && fbo_xeg_ != 0) return;
+    DestroyFboXeg();
+    if (w <= 0 || h <= 0) return;
+    glGenFramebuffers(1, &fbo_xeg_);
+    glGenTextures(1, &fbo_tex_xeg_);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex_xeg_);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_xeg_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, fbo_tex_xeg_, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    fbo_xeg_w_ = w;
+    fbo_xeg_h_ = h;
+    LOGI("FBO_XEG created %dx%d (fbo=%u tex=%u)", w, h, fbo_xeg_, fbo_tex_xeg_);
+}
+
+void VmrpRenderer::DestroyFboXeg() {
+    if (fbo_xeg_) { glDeleteFramebuffers(1, &fbo_xeg_); fbo_xeg_ = 0; }
+    if (fbo_tex_xeg_) { glDeleteTextures(1, &fbo_tex_xeg_); fbo_tex_xeg_ = 0; }
+    fbo_xeg_w_ = fbo_xeg_h_ = 0;
+}
+
+void VmrpRenderer::CreateAiInputBuffer(int32_t w, int32_t h) {
+    if (ai_w_ == w && ai_h_ == h && ai_tex_ != 0) return;
+    DestroyAiInputBuffer();
+    if (w <= 0 || h <= 0) return;
+
+    OH_NativeBuffer_Config config = {};
+    config.width = static_cast<uint32_t>(w);
+    config.height = static_cast<uint32_t>(h);
+    config.usage = NATIVEBUFFER_USAGE_CPU_READ | NATIVEBUFFER_USAGE_CPU_WRITE
+                 | NATIVEBUFFER_USAGE_HW_RENDER | NATIVEBUFFER_USAGE_HW_TEXTURE
+                 | NATIVEBUFFER_USAGE_MEM_DMA;
+    config.format = NATIVEBUFFER_PIXEL_FMT_RGBA_8888;
+    ai_native_buf_ = OH_NativeBuffer_Alloc(&config);
+    if (!ai_native_buf_) {
+        LOGE("AI upscale: OH_NativeBuffer_Alloc failed");
+        return;
+    }
+
+    OHNativeWindowBuffer *nwb = OH_NativeWindow_CreateNativeWindowBufferFromNativeBuffer(ai_native_buf_);
+    if (!nwb) {
+        LOGE("AI upscale: CreateNativeWindowBufferFromNativeBuffer failed");
+        return;
+    }
+
+    PFNEGLCREATEIMAGEKHRPROC fpCreateImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(
+        eglGetProcAddress("eglCreateImageKHR"));
+    PFNGLEGLIMAGETARGETTEXTURE2DOESPROC fpImageTargetTex = reinterpret_cast<PFNGLEGLIMAGETARGETTEXTURE2DOESPROC>(
+        eglGetProcAddress("glEGLImageTargetTexture2DOES"));
+    if (!fpCreateImage || !fpImageTargetTex) {
+        LOGE("AI upscale: EGL image extensions not available");
+        return;
+    }
+
+    ai_egl_image_ = fpCreateImage(egl_display_, EGL_NO_CONTEXT,
+                                   EGL_NATIVE_BUFFER_OHOS,
+                                   static_cast<EGLClientBuffer>(nwb), nullptr);
+    if (!ai_egl_image_) {
+        LOGE("AI upscale: eglCreateImageKHR failed");
+        return;
+    }
+
+    glGenTextures(1, &ai_tex_);
+    glBindTexture(GL_TEXTURE_2D, ai_tex_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    fpImageTargetTex(GL_TEXTURE_2D, ai_egl_image_);
+
+    glGenFramebuffers(1, &ai_fbo_);
+    glBindFramebuffer(GL_FRAMEBUFFER, ai_fbo_);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, ai_tex_, 0);
+    GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    if (status != GL_FRAMEBUFFER_COMPLETE) {
+        LOGE("AI upscale: FBO incomplete status=0x%x", status);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+    ai_w_ = w;
+    ai_h_ = h;
+    LOGI("AI upscale: input buffer created %dx%d (tex=%u fbo=%u)", w, h, ai_tex_, ai_fbo_);
+}
+
+void VmrpRenderer::DestroyAiInputBuffer() {
+    if (ai_fbo_) { glDeleteFramebuffers(1, &ai_fbo_); ai_fbo_ = 0; }
+    if (ai_tex_) { glDeleteTextures(1, &ai_tex_); ai_tex_ = 0; }
+    if (ai_egl_image_) {
+        PFNEGLDESTROYIMAGEKHRPROC fpDestroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
+            eglGetProcAddress("eglDestroyImageKHR"));
+        if (fpDestroyImage) fpDestroyImage(egl_display_, ai_egl_image_);
+        ai_egl_image_ = nullptr;
+    }
+    if (ai_native_buf_) { OH_NativeBuffer_Unreference(ai_native_buf_); ai_native_buf_ = nullptr; }
+    ai_w_ = ai_h_ = 0;
+}
+#endif // HAS_XENGINE
 
 bool VmrpRenderer::CanBypass() const {
     return filter_type_ == 0
@@ -838,7 +992,211 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display
     return 0;
 }
 
+#ifdef HAS_XENGINE
+int VmrpRenderer::RenderRgb565Xengine(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
+    if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
+    current_rotation_ = rotation & 3;
+
+    // ── Dirty skip ──
+    if (!last_frame_dirty_) {
+        idle_swap_count_++;
+        if (idle_swap_count_ > 3) {
+            eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+            eglSwapBuffers(egl_display_, egl_surface_);
+            return 0;
+        }
+    }
+    last_frame_dirty_ = false;
+    idle_swap_count_ = 0;
+
+    EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+    if (!mc) return -1;
+
+    // ── 上传源纹理 RGB565 ──
+    if (tex_w_ != display_w || tex_h_ != display_h) {
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, display_w, display_h, 0,
+                     GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
+        tex_w_ = display_w;
+        tex_h_ = display_h;
+        prev_filter_type_ = -1;
+    }
+
+    const size_t data_size = static_cast<size_t>(display_w) * display_h * 2;
+    if (pbo_size_ < static_cast<int32_t>(data_size)) {
+        for (int i = 0; i < 2; ++i) {
+            if (pbo_[i]) glDeleteBuffers(1, &pbo_[i]);
+            glGenBuffers(1, &pbo_[i]);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[i]);
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, data_size, nullptr, GL_STREAM_DRAW);
+        }
+        pbo_size_ = static_cast<int32_t>(data_size);
+    }
+    pbo_idx_ = 1 - pbo_idx_;
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[pbo_idx_]);
+    void *ptr = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, data_size,
+                                  GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+    bool pbo_ok = false;
+    if (ptr) {
+        memcpy(ptr, src, data_size);
+        glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+        pbo_ok = true;
+    }
+    if (pbo_ok) {
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h,
+                        GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    } else {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h,
+                        GL_RGB, GL_UNSIGNED_SHORT_5_6_5, src);
+    }
+
+    int32_t vp_w = surface_w_ > 0 ? surface_w_ : display_w;
+    int32_t vp_h = surface_h_ > 0 ? surface_h_ : display_h;
+
+    // ── XEngine 超分 ──
+    GLuint xeg_input_tex = texture_;
+
+    if (xengine_mode_ == 2) {
+        // AI neural upscale: 需要 OH_NativeBuffer 纹理，宽度≥448
+        int32_t ai_w = display_w;
+        int32_t ai_h = display_h;
+        if (display_w < 448) {
+            ai_w = display_w * 2;
+            ai_h = display_h * 2;
+        }
+
+        CreateAiInputBuffer(ai_w, ai_h);
+        if (!ai_tex_ || !ai_native_buf_ || !ai_fbo_) {
+            LOGE("AI upscale: input buffer creation failed, fallback to shader");
+            xengine_mode_ = 0;
+            return RenderRgb565(src, display_w, display_h, rotation);
+        }
+
+        // 源纹理 → ai_fbo_（OH_NativeBuffer关联纹理，GPU直写零拷贝）
+        glBindFramebuffer(GL_FRAMEBUFFER, ai_fbo_);
+        glViewport(0, 0, ai_w, ai_h);
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glUseProgram(prog_upscale_);
+        glUniform2f(ul_up_u_texture_size_, static_cast<float>(display_w), static_cast<float>(display_h));
+        glUniform1i(ul_up_u_filter_, 0);
+        glUniform1i(ul_up_u_tex_, 0);
+        glBindVertexArray(vao_);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+
+        // 设置AI超分参数
+        unsigned int scissor[4] = {0, 0, static_cast<unsigned int>(ai_w), static_cast<unsigned int>(ai_h)};
+        HMS_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_SCISSOR, scissor);
+        float sharpness = 0.2f;
+        HMS_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_SHARPNESS, &sharpness);
+        HMS_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_INPUT_HANDLE, ai_native_buf_);
+
+        xeg_input_tex = ai_tex_;
+    } else if (xengine_mode_ == 1) {
+        // GPU spatial upscale: 直接用源纹理，无需OH_NativeBuffer
+        float sharpness = 0.5f;
+        HMS_XEG_SpatialUpscaleParameter(XEG_SPATIAL_UPSCALE_SHARPNESS, &sharpness);
+    }
+
+    // ── XEngine 超分渲染到 FBO_XEG ──
+    EnsureFboXeg(vp_w, vp_h);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_xeg_);
+    glViewport(0, 0, vp_w, vp_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUseProgram(0);
+    glBindVertexArray(0);
+    for (int i = 0; i < 4; ++i) {
+        glActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    glActiveTexture(GL_TEXTURE0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+
+    if (xengine_mode_ == 2) {
+        HMS_XEG_RenderNeuralUpscale(xeg_input_tex);
+    } else {
+        HMS_XEG_RenderSpatialUpscale(xeg_input_tex);
+    }
+
+    GLenum xeg_err = glGetError();
+    if (xeg_err != GL_NO_ERROR) {
+        LOGE("GL error after XEngine render: 0x%x", xeg_err);
+    }
+
+    // ── 后处理 Pass: FBO_XEG → FBO_B ──
+    int32_t pp_w = vp_w;
+    int32_t pp_h = vp_h;
+    if (fbo_w_ != pp_w || fbo_h_ != pp_h) {
+        CreateFBOs(pp_w, pp_h);
+    }
+
+    glUseProgram(prog_postproc_);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo_b_);
+    glViewport(0, 0, pp_w, pp_h);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex_xeg_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex_prev_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    ApplyPostprocUniforms();
+    glUniform1i(ul_pp_u_flip_y_, 0);
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    // ── 输出 Pass: FBO_B → 屏幕 ──
+    while (glGetError() != GL_NO_ERROR) {}
+    glUseProgram(prog_output_);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, vp_w, vp_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, fbo_tex_b_);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    ApplyOutputUniforms();
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    while (glGetError() != GL_NO_ERROR) {}
+
+    // phosphor glow swap
+    if (screen_effect_ == 1) {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo_b_);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo_prev_);
+        glBlitFramebuffer(0, 0, pp_w, pp_h, 0, 0, pp_w, pp_h,
+                          GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    }
+
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
+    eglSwapBuffers(egl_display_, egl_surface_);
+    return 0;
+}
+#endif // HAS_XENGINE
+
 int VmrpRenderer::RenderRgb565(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
+#ifdef HAS_XENGINE
+    if (xengine_mode_ > 0 && filter_type_ == 4) return RenderRgb565Xengine(src, display_w, display_h, rotation);
+#endif
     if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
     current_rotation_ = rotation & 3;
 

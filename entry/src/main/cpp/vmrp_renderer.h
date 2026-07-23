@@ -15,6 +15,9 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <cstdint>
+#ifdef HAS_XENGINE
+#include <native_buffer/native_buffer.h>
+#endif
 
 class VmrpRenderer {
 public:
@@ -50,6 +53,10 @@ public:
 
     void SetDirty() { last_frame_dirty_ = true; idle_swap_count_ = 0; }
 
+    // XEngine 超分模式：0=自研shader, 1=GPU超分, 2=AI超分
+    int XengineUpscaleMode() const { return xengine_mode_; }
+    void ProbeXengine();
+
 private:
     int InitGL();
     void DestroyGL();
@@ -61,6 +68,14 @@ private:
     void UpdateTextureFilter();
     bool CanBypass() const;
     void RenderBypass(int32_t display_w, int32_t display_h);
+#ifdef HAS_XENGINE
+    void EnsureFboXeg(int32_t w, int32_t h);
+    void DestroyFboXeg();
+    void CreateAiInputBuffer(int32_t w, int32_t h);
+    void DestroyAiInputBuffer();
+    int RenderRgb565Xengine(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation);
+#endif
+
     // RGB565→RGBA CPU 转换（含可选 Bayer 抖动）
     void ConvertRgb565ToRgba(const uint16_t *src, uint32_t *dst, int32_t pixels);
 
@@ -105,6 +120,24 @@ private:
     bool last_frame_dirty_ = true;
     int  idle_swap_count_  = 0;
 
+    // XEngine 超分
+    int xengine_mode_ = 0;  // 0=无, 1=GPU超分, 2=AI超分
+    bool xengine_probed_ = false;
+
+#ifdef HAS_XENGINE
+    // XEngine 超分输出FBO（surface分辨率）
+    GLuint fbo_xeg_ = 0, fbo_tex_xeg_ = 0;
+    int32_t fbo_xeg_w_ = 0, fbo_xeg_h_ = 0;
+
+    // AI超分需要 OH_NativeBuffer 关联的输入纹理（宽度≥448）
+    OH_NativeBuffer *ai_native_buf_ = nullptr;
+    EGLImage         ai_egl_image_ = nullptr;
+    GLuint           ai_tex_ = 0;
+    GLuint           ai_fbo_ = 0;
+    int32_t          ai_w_ = 0;
+    int32_t          ai_h_ = 0;
+#endif
+
     // 滤镜参数
     int   filter_type_             = 0;
     int   screen_effect_           = 0;
@@ -135,6 +168,7 @@ private:
     GLint ul_pp_u_gamma_correct_ = -1;
     GLint ul_pp_u_subpixel_render_ = -1;
     GLint ul_pp_u_dither_ = -1;
+    GLint ul_pp_u_flip_y_ = -1;
 
     // uniform locations - output pass
     GLint ul_out_u_tex_ = -1;

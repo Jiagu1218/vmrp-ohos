@@ -91,6 +91,7 @@ export struct SettingsPage {
   @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
   @Local speedMultIndex: number = 0;
   @Local gpBindings: GpBinding[] = defaultBindings();
+  @Local xengineMode: number = 0;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -102,6 +103,7 @@ export struct SettingsPage {
     this.strengthIndex = STRENGTH_VALUES.indexOf(this.hapticState.strength);
     if (this.strengthIndex < 0) this.strengthIndex = 1;
     this.loadPrefsSync();
+    try { this.xengineMode = this.engine.getXengineUpscaleMode(); } catch (_e) {}
   }
 
   loadPrefsSync(): void {
@@ -513,7 +515,9 @@ export struct SettingsPage {
                     }
                   })
                 }
-                SDesc({ text: '原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线，AI超分使用 FSRCNNX 锐化上采样。即时生效。' })
+                SDesc({ text: this.xengineMode > 0
+                  ? '当前设备支持马良GPU硬件超分' + (this.xengineMode === 2 ? '（AI超分），选择AI超分时自动使用马良神经网络上采样' : '（空域超分），选择AI超分时自动使用马良GPU空域上采样') + '，画质优于自研FSRCNNX。即时生效。'
+                  : '原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线，AI超分使用FSRCNNX锐化上采样。即时生效。' })
 
                 SDivider()
                 SRow({ label: '屏幕效果' }) {
