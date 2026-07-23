@@ -196,6 +196,7 @@ static const char *kPostprocFrag =
     "uniform float u_screen_effect_strength;\n"
     "uniform int u_gamma_correct;\n"
     "uniform int u_subpixel_render;\n"
+    "uniform int u_dither;\n"
     "\n"
     "vec3 srgbToLinear(vec3 c) { return pow(c, vec3(2.2)); }\n"
     "vec3 linearToSrgb(vec3 c) { return pow(c, vec3(0.4545)); }\n"
@@ -249,6 +250,17 @@ static const char *kPostprocFrag =
     "    float px_x = fract(v_uv.x * u_texture_size.x);\n"
     "    float grid = smoothstep(0.0, 0.05, px_x) * (1.0 - smoothstep(0.95, 1.0, px_x));\n"
     "    c.rgb *= mix(1.0, grid * 0.85 + 0.15, u_screen_effect_strength);\n"
+    "  }\n"
+    "  // Bayer 4x4 有序抖动（消除565→888色带）\n"
+    "  if (u_dither == 1) {\n"
+    "    ivec2 px = ivec2(v_uv * u_texture_size);\n"
+    "    int idx = (px.x & 3) + (px.y & 3) * 4;\n"
+    "    float bayer[16] = float[16](0.0/16.0, 8.0/16.0, 2.0/16.0, 10.0/16.0,\n"
+    "                                12.0/16.0, 4.0/16.0, 14.0/16.0, 6.0/16.0,\n"
+    "                                 3.0/16.0, 11.0/16.0, 1.0/16.0, 9.0/16.0,\n"
+    "                                15.0/16.0, 7.0/16.0, 13.0/16.0, 5.0/16.0);\n"
+    "    float d = bayer[idx] - 0.5;\n"
+    "    c.rgb += d / 255.0;\n"
     "  }\n"
     "  c.rgb = clamp(c.rgb, 0.0, 1.0);\n"
     "  frag = c;\n"
@@ -409,6 +421,7 @@ int VmrpRenderer::InitGL() {
     ul_pp_u_screen_effect_strength_ = glGetUniformLocation(prog_postproc_, "u_screen_effect_strength");
     ul_pp_u_gamma_correct_ = glGetUniformLocation(prog_postproc_, "u_gamma_correct");
     ul_pp_u_subpixel_render_ = glGetUniformLocation(prog_postproc_, "u_subpixel_render");
+    ul_pp_u_dither_ = glGetUniformLocation(prog_postproc_, "u_dither");
 
     ul_out_u_tex_ = glGetUniformLocation(prog_output_, "u_tex");
     ul_out_u_screen_effect_ = glGetUniformLocation(prog_output_, "u_screen_effect");
@@ -679,6 +692,7 @@ void VmrpRenderer::ApplyPostprocUniforms() {
     glUniform1f(ul_pp_u_screen_effect_strength_, screen_effect_strength_);
     glUniform1i(ul_pp_u_gamma_correct_, gamma_correct_);
     glUniform1i(ul_pp_u_subpixel_render_, subpixel_render_);
+    glUniform1i(ul_pp_u_dither_, dither_enabled_);
     glUniform1i(ul_pp_u_tex_, 0);
     glUniform1i(ul_pp_u_prev_tex_, 1);
 }
@@ -699,7 +713,8 @@ bool VmrpRenderer::CanBypass() const {
         && brightness_ == 0.0f
         && contrast_ == 1.0f
         && saturation_ == 1.0f
-        && subpixel_render_ == 0;
+        && subpixel_render_ == 0
+        && dither_enabled_ == 0;
 }
 
 void VmrpRenderer::RenderBypass(int32_t display_w, int32_t display_h) {

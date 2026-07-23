@@ -134,6 +134,7 @@ private:
     GLint ul_pp_u_screen_effect_strength_ = -1;
     GLint ul_pp_u_gamma_correct_ = -1;
     GLint ul_pp_u_subpixel_render_ = -1;
+    GLint ul_pp_u_dither_ = -1;
 
     // uniform locations - output pass
     GLint ul_out_u_tex_ = -1;
