@@ -845,7 +845,7 @@ int VmrpRenderer::RenderRgb565(const uint16_t *src, int32_t display_w, int32_t d
     // ── 纹理尺寸变化时重新分配（internalFormat=RGBA，但上传格式=RGB565）──
     if (tex_w_ != display_w || tex_h_ != display_h) {
         glBindTexture(GL_TEXTURE_2D, texture_);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, display_w, display_h, 0,
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, display_w, display_h, 0,
                      GL_RGB, GL_UNSIGNED_SHORT_5_6_5, nullptr);
         tex_w_ = display_w;
         tex_h_ = display_h;
