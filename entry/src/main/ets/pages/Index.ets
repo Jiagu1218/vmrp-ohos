@@ -105,8 +105,11 @@ struct Index {
   }
 
   private rebuildGroups(): void {
-    if (this.sortMode === 1 && this.searchQuery.length === 0 && this.currentTab === 0) {
-      this.groupedItems = groupByLetter(this.mrpList);
+    if (this.sortMode === 1 && this.searchQuery.length === 0) {
+      const list = this.currentTab === 1
+        ? this.mrpList.filter((item: MrpInfoData) => this.favStore.isFavorite(item.filePath))
+        : this.mrpList;
+      this.groupedItems = groupByLetter(list);
       this.indexArray = buildIndexArray(this.groupedItems);
     } else {
       this.groupedItems = [];
@@ -116,7 +119,7 @@ struct Index {
 
   private rebuildFlatItems(): void {
     const items: FlatItem[] = [];
-    if (this.currentTab === 1) {
+    if (this.currentTab === 1 && (this.sortMode === 0 || this.searchQuery.length > 0)) {
       for (const card of this.mrpList) {
         if (this.favStore.isFavorite(card.filePath)) {
           items.push({ type: 'card', letter: '', data: card, key: card.filePath });
@@ -479,16 +482,13 @@ struct Index {
         AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
           .color($r('app.color.settings_desc_color'))
           .selectedColor($r('app.color.accent_color'))
-          .popupColor($r('app.color.accent_color'))
-          .selectedBackgroundColor($r('app.color.settings_card_bg'))
-          .popupBackground($r('app.color.settings_card_bg'))
-          .usingPopup(true)
+          .usingPopup(false)
           .font({ size: 10 })
           .selectedFont({ size: 12, weight: FontWeight.Bold })
           .popupFont({ size: 24, weight: FontWeight.Bold })
           .itemSize(24)
           .alignStyle(IndexerAlign.Left)
-          .popupPosition({ x: -72, y: 0 })
+          .popupPosition({ x: -72, y: this.titleBarOffset })
           .width(24)
           .height('100%')
           .margin({ right: 4 })
@@ -512,63 +512,121 @@ struct Index {
 
   @Builder
   favoritesContent() {
-    Refresh({ refreshing: $$this.isRefreshing }) {
-      List({ space: 8, scroller: this.favScroller }) {
-        ListItem() {
-          Column().width('100%').height(this.titleBarOffset)
-        }
-        if (this.isScanning) {
+    Stack({ alignContent: Alignment.End }) {
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        List({ space: 8, scroller: this.favScroller }) {
           ListItem() {
-            Column() {
-              LoadingProgress()
-                .width(40)
-                .height(40)
-                .color($r('app.color.accent_color'))
-              Text('扫描中...')
-                .fontSize(13)
-                .fontColor($r('app.color.settings_desc_color'))
-                .margin({ top: 12 })
-            }
-            .width('100%')
-            .height(200)
-            .justifyContent(FlexAlign.Center)
-            .alignItems(HorizontalAlign.Center)
+            Column().width('100%').height(this.titleBarOffset)
           }
-        } else if (this.flatItems.length === 0) {
-          ListItem() {
-            this.emptyStateBuilder()
-          }
-        } else {
-          Repeat<FlatItem>(this.flatItems)
-            .each((ri: RepeatItem<FlatItem>) => {
-              ListItem() {
-                Text(ri.item.data.appname)
+          if (this.isScanning) {
+            ListItem() {
+              Column() {
+                LoadingProgress()
+                  .width(40)
+                  .height(40)
+                  .color($r('app.color.accent_color'))
+                Text('扫描中...')
+                  .fontSize(13)
+                  .fontColor($r('app.color.settings_desc_color'))
+                  .margin({ top: 12 })
               }
-            })
-            .key((item: FlatItem): string => item.key)
-            .template('card', (ri: RepeatItem<FlatItem>) => {
-              this.cardItemBuilder(ri)
-            }, { cachedCount: 5 })
-            .virtualScroll({ totalCount: this.flatItems.length })
+              .width('100%')
+              .height(200)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
+            }
+          } else if (this.flatItems.length === 0) {
+            ListItem() {
+              this.emptyStateBuilder()
+            }
+          } else {
+            Repeat<FlatItem>(this.flatItems)
+              .each((ri: RepeatItem<FlatItem>) => {
+                ListItem() {
+                  Text(ri.item.data.appname)
+                }
+              })
+              .key((item: FlatItem): string => item.key)
+              .templateId((item: FlatItem): string => item.type)
+              .template('header', (ri: RepeatItem<FlatItem>) => {
+                ListItem() {
+                  Text(ri.item.letter)
+                    .fontSize(14)
+                    .fontColor($r('app.color.settings_desc_color'))
+                    .fontWeight(FontWeight.Medium)
+                    .width('100%')
+                    .padding({ left: 20, top: 16, bottom: 4 })
+                }
+              })
+              .template('card', (ri: RepeatItem<FlatItem>) => {
+                this.cardItemBuilder(ri)
+              }, { cachedCount: 5 })
+              .virtualScroll({ totalCount: this.flatItems.length })
+          }
         }
+        .width('100%')
+        .height('100%')
+        .scrollBar(BarState.Off)
+        .padding({ left: 0, right: 0, top: 4, bottom: 84 })
+        .clip(false)
+        .cachedCount(5, true)
+        .onScrollIndex((start: number) => {
+          if (this.sortMode !== 1 || this.flatItems.length === 0) return;
+          const idx = start - 1;
+          if (idx < 0 || idx >= this.flatItems.length) return;
+          const item = this.flatItems[idx];
+          if (item.type === 'header') {
+            const ai = this.indexArray.indexOf(item.letter);
+            if (ai >= 0) this.selectedIndex = ai;
+          } else if (item.type === 'card') {
+            for (let i = idx; i >= 0; i--) {
+              if (this.flatItems[i].type === 'header') {
+                const ai = this.indexArray.indexOf(this.flatItems[i].letter);
+                if (ai >= 0) this.selectedIndex = ai;
+                break;
+              }
+            }
+          }
+        })
       }
-      .width('100%')
-      .height('100%')
-      .scrollBar(BarState.Off)
-      .padding({ left: 0, right: 0, top: 4, bottom: 84 })
+      .refreshOffset(64)
+      .pullToRefresh(true)
+      .backgroundColor(Color.Transparent)
       .clip(false)
-      .cachedCount(5, true)
+      .onRefreshing(() => {
+        this.scanMrpFiles();
+        this.isRefreshing = false;
+      })
+
+      if (this.sortMode === 1 && this.flatItems.length > 0 && this.searchQuery.length === 0) {
+        AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
+          .color($r('app.color.settings_desc_color'))
+          .selectedColor($r('app.color.accent_color'))
+          .selectedBackgroundColor($r('app.color.settings_card_bg'))
+          .usingPopup(false)
+          .font({ size: 10 })
+          .selectedFont({ size: 12, weight: FontWeight.Bold })
+          .itemSize(24)
+          .alignStyle(IndexerAlign.Left)
+          .popupPosition({ x: -72, y: this.titleBarOffset })
+          .width(24)
+          .height('100%')
+          .margin({ right: 4 })
+          .onSelect((index: number) => {
+            const letter = this.indexArray[index];
+            const flatIdx = this.flatItems.findIndex((fi: FlatItem) =>
+              fi.type === 'header' && fi.letter === letter);
+            if (flatIdx >= 0) {
+              this.favScroller.scrollToIndex(flatIdx + 1, false, ScrollAlign.CENTER);
+            }
+          })
+      }
     }
-    .refreshOffset(64)
-    .pullToRefresh(true)
-    .backgroundColor(Color.Transparent)
-    .clip(false)
-    .onRefreshing(() => {
-      this.scanMrpFiles();
-      this.isRefreshing = false;
-    })
     .width('100%')
     .height('100%')
+    .align(Alignment.TopEnd)
+    .backgroundColor(Color.Transparent)
+    .clip(false)
   }
 
   build() {
