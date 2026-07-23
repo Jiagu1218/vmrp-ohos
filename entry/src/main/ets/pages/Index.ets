@@ -1,4 +1,4 @@
-import { AppStorageV2, LengthMetrics, SymbolGlyphModifier, window, display } from '@kit.ArkUI';
+import { AppStorageV2, LengthMetrics, SymbolGlyphModifier, window, display, PromptAction, ShowDialogSuccessResponse } from '@kit.ArkUI';
 import {
   HdsNavigation, HdsNavigationTitleMode,
   HdsTabs, HdsTabsController,
@@ -31,8 +31,8 @@ struct Index {
   @Local titleBarOffset: number = 96;
   private navPathStack: NavPathStack = new NavPathStack();
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
-  private listScroller: Scroller = new Scroller();
-  private favScroller: Scroller = new Scroller();
+  private listScroller: ListScroller = new ListScroller();
+  private favScroller: ListScroller = new ListScroller();
   private hdsTabsController: HdsTabsController = new HdsTabsController();
   private rawList: MrpInfoData[] = [];
   private favStore: FavoriteStore = new FavoriteStore();
@@ -166,6 +166,14 @@ struct Index {
     this.navPathStack.pushPathByName('Settings', null);
   }
 
+  private closeSwipeActions(): void {
+    if (this.currentTab === 0) {
+      this.listScroller.closeAllSwipeActions();
+    } else {
+      this.favScroller.closeAllSwipeActions();
+    }
+  }
+
   private toggleFavorite(item: MrpInfoData): void {
     HapticManager.performClick();
     this.favStore.toggle(item.filePath);
@@ -173,11 +181,29 @@ struct Index {
     if (ctx) {
       this.favStore.saveSync(ctx);
     }
+    this.closeSwipeActions();
     this.rebuildFlatItems();
   }
 
   private deleteMrp(item: MrpInfoData): void {
     HapticManager.performClick();
+    const promptAction: PromptAction = this.getUIContext().getPromptAction();
+    promptAction.showDialog({
+      title: '删除游戏',
+      message: `确定删除「${item.appname}」吗？此操作不可恢复。`,
+      buttons: [
+        { text: '取消', color: '#007DFF' },
+        { text: '删除', color: '#E84026' }
+      ]
+    }).then((data: ShowDialogSuccessResponse) => {
+      if (data.index === 1) {
+        this.confirmDelete(item);
+      }
+    }).catch((_err: Error) => {});
+  }
+
+  private confirmDelete(item: MrpInfoData): void {
+    this.closeSwipeActions();
     try {
       fs.unlinkSync(item.filePath);
     } catch (_e) {
@@ -203,52 +229,59 @@ struct Index {
 
   @Builder
   swipeEndBuilder(item: MrpInfoData, isFav: boolean) {
-    Row() {
+    Row({ space: 16 }) {
       Column() {
         SymbolGlyph(isFav ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
           .fontSize(18)
           .fontColor([isFav ? Color.Red : Color.White])
       }
-      .width(44)
-      .height(44)
-      .borderRadius(22)
+      .width(48)
+      .height(48)
+      .borderRadius(24)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .backgroundColor(isFav ? '#33FFFFFF' : '#555577')
+      .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
+      .backdropBlur(24)
+      .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
       .onClick(() => this.toggleFavorite(item))
 
       Column() {
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(18)
-          .fontColor([Color.White])
+          .fontColor([Color.Red])
       }
-      .width(44)
-      .height(44)
-      .borderRadius(22)
+      .width(48)
+      .height(48)
+      .borderRadius(24)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .backgroundColor($r('app.color.accent_color'))
-      .margin({ left: 8 })
+      .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
+      .backdropBlur(24)
+      .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
       .onClick(() => this.deleteMrp(item))
     }
+    .padding({ left: 16 })
   }
 
   @Builder
   swipeDeleteOnlyBuilder(item: MrpInfoData) {
-    Row() {
+    Row({ space: 16 }) {
       Column() {
         SymbolGlyph($r('sys.symbol.trash'))
           .fontSize(18)
-          .fontColor([Color.White])
+          .fontColor([Color.Red])
       }
-      .width(44)
-      .height(44)
-      .borderRadius(22)
+      .width(48)
+      .height(48)
+      .borderRadius(24)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
-      .backgroundColor($r('app.color.accent_color'))
+      .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
+      .backdropBlur(24)
+      .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
       .onClick(() => this.deleteMrp(item))
     }
+    .padding({ left: 16 })
   }
 
   @Builder
@@ -370,7 +403,7 @@ struct Index {
       })
     }
     .padding({ left: 16, right: 16 })
-    .swipeAction({ end: { builder: (): void => { this.swipeEndBuilder(ri.item.data, this.favStore.isFavorite(ri.item.data.filePath)); }, actionAreaDistance: 56 } })
+    .swipeAction({ end: { builder: (): void => { this.swipeEndBuilder(ri.item.data, this.favStore.isFavorite(ri.item.data.filePath)); }, actionAreaDistance: 120 } })
     .transition(DELETE_TRANSITION)
   }
 
