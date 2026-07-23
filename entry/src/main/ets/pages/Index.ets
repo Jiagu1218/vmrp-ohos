@@ -423,7 +423,7 @@ struct Index {
             }
           }
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           .scrollBar(BarState.Off)
           .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
           .clip(false)
@@ -443,6 +443,8 @@ struct Index {
         }
         .refreshOffset(64)
         .pullToRefresh(true)
+        .backgroundColor(Color.Transparent)
+        .clip(false)
         .onRefreshing(() => {
           this.scanMrpFiles();
           this.isRefreshing = false;
@@ -476,6 +478,8 @@ struct Index {
         .width('100%')
         .layoutWeight(1)
         .align(Alignment.TopEnd)
+        .backgroundColor(Color.Transparent)
+        .clip(false)
       }
       .titleBar({
       content: {
