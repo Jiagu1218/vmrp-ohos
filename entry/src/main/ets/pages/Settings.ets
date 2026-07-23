@@ -2,6 +2,7 @@ import { AppStorageV2, ComponentContent, LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
+import { KeyCode } from '@kit.InputKit';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType, hdsMaterial } from '@kit.UIDesignKit';
 import { AvoidData } from '../common/AvoidData';
 import { HapticManager, HapticState, HapticStrength } from '../common/HapticManager';
@@ -63,57 +64,131 @@ const SCREEN_SIZE_W: number[] = [176, 240, 240, 320, 320, 480];
 const SCREEN_SIZE_H: number[] = [220, 320, 400, 480, 240, 800];
 const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
 const KEY_SPEED_MULT = 'speed_multiplier';
-const KEY_GAMEPAD_MAP = 'gamepad_mapping';
-const KEY_GAMEPAD_CUSTOM = 'gamepad_custom';
+const KEY_GAMEPAD_BINDINGS = 'gamepad_bindings';
 const SPEED_OPTIONS: SelectOption[] = [
   { value: '1x 正常' }, { value: '2x 加速' }, { value: '3x 高速' }, { value: '4x 极速' }
 ];
 const SPEED_VALUES: number[] = [1, 2, 3, 4];
-const GAMEPAD_MAP_OPTIONS: SelectOption[] = [
-  { value: '经典' }, { value: '方向优先' }, { value: '数字键盘' }, { value: '自定义' }
+const GAMEPAD_PRESET_OPTIONS: SelectOption[] = [
+  { value: '经典' }, { value: '方向优先' }, { value: '数字键盘' }
 ];
-const GAMEPAD_MAP_VALUES: number[] = [0, 1, 2, 3];
-const GAMEPAD_BTN_LABELS: string[] = ['A', 'B', 'X', 'Y', 'L1', 'R1', 'Start', 'Select'];
-const GAMEPAD_BTN_KEYS: string[] = ['a', 'b', 'x', 'y', 'l1', 'r1', 'start', 'select'];
-const MR_KEY_NAMES: string[] = [
-  '方向上', '方向下', '方向左', '方向右', '确认', '左软键', '右软键',
-  '✱ 星号', '# 井号', '电源', '拨号',
-  '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'
-];
-const MR_KEY_VALUES: number[] = [
-  12, 13, 14, 15, 20, 17, 18,
-  10, 11, 16, 19,
-  0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-];
-const MRP_KEY_OPTIONS: SelectOption[] = MR_KEY_NAMES.map((name: string, i: number) => {
-  const opt: SelectOption = { value: name };
-  return opt;
-});
 
-interface GamepadCustomMap {
-  a: number;
-  b: number;
-  x: number;
-  y: number;
-  l1: number;
-  r1: number;
-  start: number;
-  select: number;
+interface GpBinding {
+  src: string;
+  mrKeys: number[];
 }
 
-function classicMap(): GamepadCustomMap {
-  const m: GamepadCustomMap = { a: 20, b: 18, x: 17, y: 10, l1: 19, r1: 11, start: 16, select: 17 };
-  return m;
+function defaultBindings(): GpBinding[] {
+  const list: GpBinding[] = [
+    { src: 'dpad_up', mrKeys: [12] },
+    { src: 'dpad_down', mrKeys: [13] },
+    { src: 'dpad_left', mrKeys: [14] },
+    { src: 'dpad_right', mrKeys: [15] },
+    { src: 'dpad_up_right', mrKeys: [15, 12] },
+    { src: 'dpad_down_right', mrKeys: [15, 13] },
+    { src: 'dpad_down_left', mrKeys: [14, 13] },
+    { src: 'dpad_up_left', mrKeys: [14, 12] },
+    { src: 'stick_l_up', mrKeys: [12] },
+    { src: 'stick_l_down', mrKeys: [13] },
+    { src: 'stick_l_left', mrKeys: [14] },
+    { src: 'stick_l_right', mrKeys: [15] },
+    { src: 'stick_l_up_right', mrKeys: [15, 12] },
+    { src: 'stick_l_down_right', mrKeys: [15, 13] },
+    { src: 'stick_l_down_left', mrKeys: [14, 13] },
+    { src: 'stick_l_up_left', mrKeys: [14, 12] },
+    { src: 'stick_r_up', mrKeys: [12] },
+    { src: 'stick_r_down', mrKeys: [13] },
+    { src: 'stick_r_left', mrKeys: [14] },
+    { src: 'stick_r_right', mrKeys: [15] },
+    { src: 'stick_r_up_right', mrKeys: [15, 12] },
+    { src: 'stick_r_down_right', mrKeys: [15, 13] },
+    { src: 'stick_r_down_left', mrKeys: [14, 13] },
+    { src: 'stick_r_up_left', mrKeys: [14, 12] },
+    { src: 'btn_a', mrKeys: [20] },
+    { src: 'btn_b', mrKeys: [18] },
+    { src: 'btn_x', mrKeys: [17] },
+    { src: 'btn_y', mrKeys: [10] },
+    { src: 'btn_l1', mrKeys: [19] },
+    { src: 'btn_r1', mrKeys: [11] },
+    { src: 'btn_start', mrKeys: [16] },
+    { src: 'btn_select', mrKeys: [17] }
+  ];
+  return list;
 }
 
-function directionFirstMap(): GamepadCustomMap {
-  const m: GamepadCustomMap = { a: 20, b: 16, x: 17, y: 18, l1: 10, r1: 11, start: 18, select: 17 };
-  return m;
+function directionFirstBindings(): GpBinding[] {
+  const list: GpBinding[] = defaultBindings().slice();
+  list[24] = { src: 'btn_a', mrKeys: [20] };
+  list[25] = { src: 'btn_b', mrKeys: [16] };
+  list[26] = { src: 'btn_x', mrKeys: [17] };
+  list[27] = { src: 'btn_y', mrKeys: [18] };
+  list[28] = { src: 'btn_l1', mrKeys: [10] };
+  list[29] = { src: 'btn_r1', mrKeys: [11] };
+  list[30] = { src: 'btn_start', mrKeys: [18] };
+  list[31] = { src: 'btn_select', mrKeys: [17] };
+  return list;
 }
 
-function numpadMap(): GamepadCustomMap {
-  const m: GamepadCustomMap = { a: 1, b: 2, x: 3, y: 4, l1: 5, r1: 6, start: 20, select: 10 };
-  return m;
+function numpadBindings(): GpBinding[] {
+  const list: GpBinding[] = defaultBindings().slice();
+  list[24] = { src: 'btn_a', mrKeys: [1] };
+  list[25] = { src: 'btn_b', mrKeys: [2] };
+  list[26] = { src: 'btn_x', mrKeys: [3] };
+  list[27] = { src: 'btn_y', mrKeys: [4] };
+  list[28] = { src: 'btn_l1', mrKeys: [5] };
+  list[29] = { src: 'btn_r1', mrKeys: [6] };
+  list[30] = { src: 'btn_start', mrKeys: [20] };
+  list[31] = { src: 'btn_select', mrKeys: [10] };
+  return list;
+}
+
+function bindingsToJson(bindings: GpBinding[]): string {
+  const arr: Record<string, Object>[] = [];
+  for (const b of bindings) {
+    const keys: number[] = b.mrKeys.slice();
+    const obj: Record<string, Object> = { 'src': b.src, 'mrKeys': keys };
+    arr.push(obj);
+  }
+  return JSON.stringify(arr);
+}
+
+function jsonToBindings(json: string): GpBinding[] {
+  const arr = JSON.parse(json) as Record<string, Object>[];
+  const list: GpBinding[] = [];
+  for (const obj of arr) {
+    const src = obj['src'] as string;
+    const mrKeys = obj['mrKeys'] as number[];
+    list.push({ src: src, mrKeys: mrKeys });
+  }
+  return list;
+}
+
+const GP_SRC_LABELS: Record<string, string> = {
+  'dpad_up': 'D-Pad ↑', 'dpad_down': 'D-Pad ↓', 'dpad_left': 'D-Pad ←', 'dpad_right': 'D-Pad →',
+  'dpad_up_right': 'D-Pad ↗', 'dpad_down_right': 'D-Pad ↘', 'dpad_down_left': 'D-Pad ↙', 'dpad_up_left': 'D-Pad ↖',
+  'stick_l_up': '左摇杆 ↑', 'stick_l_down': '左摇杆 ↓', 'stick_l_left': '左摇杆 ←', 'stick_l_right': '左摇杆 →',
+  'stick_l_up_right': '左摇杆 ↗', 'stick_l_down_right': '左摇杆 ↘', 'stick_l_down_left': '左摇杆 ↙', 'stick_l_up_left': '左摇杆 ↖',
+  'stick_r_up': '右摇杆 ↑', 'stick_r_down': '右摇杆 ↓', 'stick_r_left': '右摇杆 ←', 'stick_r_right': '右摇杆 →',
+  'stick_r_up_right': '右摇杆 ↗', 'stick_r_down_right': '右摇杆 ↘', 'stick_r_down_left': '右摇杆 ↙', 'stick_r_up_left': '右摇杆 ↖',
+  'btn_a': 'A', 'btn_b': 'B', 'btn_x': 'X', 'btn_y': 'Y',
+  'btn_l1': 'L1', 'btn_r1': 'R1', 'btn_start': 'Start', 'btn_select': 'Select'
+};
+
+const MR_KEY_NAMES_MAP: Record<number, string> = {
+  12: '方向上', 13: '方向下', 14: '方向左', 15: '方向右',
+  20: '确认', 17: '左软键', 18: '右软键',
+  10: '✱', 11: '#', 16: '电源', 19: '拨号',
+  0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9'
+};
+
+function bindingDisplayText(b: GpBinding): string {
+  if (b.mrKeys.length === 0) return '未设置';
+  const parts: string[] = [];
+  for (const k of b.mrKeys) {
+    const name = MR_KEY_NAMES_MAP[k];
+    parts.push(name !== undefined ? name : `${k}`);
+  }
+  return parts.join(' + ');
 }
 
 const CARD_RADIUS = 20;
@@ -269,8 +344,9 @@ export struct SettingsPage {
   @Local ditherEnabled: number = DITHER_DEFAULT;
   @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
   @Local speedMultIndex: number = 0;
-  @Local gamepadMapIndex: number = 0;
-  @Local customMap: GamepadCustomMap = classicMap();
+  @Local gpBindings: GpBinding[] = defaultBindings();
+  @Local gpListeningIdx: number = -1;
+  @Local gpListenSrcLabel: string = '';
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -315,10 +391,7 @@ export struct SettingsPage {
       const speedMult = pref.getSync(KEY_SPEED_MULT, 1) as number;
       this.speedMultIndex = SPEED_VALUES.indexOf(speedMult);
       if (this.speedMultIndex < 0) this.speedMultIndex = 0;
-      const gamepadMap = pref.getSync(KEY_GAMEPAD_MAP, 0) as number;
-      this.gamepadMapIndex = GAMEPAD_MAP_VALUES.indexOf(gamepadMap);
-      if (this.gamepadMapIndex < 0) this.gamepadMapIndex = 0;
-      this.loadCustomMap(pref);
+      this.loadGpBindings(pref);
     } catch (_e) {
     }
   }
@@ -381,89 +454,82 @@ export struct SettingsPage {
     pref.flush();
   }
 
-  saveGamepadMap(index: number): void {
-    this.gamepadMapIndex = index;
-    if (index === 0) this.customMap = classicMap();
-    else if (index === 1) this.customMap = directionFirstMap();
-    else if (index === 2) this.customMap = numpadMap();
+  saveGpBindings(): void {
     const pref = this.getPref();
     if (!pref) return;
-    pref.putSync(KEY_GAMEPAD_MAP, GAMEPAD_MAP_VALUES[index]);
-    this.flushCustomMap(pref);
+    pref.putSync(KEY_GAMEPAD_BINDINGS, bindingsToJson(this.gpBindings));
     pref.flush();
   }
 
-  loadCustomMap(pref: preferences.Preferences): void {
-    if (this.gamepadMapIndex === 0) { this.customMap = classicMap(); return; }
-    if (this.gamepadMapIndex === 1) { this.customMap = directionFirstMap(); return; }
-    if (this.gamepadMapIndex === 2) { this.customMap = numpadMap(); return; }
+  loadGpBindings(pref: preferences.Preferences): void {
     try {
-      const raw = pref.getSync(KEY_GAMEPAD_CUSTOM, '') as string;
+      const raw = pref.getSync(KEY_GAMEPAD_BINDINGS, '') as string;
       if (raw.length > 0) {
-        const obj = JSON.parse(raw) as Record<string, number>;
-        this.customMap = {
-          a: obj['a'] ?? 20,
-          b: obj['b'] ?? 18,
-          x: obj['x'] ?? 17,
-          y: obj['y'] ?? 10,
-          l1: obj['l1'] ?? 19,
-          r1: obj['r1'] ?? 11,
-          start: obj['start'] ?? 16,
-          select: obj['select'] ?? 17
-        };
+        this.gpBindings = jsonToBindings(raw);
       } else {
-        this.customMap = classicMap();
+        this.gpBindings = defaultBindings();
       }
     } catch (_e) {
-      this.customMap = classicMap();
+      this.gpBindings = defaultBindings();
     }
   }
 
-  flushCustomMap(pref: preferences.Preferences): void {
-    const obj: Record<string, number> = {
-      'a': this.customMap.a, 'b': this.customMap.b,
-      'x': this.customMap.x, 'y': this.customMap.y,
-      'l1': this.customMap.l1, 'r1': this.customMap.r1,
-      'start': this.customMap.start, 'select': this.customMap.select
+  applyGpPreset(index: number): void {
+    if (index === 0) this.gpBindings = defaultBindings();
+    else if (index === 1) this.gpBindings = directionFirstBindings();
+    else if (index === 2) this.gpBindings = numpadBindings();
+    this.saveGpBindings();
+  }
+
+  onGpKeyEventInDialog(event: KeyEvent): void {
+    if (this.gpListeningIdx < 0) return;
+    if (event.type !== KeyType.Down) return;
+    const kc = event.keyCode;
+    let src = '';
+    if (kc === KeyCode.KEYCODE_DPAD_UP) src = 'dpad_up';
+    else if (kc === KeyCode.KEYCODE_DPAD_DOWN) src = 'dpad_down';
+    else if (kc === KeyCode.KEYCODE_DPAD_LEFT) src = 'dpad_left';
+    else if (kc === KeyCode.KEYCODE_DPAD_RIGHT) src = 'dpad_right';
+    else if (kc === KeyCode.KEYCODE_BUTTON_A) src = 'btn_a';
+    else if (kc === KeyCode.KEYCODE_BUTTON_B) src = 'btn_b';
+    else if (kc === KeyCode.KEYCODE_BUTTON_X) src = 'btn_x';
+    else if (kc === KeyCode.KEYCODE_BUTTON_Y) src = 'btn_y';
+    else if (kc === KeyCode.KEYCODE_BUTTON_L1) src = 'btn_l1';
+    else if (kc === KeyCode.KEYCODE_BUTTON_R1) src = 'btn_r1';
+    else if (kc === KeyCode.KEYCODE_BUTTON_START) src = 'btn_start';
+    else if (kc === KeyCode.KEYCODE_BUTTON_SELECT) src = 'btn_select';
+    if (src.length === 0) return;
+    this.gpBindings[this.gpListeningIdx].src = src;
+    this.gpListeningIdx = -1;
+    this.gpListenSrcLabel = '';
+    this.saveGpBindings();
+  }
+
+  openGamepadDialog(): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: GamepadDialogParams = {
+      bindings: this.gpBindings,
+      listeningIdx: this.gpListeningIdx,
+      listenSrcLabel: this.gpListenSrcLabel,
+      onBindingClick: (idx: number) => {
+        this.gpListeningIdx = idx;
+        this.gpListenSrcLabel = GP_SRC_LABELS[this.gpBindings[idx].src] ?? this.gpBindings[idx].src;
+      },
+      onPreset: (idx: number) => { this.applyGpPreset(idx); },
+      onKeyEvent: (event: KeyEvent) => { this.onGpKeyEventInDialog(event); },
+      onClose: () => {
+        this.gpListeningIdx = -1;
+        this.gpListenSrcLabel = '';
+        prompt.closeCustomDialog(contentNode);
+      }
     };
-    pref.putSync(KEY_GAMEPAD_CUSTOM, JSON.stringify(obj));
-  }
-
-  saveCustomMapKey(btnKey: string, mrKeyIndex: number): void {
-    const val = MR_KEY_VALUES[mrKeyIndex];
-    switch (btnKey) {
-      case 'a': this.customMap.a = val; break;
-      case 'b': this.customMap.b = val; break;
-      case 'x': this.customMap.x = val; break;
-      case 'y': this.customMap.y = val; break;
-      case 'l1': this.customMap.l1 = val; break;
-      case 'r1': this.customMap.r1 = val; break;
-      case 'start': this.customMap.start = val; break;
-      case 'select': this.customMap.select = val; break;
-      default: return;
-    }
-    if (this.gamepadMapIndex !== 3) {
-      this.gamepadMapIndex = 3;
-    }
-    const pref = this.getPref();
-    if (!pref) return;
-    pref.putSync(KEY_GAMEPAD_MAP, 3);
-    this.flushCustomMap(pref);
-    pref.flush();
-  }
-
-  getCustomMapKeyVal(btnKey: string): number {
-    switch (btnKey) {
-      case 'a': return this.customMap.a;
-      case 'b': return this.customMap.b;
-      case 'x': return this.customMap.x;
-      case 'y': return this.customMap.y;
-      case 'l1': return this.customMap.l1;
-      case 'r1': return this.customMap.r1;
-      case 'start': return this.customMap.start;
-      case 'select': return this.customMap.select;
-      default: return 20;
-    }
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(GamepadDialogBuilder), params);
+    prompt.openCustomDialog(contentNode, {
+      alignment: DialogAlignment.Center,
+      autoCancel: true,
+      offset: { dx: 0, dy: 0 }
+    });
   }
 
   async saveHaptic(enabled: boolean): Promise<void> {
@@ -873,35 +939,17 @@ export struct SettingsPage {
                 .opacity(this.hapticEnabled ? 1 : 0.35)
                 SDesc({ text: '调节按键触控时的震动反馈力度，选择后即时体验。' })
                 SDivider()
-                SRow({ label: '手柄预设' }) {
-                  SSelect({
-                    opts: GAMEPAD_MAP_OPTIONS,
-                    selected: this.gamepadMapIndex,
-                    value: GAMEPAD_MAP_OPTIONS[this.gamepadMapIndex].value as string,
-                    onSelect: (index: number) => { this.saveGamepadMap(index); }
-                  })
+                SRow({ label: '手柄映射' }) {
+                  Button('设置按键映射')
+                    .height(36)
+                    .fontSize(13)
+                    .fontColor('#FFFFFF')
+                    .fontWeight(FontWeight.Medium)
+                    .backgroundColor($r('app.color.accent_color'))
+                    .borderRadius(8)
+                    .onClick(() => { this.openGamepadDialog(); })
                 }
-                ForEach(GAMEPAD_BTN_KEYS, (btnKey: string, idx: number) => {
-                  SDivider()
-                  Row() {
-                    Text(GAMEPAD_BTN_LABELS[idx])
-                      .fontSize(14)
-                      .fontColor($r('app.color.accent_color'))
-                      .fontWeight(FontWeight.Bold)
-                      .width(52)
-                    SSelect({
-                      opts: MRP_KEY_OPTIONS,
-                      selected: MR_KEY_VALUES.indexOf(this.getCustomMapKeyVal(btnKey)),
-                      value: MR_KEY_NAMES[MR_KEY_VALUES.indexOf(this.getCustomMapKeyVal(btnKey))] as string,
-                      onSelect: (mrIdx: number) => { this.saveCustomMapKey(btnKey, mrIdx); }
-                    })
-                  }
-                  .width('100%')
-                  .height(ROW_H)
-                  .alignItems(VerticalAlign.Center)
-                  .padding({ left: PAD_H, right: PAD_H })
-                }, (btnKey: string) => btnKey)
-                SDesc({ text: '选择预设或逐个自定义手柄按键映射到MRP功能键。修改即时生效。' })
+                SDesc({ text: '自定义手柄按键→MRP映射，支持摇杆方向与组合键。' })
               }
             }
           }
@@ -1131,4 +1179,142 @@ function BackupNameDialogBuilder($$: BackupNameDialogParams) {
   .width('82%')
   .backgroundColor($r('app.color.settings_dialog_bg'))
   .borderRadius(16)
+}
+
+interface GamepadDialogParams {
+  bindings: GpBinding[];
+  listeningIdx: number;
+  listenSrcLabel: string;
+  onBindingClick: (idx: number) => void;
+  onPreset: (idx: number) => void;
+  onKeyEvent: (event: KeyEvent) => void;
+  onClose: () => void;
+}
+
+@ComponentV2
+struct GamepadDialogContent {
+  @Param bindings: GpBinding[] = [];
+  @Param listeningIdx: number = -1;
+  @Param listenSrcLabel: string = '';
+  @Event onBindingClick: (idx: number) => void = (_idx: number) => {};
+  @Event onPreset: (idx: number) => void = (_idx: number) => {};
+  @Event onGamepadKey: (event: KeyEvent) => void = (_event: KeyEvent) => {};
+  @Event onClose: () => void = () => {};
+  @Local scrollIdx: number = 0;
+  private scroller: Scroller = new Scroller();
+
+  build() {
+    Column() {
+      Text('手柄按键映射')
+        .fontSize(17)
+        .fontColor($r('app.color.settings_about_title'))
+        .fontWeight(FontWeight.Medium)
+        .margin({ top: 16, bottom: 8 })
+
+      if (this.listeningIdx >= 0) {
+        Row() {
+          LoadingProgress().width(16).height(16).color($r('app.color.accent_color'))
+          Text(`等待按下 → ${this.listenSrcLabel}`)
+            .fontSize(14)
+            .fontColor($r('app.color.accent_color'))
+            .fontWeight(FontWeight.Medium)
+            .margin({ left: 8 })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ top: 6, bottom: 6 })
+      }
+
+      Row() {
+        Text('预设:')
+          .fontSize(13)
+          .fontColor($r('app.color.settings_desc_color'))
+        ForEach(GAMEPAD_PRESET_OPTIONS, (opt: SelectOption, idx: number) => {
+          Button(opt.value as string)
+            .height(28)
+            .fontSize(12)
+            .fontColor('#FFFFFF')
+            .backgroundColor($r('app.color.settings_slider_value_bg'))
+            .borderRadius(6)
+            .padding({ left: 10, right: 10 })
+            .onClick(() => { this.onPreset(idx); })
+        }, (_opt: SelectOption, idx: number) => `${idx}`)
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .padding({ top: 4, bottom: 8 })
+
+      Scroll(this.scroller) {
+        Column() {
+          ForEach(this.bindings, (b: GpBinding, idx: number) => {
+            Row() {
+              Text(bindingDisplayText(b))
+                .fontSize(13)
+                .fontColor($r('app.color.settings_label_color'))
+                .layoutWeight(1)
+              if (this.listeningIdx === idx) {
+                Text('请按键...')
+                  .fontSize(12)
+                  .fontColor($r('app.color.accent_color'))
+                  .fontWeight(FontWeight.Bold)
+              } else {
+                Button('设置')
+                  .height(26)
+                  .fontSize(11)
+                  .fontColor($r('app.color.accent_color'))
+                  .backgroundColor(Color.Transparent)
+                  .borderRadius(6)
+                  .border({ width: 1, color: $r('app.color.accent_color') })
+                  .padding({ left: 8, right: 8 })
+                  .onClick(() => { this.onBindingClick(idx); })
+              }
+            }
+            .width('100%')
+            .height(38)
+            .alignItems(VerticalAlign.Center)
+            .padding({ left: 12, right: 12 })
+            if (idx < this.bindings.length - 1) {
+              Row().width('100%').height(0.5).backgroundColor($r('app.color.settings_divider_color'))
+            }
+          }, (b: GpBinding, idx: number) => `${idx}_${b.src}_${b.mrKeys.length}`)
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .height(320)
+      .scrollBar(BarState.Auto)
+
+      Row() {
+        Button('关闭')
+          .width(100).height(36)
+          .backgroundColor($r('app.color.settings_cancel_btn_bg'))
+          .fontColor($r('app.color.settings_cancel_btn_fg'))
+          .fontSize(14)
+          .borderRadius(8)
+          .onClick(() => { this.onClose(); })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+      .margin({ top: 8, bottom: 16 })
+    }
+    .width('88%')
+    .backgroundColor($r('app.color.settings_dialog_bg'))
+    .borderRadius(16)
+    .focusScopeId('gpDialogGroup', true, false)
+    .defaultFocus(true)
+    .onKeyEvent((event: KeyEvent) => { this.onGamepadKey(event); })
+  }
+}
+
+@Builder
+function GamepadDialogBuilder($$: GamepadDialogParams) {
+  GamepadDialogContent({
+    bindings: $$.bindings,
+    listeningIdx: $$.listeningIdx,
+    listenSrcLabel: $$.listenSrcLabel,
+    onBindingClick: $$.onBindingClick,
+    onPreset: $$.onPreset,
+    onGamepadKey: $$.onKeyEvent,
+    onClose: $$.onClose
+  })
 }

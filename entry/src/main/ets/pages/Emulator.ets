@@ -9,8 +9,7 @@ import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE,
   MR_KEY_UP, MR_KEY_DOWN, MR_KEY_LEFT, MR_KEY_RIGHT,
   MR_KEY_SELECT, MR_KEY_SOFTLEFT, MR_KEY_SOFTRIGHT,
-  MR_KEY_STAR, MR_KEY_POUND, MR_KEY_SEND, MR_KEY_POWER,
-  MR_KEY_0, MR_KEY_1, MR_KEY_2, MR_KEY_3, MR_KEY_4, MR_KEY_5, MR_KEY_6
+  MR_KEY_STAR, MR_KEY_POUND, MR_KEY_SEND, MR_KEY_POWER
 } from '../vmrp/VmrpEngine';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { gAbilityContext } from '../entryability/EntryAbility';
@@ -71,62 +70,85 @@ const ACCENT_COLOR = '#E94560';
 
 const STICK_DEADZONE = 0.3;
 
-interface GamepadMapping {
-  buttonA: number;
-  buttonB: number;
-  buttonX: number;
-  buttonY: number;
-  buttonL1: number;
-  buttonR1: number;
-  buttonStart: number;
-  buttonSelect: number;
+interface GpBinding {
+  src: string;
+  mrKeys: number[];
 }
 
-function defaultGamepadMapping(): GamepadMapping {
-  const m: GamepadMapping = {
-    buttonA: MR_KEY_SELECT,
-    buttonB: MR_KEY_SOFTRIGHT,
-    buttonX: MR_KEY_SOFTLEFT,
-    buttonY: MR_KEY_STAR,
-    buttonL1: MR_KEY_SEND,
-    buttonR1: MR_KEY_POUND,
-    buttonStart: MR_KEY_POWER,
-    buttonSelect: MR_KEY_SOFTLEFT
-  };
-  return m;
+function defaultGpBindings(): GpBinding[] {
+  const list: GpBinding[] = [
+    { src: 'dpad_up', mrKeys: [MR_KEY_UP] },
+    { src: 'dpad_down', mrKeys: [MR_KEY_DOWN] },
+    { src: 'dpad_left', mrKeys: [MR_KEY_LEFT] },
+    { src: 'dpad_right', mrKeys: [MR_KEY_RIGHT] },
+    { src: 'dpad_up_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_UP] },
+    { src: 'dpad_down_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_DOWN] },
+    { src: 'dpad_down_left', mrKeys: [MR_KEY_LEFT, MR_KEY_DOWN] },
+    { src: 'dpad_up_left', mrKeys: [MR_KEY_LEFT, MR_KEY_UP] },
+    { src: 'stick_l_up', mrKeys: [MR_KEY_UP] },
+    { src: 'stick_l_down', mrKeys: [MR_KEY_DOWN] },
+    { src: 'stick_l_left', mrKeys: [MR_KEY_LEFT] },
+    { src: 'stick_l_right', mrKeys: [MR_KEY_RIGHT] },
+    { src: 'stick_l_up_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_UP] },
+    { src: 'stick_l_down_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_DOWN] },
+    { src: 'stick_l_down_left', mrKeys: [MR_KEY_LEFT, MR_KEY_DOWN] },
+    { src: 'stick_l_up_left', mrKeys: [MR_KEY_LEFT, MR_KEY_UP] },
+    { src: 'stick_r_up', mrKeys: [MR_KEY_UP] },
+    { src: 'stick_r_down', mrKeys: [MR_KEY_DOWN] },
+    { src: 'stick_r_left', mrKeys: [MR_KEY_LEFT] },
+    { src: 'stick_r_right', mrKeys: [MR_KEY_RIGHT] },
+    { src: 'stick_r_up_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_UP] },
+    { src: 'stick_r_down_right', mrKeys: [MR_KEY_RIGHT, MR_KEY_DOWN] },
+    { src: 'stick_r_down_left', mrKeys: [MR_KEY_LEFT, MR_KEY_DOWN] },
+    { src: 'stick_r_up_left', mrKeys: [MR_KEY_LEFT, MR_KEY_UP] },
+    { src: 'btn_a', mrKeys: [MR_KEY_SELECT] },
+    { src: 'btn_b', mrKeys: [MR_KEY_SOFTRIGHT] },
+    { src: 'btn_x', mrKeys: [MR_KEY_SOFTLEFT] },
+    { src: 'btn_y', mrKeys: [MR_KEY_STAR] },
+    { src: 'btn_l1', mrKeys: [MR_KEY_SEND] },
+    { src: 'btn_r1', mrKeys: [MR_KEY_POUND] },
+    { src: 'btn_start', mrKeys: [MR_KEY_POWER] },
+    { src: 'btn_select', mrKeys: [MR_KEY_SOFTLEFT] }
+  ];
+  return list;
 }
 
-function keyCodeToMrKey(keyCode: number, mapping: GamepadMapping): number {
-  switch (keyCode) {
-    case KeyCode.KEYCODE_DPAD_UP:
-      return MR_KEY_UP;
-    case KeyCode.KEYCODE_DPAD_DOWN:
-      return MR_KEY_DOWN;
-    case KeyCode.KEYCODE_DPAD_LEFT:
-      return MR_KEY_LEFT;
-    case KeyCode.KEYCODE_DPAD_RIGHT:
-      return MR_KEY_RIGHT;
-    case KeyCode.KEYCODE_DPAD_CENTER:
-      return MR_KEY_SELECT;
-    case KeyCode.KEYCODE_BUTTON_A:
-      return mapping.buttonA;
-    case KeyCode.KEYCODE_BUTTON_B:
-      return mapping.buttonB;
-    case KeyCode.KEYCODE_BUTTON_X:
-      return mapping.buttonX;
-    case KeyCode.KEYCODE_BUTTON_Y:
-      return mapping.buttonY;
-    case KeyCode.KEYCODE_BUTTON_L1:
-      return mapping.buttonL1;
-    case KeyCode.KEYCODE_BUTTON_R1:
-      return mapping.buttonR1;
-    case KeyCode.KEYCODE_BUTTON_START:
-      return mapping.buttonStart;
-    case KeyCode.KEYCODE_BUTTON_SELECT:
-      return mapping.buttonSelect;
-    default:
-      return -1;
+function keyCodeToSrc(keyCode: number): string {
+  if (keyCode === KeyCode.KEYCODE_DPAD_UP) return 'dpad_up';
+  if (keyCode === KeyCode.KEYCODE_DPAD_DOWN) return 'dpad_down';
+  if (keyCode === KeyCode.KEYCODE_DPAD_LEFT) return 'dpad_left';
+  if (keyCode === KeyCode.KEYCODE_DPAD_RIGHT) return 'dpad_right';
+  if (keyCode === KeyCode.KEYCODE_DPAD_CENTER) return 'btn_a';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_A) return 'btn_a';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_B) return 'btn_b';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_X) return 'btn_x';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_Y) return 'btn_y';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_L1) return 'btn_l1';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_R1) return 'btn_r1';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_START) return 'btn_start';
+  if (keyCode === KeyCode.KEYCODE_BUTTON_SELECT) return 'btn_select';
+  return '';
+}
+
+function axisToStickSrc(axis: AxisModel, direction: string): string {
+  const prefix = (axis === AxisModel.ABS_X || axis === AxisModel.ABS_Y) ? 'stick_l' :
+    (axis === AxisModel.ABS_HAT0X || axis === AxisModel.ABS_HAT0Y) ? 'dpad' : 'stick_r';
+  return `${prefix}_${direction}`;
+}
+
+function computeStickDirections(x: number, y: number): string[] {
+  const dirs: string[] = [];
+  if (x > STICK_DEADZONE && y < -STICK_DEADZONE) dirs.push('up_right');
+  else if (x > STICK_DEADZONE && y > STICK_DEADZONE) dirs.push('down_right');
+  else if (x < -STICK_DEADZONE && y > STICK_DEADZONE) dirs.push('down_left');
+  else if (x < -STICK_DEADZONE && y < -STICK_DEADZONE) dirs.push('up_left');
+  else {
+    if (y < -STICK_DEADZONE) dirs.push('up');
+    if (y > STICK_DEADZONE) dirs.push('down');
+    if (x < -STICK_DEADZONE) dirs.push('left');
+    if (x > STICK_DEADZONE) dirs.push('right');
   }
+  return dirs;
 }
 
 @ComponentV2
@@ -501,7 +523,8 @@ struct EmulatorPage {
   private navPathStack: NavPathStack = new NavPathStack();
   private engine: VmrpEngineTs = new VmrpEngineTs();
   private pressedKeys: Set<number> = new Set();
-  private gamepadMapping: GamepadMapping = defaultGamepadMapping();
+  private gpBindings: GpBinding[] = defaultGpBindings();
+  private srcToMrKeys: Map<string, number[]> = new Map();
   private stickAxes: Map<AxisModel, number> = new Map();
   private stickPressedKeys: Set<number> = new Set();
   private nodeContent: NodeContent = new NodeContent();
@@ -603,9 +626,8 @@ struct EmulatorPage {
           this.speedMultiplier = speedMult;
           this.engine.setSpeedMultiplier(speedMult);
         }
-        const gamepadMap = (await pref.get('gamepad_mapping', 0)) as number;
-        const gamepadCustom = (await pref.get('gamepad_custom', '')) as string;
-        this.applyGamepadMapping(gamepadMap, gamepadCustom);
+        const gamepadBindings = (await pref.get('gamepad_bindings', '')) as string;
+        this.applyGpBindings(gamepadBindings);
         await HapticManager.loadPref(ctx);
       } catch (_e) {
       }
@@ -687,70 +709,34 @@ struct EmulatorPage {
     }
   }
 
-  private onGamepadKeyEvent(event: KeyEvent): void {
-    const mrKey = keyCodeToMrKey(event.keyCode, this.gamepadMapping);
-    if (mrKey < 0) return;
-    if (event.type === KeyType.Down) {
-      if (!this.pressedKeys.has(mrKey)) {
-        this.pressedKeys.add(mrKey);
-        this.engine.sendKey(VMRP_KEY_PRESS, mrKey);
-        HapticManager.performClick();
-        this.gamepadConnected = true;
-      }
-    } else if (event.type === KeyType.Up) {
-      if (this.pressedKeys.has(mrKey)) {
-        this.pressedKeys.delete(mrKey);
-        this.engine.sendKey(VMRP_KEY_RELEASE, mrKey);
-      }
+  private rebuildSrcMap(): void {
+    this.srcToMrKeys = new Map();
+    for (const b of this.gpBindings) {
+      this.srcToMrKeys.set(b.src, b.mrKeys);
     }
   }
 
-  private applyGamepadMapping(mapId: number, customJson: string): void {
-    switch (mapId) {
-      case 1:
-        this.gamepadMapping = {
-          buttonA: MR_KEY_SELECT,
-          buttonB: MR_KEY_POWER,
-          buttonX: MR_KEY_SOFTLEFT,
-          buttonY: MR_KEY_SOFTRIGHT,
-          buttonL1: MR_KEY_STAR,
-          buttonR1: MR_KEY_POUND,
-          buttonStart: MR_KEY_SOFTRIGHT,
-          buttonSelect: MR_KEY_SOFTLEFT
-        };
-        break;
-      case 2:
-        this.gamepadMapping = {
-          buttonA: MR_KEY_1,
-          buttonB: MR_KEY_2,
-          buttonX: MR_KEY_3,
-          buttonY: MR_KEY_4,
-          buttonL1: MR_KEY_5,
-          buttonR1: MR_KEY_6,
-          buttonStart: MR_KEY_SELECT,
-          buttonSelect: MR_KEY_STAR
-        };
-        break;
-      case 3:
-        try {
-          const obj = JSON.parse(customJson) as Record<string, number>;
-          this.gamepadMapping = {
-            buttonA: obj['a'] ?? MR_KEY_SELECT,
-            buttonB: obj['b'] ?? MR_KEY_SOFTRIGHT,
-            buttonX: obj['x'] ?? MR_KEY_SOFTLEFT,
-            buttonY: obj['y'] ?? MR_KEY_STAR,
-            buttonL1: obj['l1'] ?? MR_KEY_SEND,
-            buttonR1: obj['r1'] ?? MR_KEY_POUND,
-            buttonStart: obj['start'] ?? MR_KEY_POWER,
-            buttonSelect: obj['select'] ?? MR_KEY_SOFTLEFT
-          };
-        } catch (_e) {
-          this.gamepadMapping = defaultGamepadMapping();
+  private onGamepadKeyEvent(event: KeyEvent): void {
+    const src = keyCodeToSrc(event.keyCode);
+    if (src.length === 0) return;
+    const mrKeys = this.srcToMrKeys.get(src);
+    if (mrKeys === undefined || mrKeys.length === 0) return;
+    if (event.type === KeyType.Down) {
+      this.gamepadConnected = true;
+      for (const k of mrKeys) {
+        if (!this.pressedKeys.has(k)) {
+          this.pressedKeys.add(k);
+          this.engine.sendKey(VMRP_KEY_PRESS, k);
         }
-        break;
-      default:
-        this.gamepadMapping = defaultGamepadMapping();
-        break;
+      }
+      HapticManager.performClick();
+    } else if (event.type === KeyType.Up) {
+      for (const k of mrKeys) {
+        if (this.pressedKeys.has(k)) {
+          this.pressedKeys.delete(k);
+          this.engine.sendKey(VMRP_KEY_RELEASE, k);
+        }
+      }
     }
   }
 
@@ -762,31 +748,33 @@ struct EmulatorPage {
     const hatX = this.stickAxes.get(AxisModel.ABS_HAT0X) ?? 0;
     const hatY = this.stickAxes.get(AxisModel.ABS_HAT0Y) ?? 0;
 
-    const combinedX = Math.max(-1, Math.min(1, lx + rx + hatX));
-    const combinedY = Math.max(-1, Math.min(1, ly + ry + hatY));
-
-    const wantUp = combinedY < -STICK_DEADZONE;
-    const wantDown = combinedY > STICK_DEADZONE;
-    const wantLeft = combinedX < -STICK_DEADZONE;
-    const wantRight = combinedX > STICK_DEADZONE;
+    const lDirs = computeStickDirections(lx, ly);
+    const rDirs = computeStickDirections(rx, ry);
+    const hatDirs = computeStickDirections(hatX, hatY);
 
     const newPressed: Set<number> = new Set();
-    if (wantUp) newPressed.add(MR_KEY_UP);
-    if (wantDown) newPressed.add(MR_KEY_DOWN);
-    if (wantLeft) newPressed.add(MR_KEY_LEFT);
-    if (wantRight) newPressed.add(MR_KEY_RIGHT);
+    const allDirs: string[] = [...lDirs, ...rDirs, ...hatDirs];
+    for (const dir of allDirs) {
+      const lSrc = `stick_l_${dir}`;
+      const rSrc = `stick_r_${dir}`;
+      const hatSrc = `dpad_${dir}`;
+      for (const src of [lSrc, rSrc, hatSrc]) {
+        const mrKeys = this.srcToMrKeys.get(src);
+        if (mrKeys !== undefined) {
+          for (const k of mrKeys) {
+            newPressed.add(k);
+          }
+        }
+      }
+    }
 
     const toRelease: number[] = [];
     this.stickPressedKeys.forEach((key: number) => {
-      if (!newPressed.has(key)) {
-        toRelease.push(key);
-      }
+      if (!newPressed.has(key)) toRelease.push(key);
     });
     const toPress: number[] = [];
     newPressed.forEach((key: number) => {
-      if (!this.stickPressedKeys.has(key) && !this.pressedKeys.has(key)) {
-        toPress.push(key);
-      }
+      if (!this.stickPressedKeys.has(key) && !this.pressedKeys.has(key)) toPress.push(key);
     });
 
     for (const key of toRelease) {
@@ -816,6 +804,26 @@ struct EmulatorPage {
       this.gamepadConnected = true;
       this.updateStickDirection();
     }
+  }
+
+  private applyGpBindings(bindingsJson: string): void {
+    if (bindingsJson.length > 0) {
+      try {
+        const arr = JSON.parse(bindingsJson) as Record<string, Object>[];
+        const list: GpBinding[] = [];
+        for (const obj of arr) {
+          const src = obj['src'] as string;
+          const mrKeys = obj['mrKeys'] as number[];
+          list.push({ src: src, mrKeys: mrKeys });
+        }
+        this.gpBindings = list;
+      } catch (_e) {
+        this.gpBindings = defaultGpBindings();
+      }
+    } else {
+      this.gpBindings = defaultGpBindings();
+    }
+    this.rebuildSrcMap();
   }
 
   @Builder
