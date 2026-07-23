@@ -298,6 +298,33 @@ static const char *kOutputFrag =
     "  }\n"
     "}\n";
 
+    // ─── Bypass shader (Nearest + 无特效时直出屏幕) ───
+static const char *kBypassFrag =
+    "#version 300 es\n"
+    "precision highp float;\n"
+    "in vec2 v_uv;\n"
+    "out vec4 frag;\n"
+    "uniform sampler2D u_tex;\n"
+    "uniform int u_rotation;\n"
+    "\n"
+    "vec2 rotateUV(vec2 uv) {\n"
+    "  uv = uv - 0.5;\n"
+    "  if (u_rotation == 1) uv = vec2(-uv.y, uv.x);\n"
+    "  else if (u_rotation == 2) uv = vec2(-uv.x, -uv.y);\n"
+    "  else if (u_rotation == 3) uv = vec2(uv.y, -uv.x);\n"
+    "  return uv + 0.5;\n"
+    "}\n"
+    "\n"
+    "void main() {\n"
+    "  vec2 uv = v_uv;\n"
+    "  if (u_rotation != 0) uv = rotateUV(uv);\n"
+    "  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {\n"
+    "    frag = vec4(0.0, 0.0, 0.0, 1.0);\n"
+    "  } else {\n"
+    "    frag = texture(u_tex, uv);\n"
+    "  }\n"
+    "}\n";
+
 // ─── 工具函数 ───
 
 static GLuint CompileShader(GLenum type, const char *src) {
@@ -361,6 +388,12 @@ int VmrpRenderer::InitGL() {
     prog_output_ = LinkProgram(vsh_out, fsh_out);
     if (!prog_output_) return -1;
 
+    GLint vsh_by = CompileShader(GL_VERTEX_SHADER, kUpscaleVert);
+    GLint fsh_by = CompileShader(GL_FRAGMENT_SHADER, kBypassFrag);
+    if (!vsh_by || !fsh_by) return -1;
+    prog_bypass_ = LinkProgram(vsh_by, fsh_by);
+    if (!prog_bypass_) return -1;
+
     // 缓存 uniform locations
     ul_up_u_tex_ = glGetUniformLocation(prog_upscale_, "u_tex");
     ul_up_u_texture_size_ = glGetUniformLocation(prog_upscale_, "u_texture_size");
@@ -383,6 +416,9 @@ int VmrpRenderer::InitGL() {
     ul_out_u_barrel_k_ = glGetUniformLocation(prog_output_, "u_barrel_k");
     ul_out_u_rotation_ = glGetUniformLocation(prog_output_, "u_rotation");
 
+    ul_by_u_tex_ = glGetUniformLocation(prog_bypass_, "u_tex");
+    ul_by_u_rotation_ = glGetUniformLocation(prog_bypass_, "u_rotation");
+
     // 源纹理
     glGenTextures(1, &texture_);
     glBindTexture(GL_TEXTURE_2D, texture_);
@@ -392,8 +428,9 @@ int VmrpRenderer::InitGL() {
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glGenVertexArrays(1, &vao_);
-    LOGI("GL init OK (up=%u pp=%u out=%u tex=%u vao=%u)",
-         prog_upscale_, prog_postproc_, prog_output_, texture_, vao_);
+    glGenBuffers(2, pbo_);
+    LOGI("GL init OK (up=%u pp=%u out=%u by=%u tex=%u vao=%u pbo=%u/%u)",
+         prog_upscale_, prog_postproc_, prog_output_, prog_bypass_, texture_, vao_, pbo_[0], pbo_[1]);
     return 0;
 }
 
@@ -401,9 +438,12 @@ void VmrpRenderer::DestroyGL() {
     DestroyFBOs();
     if (texture_) { glDeleteTextures(1, &texture_); texture_ = 0; }
     if (vao_) { glDeleteVertexArrays(1, &vao_); vao_ = 0; }
+    if (pbo_[0] || pbo_[1]) { glDeleteBuffers(2, pbo_); pbo_[0] = pbo_[1] = 0; }
+    pbo_size_ = 0;
     if (prog_upscale_) { glDeleteProgram(prog_upscale_); prog_upscale_ = 0; }
     if (prog_postproc_) { glDeleteProgram(prog_postproc_); prog_postproc_ = 0; }
     if (prog_output_) { glDeleteProgram(prog_output_); prog_output_ = 0; }
+    if (prog_bypass_) { glDeleteProgram(prog_bypass_); prog_bypass_ = 0; }
     tex_w_ = tex_h_ = 0;
 }
 
@@ -653,9 +693,50 @@ void VmrpRenderer::ApplyOutputUniforms() {
     glUniform1i(ul_out_u_tex_, 0);
 }
 
+bool VmrpRenderer::CanBypass() const {
+    return filter_type_ == 0
+        && screen_effect_ == 0
+        && brightness_ == 0.0f
+        && contrast_ == 1.0f
+        && saturation_ == 1.0f
+        && subpixel_render_ == 0;
+}
+
+void VmrpRenderer::RenderBypass(int32_t display_w, int32_t display_h) {
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    int32_t vp_w = surface_w_ > 0 ? surface_w_ : display_w;
+    int32_t vp_h = surface_h_ > 0 ? surface_h_ : display_h;
+    glViewport(0, 0, vp_w, vp_h);
+    glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture_);
+    glUseProgram(prog_bypass_);
+    glUniform1i(ul_by_u_tex_, 0);
+    glUniform1i(ul_by_u_rotation_, current_rotation_);
+    glBindVertexArray(vao_);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(0);
+    glActiveTexture(GL_TEXTURE0);
+    eglSwapBuffers(egl_display_, egl_surface_);
+}
+
 int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
     if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
     current_rotation_ = rotation & 3;
+
+    // ── Dirty skip ──
+    if (!last_frame_dirty_) {
+        idle_swap_count_++;
+        if (idle_swap_count_ > 3) {
+            eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+            eglSwapBuffers(egl_display_, egl_surface_);
+            return 0;
+        }
+    }
+    last_frame_dirty_ = false;
+    idle_swap_count_ = 0;
+
     EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
     if (!mc) return -1;
 
@@ -674,6 +755,12 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display
     glBindTexture(GL_TEXTURE_2D, texture_);
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     free(rgba);
+
+    // ── Bypass: Nearest+无特效直出屏幕 ──
+    if (CanBypass()) {
+        RenderBypass(display_w, display_h);
+        return 0;
+    }
 
     // FBO尺寸: FSRCNNX时2x放大，其他1x
     int32_t needed_w = (filter_type_ == 4) ? display_w * 2 : display_w;
@@ -739,9 +826,23 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display
 int VmrpRenderer::Render(const uint8_t *rgba, int32_t display_w, int32_t display_h, int rotation) {
     if (!Ready() || !rgba || display_w <= 0 || display_h <= 0) return -1;
     current_rotation_ = rotation & 3;
+
+    // ── Dirty skip: 静态画面仅轻量 swap 维持 surface ──
+    if (!last_frame_dirty_) {
+        idle_swap_count_++;
+        if (idle_swap_count_ > 3) {
+            eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
+            eglSwapBuffers(egl_display_, egl_surface_);
+            return 0;
+        }
+    }
+    last_frame_dirty_ = false;
+    idle_swap_count_ = 0;
+
     EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
     if (!mc) return -1;
 
+    // ── 纹理尺寸变化时重新分配 ──
     if (tex_w_ != display_w || tex_h_ != display_h) {
         glBindTexture(GL_TEXTURE_2D, texture_);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, display_w, display_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -749,8 +850,46 @@ int VmrpRenderer::Render(const uint8_t *rgba, int32_t display_w, int32_t display
         tex_h_ = display_h;
         prev_filter_type_ = -1;
     }
-    glBindTexture(GL_TEXTURE_2D, texture_);
-    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+
+    // ── PBO 异步上传 ──
+    const size_t data_size = static_cast<size_t>(display_w) * display_h * 4;
+    if (pbo_size_ < static_cast<int32_t>(data_size)) {
+        for (int i = 0; i < 2; ++i) {
+            if (pbo_[i]) glDeleteBuffers(1, &pbo_[i]);
+            glGenBuffers(1, &pbo_[i]);
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[i]);
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, data_size, nullptr, GL_STREAM_DRAW);
+        }
+        pbo_size_ = static_cast<int32_t>(data_size);
+        LOGI("PBOs created size=%zu", data_size);
+    }
+
+    pbo_idx_ = 1 - pbo_idx_;
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_[pbo_idx_]);
+    void *ptr = glMapBufferRange(GL_PIXEL_UNPACK_BUFFER, 0, data_size,
+                                  GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+    bool pbo_ok = false;
+    if (ptr) {
+        memcpy(ptr, rgba, data_size);
+        glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+        pbo_ok = true;
+    }
+
+    if (pbo_ok) {
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    } else {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        glBindTexture(GL_TEXTURE_2D, texture_);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, display_w, display_h, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    }
+
+    // ── Bypass: Nearest+无特效直出屏幕 ──
+    if (CanBypass()) {
+        RenderBypass(display_w, display_h);
+        return 0;
+    }
 
     int32_t needed_w = (filter_type_ == 4) ? display_w * 2 : display_w;
     int32_t needed_h = (filter_type_ == 4) ? display_h * 2 : display_h;

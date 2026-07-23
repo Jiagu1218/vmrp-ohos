@@ -69,3 +69,4 @@ build_diag*.txt
 # - HarmonyOS SDK（DevEco Studio 自带，见 README 环境要求）
 # - Git for Windows（提供 POSIX sh，Unicorn 构建需要）
 # - node/ohpm 工具链（DevEco Studio 自带）
+/.appanalyzer/
