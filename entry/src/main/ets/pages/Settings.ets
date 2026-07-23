@@ -9,6 +9,8 @@ import { VmrpEngineTs } from '../vmrp/VmrpEngine';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
 import { GlassPanel } from '../common/GlassPanel';
+import { SectionHeader, SDivider, SDesc, SRow, SSliderLabel, SSlider, SSelect, CARD_RADIUS, PAD_H, ROW_H } from '../components/SettingsControls';
+import { GpBinding, GamepadDialogParams, GamepadDialogBuilder, defaultBindings, bindingsToJson, jsonToBindings, GAMEPAD_PRESET_OPTIONS } from '../components/GamepadBinding';
 
 const PREF_NAME = 'vmrp_settings';
 const KEY_MEMORY = 'memory_mb';
@@ -63,144 +65,11 @@ const SCREEN_SIZE_W: number[] = [176, 240, 240, 320, 320, 480];
 const SCREEN_SIZE_H: number[] = [220, 320, 400, 480, 240, 800];
 const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
 const KEY_SPEED_MULT = 'speed_multiplier';
+const KEY_GAMEPAD_BINDINGS = 'gamepad_bindings';
 const SPEED_OPTIONS: SelectOption[] = [
   { value: '1x 正常' }, { value: '2x 加速' }, { value: '3x 高速' }, { value: '4x 极速' }
 ];
 const SPEED_VALUES: number[] = [1, 2, 3, 4];
-
-const CARD_RADIUS = 20;
-const ROW_H = 56;
-const PAD_H = 20;
-const SEC_TOP = 20;
-const SEC_BOT = 6;
-
-@ComponentV2
-struct SectionHeader {
-  @Param title: string = '';
-  build() {
-    Text(this.title)
-      .fontSize(14)
-      .fontColor($r('app.color.settings_desc_color'))
-      .fontWeight(FontWeight.Medium)
-      .width('100%')
-      .padding({ left: 4, top: SEC_TOP, bottom: SEC_BOT })
-  }
-}
-
-@ComponentV2
-struct SDivider {
-  build() {
-    Row()
-      .width('100%')
-      .height(0.5)
-      .backgroundColor($r('app.color.settings_divider_color'))
-      .margin({ left: PAD_H, right: 0 })
-  }
-}
-
-@ComponentV2
-struct SDesc {
-  @Param text: string = '';
-  build() {
-    Text(this.text)
-      .fontSize(12)
-      .fontColor($r('app.color.settings_desc_color'))
-      .width('100%')
-      .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 12 })
-  }
-}
-
-@ComponentV2
-struct SRow {
-  @BuilderParam content: () => void;
-  @Param label: string = '';
-  build() {
-    Row() {
-      Text(this.label)
-        .fontSize(16)
-        .fontColor($r('app.color.settings_label_color'))
-        .layoutWeight(1)
-      this.content()
-    }
-    .width('100%')
-    .height(ROW_H)
-    .alignItems(VerticalAlign.Center)
-    .padding({ left: PAD_H, right: PAD_H })
-  }
-}
-
-@ComponentV2
-struct SSliderLabel {
-  @Param label: string = '';
-  @Param valueText: string = '';
-  build() {
-    Row() {
-      Text(this.label)
-        .fontSize(16)
-        .fontColor($r('app.color.settings_label_color'))
-        .layoutWeight(1)
-      Text(this.valueText)
-        .fontSize(13)
-        .fontColor('#FFFFFF')
-        .fontWeight(FontWeight.Medium)
-        .padding({ left: 8, right: 8, top: 2, bottom: 2 })
-        .borderRadius(8)
-        .backgroundColor($r('app.color.settings_slider_value_bg'))
-    }
-    .width('100%')
-    .padding({ left: PAD_H, right: PAD_H, top: 12, bottom: 4 })
-  }
-}
-
-@ComponentV2
-struct SSlider {
-  @Param value: number = 0;
-  @Param min: number = 0;
-  @Param max: number = 1;
-  @Param step: number = 0.05;
-  @Event onChange: (v: number) => void = (_v: number) => {};
-  build() {
-    Row() {
-      Slider({ value: this.value, min: this.min, max: this.max, step: this.step, style: SliderStyle.InSet })
-        .width('100%')
-        .trackColor($r('app.color.settings_slider_track'))
-        .selectedColor($r('app.color.accent_color'))
-        .blockColor('#FFFFFF')
-        .blockSize({ width: 20, height: 20 })
-        .trackBorderRadius(10)
-        .border({ width: 0 })
-        .padding({ left: 0, right: 0 })
-        .onChange((v: number) => { this.onChange(v); })
-    }
-    .padding({ left: PAD_H, right: PAD_H })
-  }
-}
-
-@ComponentV2
-struct SSelect {
-  @Param opts: SelectOption[] = [];
-  @Param selected: number = 0;
-  @Param value: string = '';
-  @Event onSelect: (index: number) => void = (_index: number) => {};
-  build() {
-    Select(this.opts)
-      .selected(this.selected)
-      .value(this.value)
-      .font({ size: 14 })
-      .fontColor($r('app.color.settings_label_color'))
-      .selectedOptionFont({ size: 15, weight: FontWeight.Bold })
-      .selectedOptionFontColor('#FFFFFF')
-      .selectedOptionBgColor($r('app.color.accent_color'))
-      .optionFont({ size: 14 })
-      .optionFontColor($r('app.color.settings_desc_color'))
-      .optionBgColor($r('app.color.settings_select_option_bg'))
-      .menuBackgroundColor($r('app.color.settings_select_menu_bg'))
-      .menuBackgroundBlurStyle(BlurStyle.COMPONENT_THIN)
-      .backgroundColor($r('app.color.settings_select_bg'))
-      .borderRadius(8)
-      .onSelect((index: number) => { this.onSelect(index); })
-  }
-}
 
 @ComponentV2
 export struct SettingsPage {
@@ -221,6 +90,8 @@ export struct SettingsPage {
   @Local ditherEnabled: number = DITHER_DEFAULT;
   @Local screenSizeIndex: number = SCREEN_SIZE_DEFAULT_INDEX;
   @Local speedMultIndex: number = 0;
+  @Local gpBindings: GpBinding[] = defaultBindings();
+  @Local xengineMode: number = 0;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -232,6 +103,7 @@ export struct SettingsPage {
     this.strengthIndex = STRENGTH_VALUES.indexOf(this.hapticState.strength);
     if (this.strengthIndex < 0) this.strengthIndex = 1;
     this.loadPrefsSync();
+    try { this.xengineMode = this.engine.getXengineUpscaleMode(); } catch (_e) {}
   }
 
   loadPrefsSync(): void {
@@ -260,11 +132,15 @@ export struct SettingsPage {
       this.ditherEnabled = pref.getSync(KEY_DITHER, DITHER_DEFAULT) as number;
       const sw = pref.getSync(KEY_SCREEN_W, 240) as number;
       const sh = pref.getSync(KEY_SCREEN_H, 320) as number;
-      const screenIdx = SCREEN_SIZE_W.indexOf(sw);
-      this.screenSizeIndex = (screenIdx >= 0 && SCREEN_SIZE_H[screenIdx] === sh) ? screenIdx : SCREEN_SIZE_DEFAULT_INDEX;
+      let screenIdx = -1;
+      for (let i = 0; i < SCREEN_SIZE_W.length; i++) {
+        if (SCREEN_SIZE_W[i] === sw && SCREEN_SIZE_H[i] === sh) { screenIdx = i; break; }
+      }
+      this.screenSizeIndex = screenIdx >= 0 ? screenIdx : SCREEN_SIZE_DEFAULT_INDEX;
       const speedMult = pref.getSync(KEY_SPEED_MULT, 1) as number;
       this.speedMultIndex = SPEED_VALUES.indexOf(speedMult);
       if (this.speedMultIndex < 0) this.speedMultIndex = 0;
+      this.loadGpBindings(pref);
     } catch (_e) {
     }
   }
@@ -325,6 +201,47 @@ export struct SettingsPage {
     if (!pref) return;
     pref.putSync(KEY_SPEED_MULT, mult);
     pref.flush();
+  }
+
+  saveGpBindings(): void {
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_GAMEPAD_BINDINGS, bindingsToJson(this.gpBindings));
+    pref.flush();
+  }
+
+  loadGpBindings(pref: preferences.Preferences): void {
+    try {
+      const raw = pref.getSync(KEY_GAMEPAD_BINDINGS, '') as string;
+      if (raw.length > 0) {
+        this.gpBindings = jsonToBindings(raw);
+      } else {
+        this.gpBindings = defaultBindings();
+      }
+    } catch (_e) {
+      this.gpBindings = defaultBindings();
+    }
+  }
+
+  openGamepadDialog(): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: GamepadDialogParams = {
+      initialBindings: this.gpBindings,
+      onConfirm: (bindings: GpBinding[]) => {
+        this.gpBindings = bindings;
+        this.saveGpBindings();
+      },
+      onClose: () => {
+        prompt.closeCustomDialog(contentNode);
+      }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(GamepadDialogBuilder), params);
+    prompt.openCustomDialog(contentNode, {
+      alignment: DialogAlignment.Center,
+      autoCancel: true,
+      offset: { dx: 0, dy: 0 }
+    });
   }
 
   async saveHaptic(enabled: boolean): Promise<void> {
@@ -598,7 +515,9 @@ export struct SettingsPage {
                     }
                   })
                 }
-                SDesc({ text: '原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线，AI超分使用 FSRCNNX 锐化上采样。即时生效。' })
+                SDesc({ text: this.xengineMode > 0
+                  ? '当前设备支持马良GPU硬件超分' + (this.xengineMode === 2 ? '（AI超分），选择AI超分时自动使用马良神经网络上采样' : '（空域超分），选择AI超分时自动使用马良GPU空域上采样') + '，画质优于自研FSRCNNX。即时生效。'
+                  : '原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线，AI超分使用FSRCNNX锐化上采样。即时生效。' })
 
                 SDivider()
                 SRow({ label: '屏幕效果' }) {
@@ -733,6 +652,18 @@ export struct SettingsPage {
                 .enabled(this.hapticEnabled)
                 .opacity(this.hapticEnabled ? 1 : 0.35)
                 SDesc({ text: '调节按键触控时的震动反馈力度，选择后即时体验。' })
+                SDivider()
+                SRow({ label: '手柄映射' }) {
+                  Button('设置按键映射')
+                    .height(36)
+                    .fontSize(13)
+                    .fontColor('#FFFFFF')
+                    .fontWeight(FontWeight.Medium)
+                    .backgroundColor($r('app.color.accent_color'))
+                    .borderRadius(8)
+                    .onClick(() => { this.openGamepadDialog(); })
+                }
+                SDesc({ text: '自定义手柄按键→MRP映射，支持摇杆方向与组合键。' })
               }
             }
           }

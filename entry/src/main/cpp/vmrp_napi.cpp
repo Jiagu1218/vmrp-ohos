@@ -56,6 +56,10 @@ VmrpRenderer g_renderer;
 VmrpAudio    g_audio;
 std::mutex   g_render_mtx;
 
+// RGB565 直传 buffer：引擎写 screen_buf 无锁，渲染线程在 dirty 时快速拷贝。
+uint16_t *g_rgb565_buf = nullptr;
+int32_t   g_rgb565_pixels = 0;
+
 // 定时器驱动线程：仅请求渲染 + 检测引擎退出（timer/event 由 vmrp 内部 worker 自驱）。
 std::thread  g_timer_thread;
 std::atomic<bool> g_timer_running{false};
@@ -96,10 +100,10 @@ static void OnNodeTouchEvent(ArkUI_NodeEvent *event);
 // 这是渲染 EGL surface 的正确线程。timer 线程只置 g_need_render，不直接渲染。
 static void OnFrameCallback(ArkUI_NodeHandle node, uint64_t timestamp, uint64_t targetTimestamp) {
     (void)node; (void)timestamp; (void)targetTimestamp;
-    // 引擎运行时每帧都渲染并 swap：XComponent 的 EGL window surface 是双缓冲，
-    // 需要持续 eglSwapBuffers 才能维持画面显示。dsm_gm 等静态画面画完一帧后不再
-    // dirty，但 window surface 必须持续 swap 否则内容会被回收导致黑屏。
     if (g_engine_running.load()) {
+        // 用 ScreenDirty() 驱动渲染，静态画面跳过上传+渲染，仅轻量 swap 维持 surface。
+        bool dirty = VmrpEngine::Instance().ScreenDirty();
+        if (dirty) g_renderer.SetDirty();
         TryRenderForce();
     } else if (g_need_render.exchange(false)) {
         TryRender();
@@ -141,13 +145,22 @@ static void OnSurfDestroyed(OH_ArkUI_SurfaceHolder *holder) {
 void TryRender() {
     if (!g_engine_running.load()) return;
     if (!VmrpEngine::Instance().ScreenDirty()) return;
+    g_renderer.SetDirty();
     std::lock_guard<std::mutex> lk(g_render_mtx);
     if (!g_renderer.Ready()) return;
-    const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
     int rot = VmrpEngine::Instance().ScreenRotation();
-    g_renderer.Render(rgba, sw, sh, rot);
+    int32_t pixels = sw * sh;
+    if (pixels != g_rgb565_pixels) {
+        free(g_rgb565_buf);
+        g_rgb565_buf = static_cast<uint16_t *>(malloc(static_cast<size_t>(pixels) * 2));
+        g_rgb565_pixels = pixels;
+    }
+    if (g_rgb565_buf) {
+        VmrpEngine::Instance().CopyScreenRgb565(g_rgb565_buf, pixels);
+        g_renderer.RenderRgb565(g_rgb565_buf, sw, sh, rot);
+    }
 }
 
 // 在非渲染线程（timer/key/touch）请求渲染：置标志，由帧回调线程消费。
@@ -158,11 +171,19 @@ void TryRenderForce() {
     if (!g_engine_running.load()) return;
     std::lock_guard<std::mutex> lk(g_render_mtx);
     if (!g_renderer.Ready()) return;
-    const uint8_t *rgba = VmrpEngine::Instance().ScreenRgbaBuffer();
     int32_t sw = VmrpEngine::Instance().ScreenWidth();
     int32_t sh = VmrpEngine::Instance().ScreenHeight();
     int rot = VmrpEngine::Instance().ScreenRotation();
-    g_renderer.Render(rgba, sw, sh, rot);
+    int32_t pixels = sw * sh;
+    if (pixels != g_rgb565_pixels) {
+        free(g_rgb565_buf);
+        g_rgb565_buf = static_cast<uint16_t *>(malloc(static_cast<size_t>(pixels) * 2));
+        g_rgb565_pixels = pixels;
+    }
+    if (g_rgb565_buf) {
+        VmrpEngine::Instance().CopyScreenRgb565(g_rgb565_buf, pixels);
+        g_renderer.RenderRgb565(g_rgb565_buf, sw, sh, rot);
+    }
 }
 
 // 渲染驱动循环。
@@ -292,6 +313,7 @@ static napi_value StartEngine(napi_env env, napi_callback_info info) {
     int r = VmrpEngine::Instance().Start(mrp, ext, entry);
     if (r == 0 && VmrpEngine::Instance().IsRunning()) {
         g_engine_running.store(true);
+        g_renderer.SetDirty();
         g_audio.Start(VmrpEngine::Instance().AudioSampleRate(),
                       VmrpEngine::Instance().AudioChannels());
         if (!g_timer_running.exchange(true)) {
@@ -312,6 +334,9 @@ static napi_value StopEngine(napi_env env, napi_callback_info info) {
     if (g_timer_thread.joinable()) g_timer_thread.join();
     g_audio.Stop();
     VmrpEngine::Instance().Destroy();
+    free(g_rgb565_buf);
+    g_rgb565_buf = nullptr;
+    g_rgb565_pixels = 0;
     return nullptr;
 }
 
@@ -366,6 +391,13 @@ static napi_value SetShakeIntensity(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// getXengineUpscaleMode() → number: 0=自研shader, 1=GPU超分, 2=AI超分
+static napi_value GetXengineUpscaleMode(napi_env env, napi_callback_info info) {
+    napi_value result;
+    napi_create_int32(env, g_renderer.XengineUpscaleMode(), &result);
+    return result;
+}
+
 // setDisplayFilter(filterType, screenEffect, screenEffectStrength, brightness, contrast, saturation, subpixelRender, gammaCorrect, dither)
 // filterType: 0=Nearest,1=Bilinear,2=EPX,3=xBRZ,4=FSRCNNX
 // screenEffect: 0=关闭,1=完整CRT,2=LCD网格,3=仅扫描线
@@ -398,6 +430,7 @@ static napi_value SetDisplayFilter(napi_env env, napi_callback_info info) {
                                 static_cast<float>(contrast),
                                 static_cast<float>(saturation),
                                 subpixelRender, gammaCorrect, dither);
+    g_renderer.SetDirty();
     return nullptr;
 }
 
@@ -715,6 +748,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"setMotionSensitivity", nullptr, SetMotionSensitivity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setShakeIntensity", nullptr, SetShakeIntensity, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setDisplayFilter", nullptr, SetDisplayFilter, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getXengineUpscaleMode", nullptr, GetXengineUpscaleMode, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startDsmB", nullptr, StartDsmB, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startDsmC", nullptr, StartDsmC, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"startDsmEx", nullptr, StartDsmEx, nullptr, nullptr, nullptr, napi_default, nullptr},

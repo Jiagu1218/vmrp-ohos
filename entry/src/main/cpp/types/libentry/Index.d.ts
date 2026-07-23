@@ -16,6 +16,7 @@ export const setShakeIntensity: (level: number) => void;
 export const setDisplayFilter: (filterType: number, screenEffect: number, screenEffectStrength: number,
   brightness: number, contrast: number, saturation: number, subpixelRender: number,
   gammaCorrect: number, dither: number) => void;
+export const getXengineUpscaleMode: () => number;
 export const startDsmB: (entry: string) => number;
 export const startDsmC: (entry: string) => number;
 export const startDsmEx: (path: string, entry?: string) => number;

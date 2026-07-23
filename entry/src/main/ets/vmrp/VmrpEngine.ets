@@ -18,6 +18,7 @@ import {
   setMotionSensitivity as nativeSetMotionSensitivity,
   setShakeIntensity as nativeSetShakeIntensity,
   setDisplayFilter as nativeSetDisplayFilter,
+  getXengineUpscaleMode as nativeGetXengineUpscaleMode,
   startDsmB as nativeStartDsmB, startDsmC as nativeStartDsmC,
   startDsmEx as nativeStartDsmEx,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
@@ -117,6 +118,10 @@ export class VmrpEngineTs {
     nativeSetDisplayFilter(filterType, screenEffect, screenEffectStrength,
                            brightness, contrast, saturation,
                            subpixelRender, gammaCorrect, dither);
+  }
+
+  getXengineUpscaleMode(): number {
+    return nativeGetXengineUpscaleMode();
   }
 
   // 外部移植接口: mr_start_dsmB — entry 含 *A(固化应用)/%QQ.mrp(根目录mrp)前缀
