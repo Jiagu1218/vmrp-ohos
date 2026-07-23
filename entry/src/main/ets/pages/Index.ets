@@ -22,6 +22,13 @@ interface MrpGroup {
   items: MrpInfoData[];
 }
 
+interface FlatItem {
+  type: string;
+  letter: string;
+  data: MrpInfoData;
+  key: string;
+}
+
 const latnTransliterator: i18n.Transliterator = i18n.Transliterator.getInstance('Any-Latn');
 const asciiTransliterator: i18n.Transliterator = i18n.Transliterator.getInstance('Latin-ASCII');
 
@@ -74,100 +81,6 @@ function buildIndexArray(groups: MrpGroup[]): string[] {
   return arr;
 }
 
-@ComponentV2
-struct MrpCard {
-  @Param info: MrpInfoData = emptyMrpInfoData();
-  @Param onLaunch: (item: MrpInfoData) => void = () => {};
-
-  build() {
-    Column() {
-      ImmersiveLightWrapper({
-        radius: CARD_RADIUS,
-        lightHeight: 80,
-        bgColor: $r('app.color.settings_card_bg'),
-        blurRadius: 30
-      }) {
-        Column() {
-          Row() {
-            Text(this.info.appname)
-              .fontSize(17)
-              .fontColor($r('app.color.settings_about_title'))
-              .fontWeight(FontWeight.Bold)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            Text(`v${this.info.version}`)
-              .fontSize(12)
-              .fontColor($r('app.color.settings_desc_color'))
-              .margin({ left: 8 })
-          }
-          .width('100%')
-
-          if (this.info.vendor.length > 0) {
-            Text(this.info.vendor)
-              .fontSize(12)
-              .fontColor($r('app.color.settings_desc_color'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-              .margin({ top: 4 })
-          }
-
-          if (this.info.description.length > 0) {
-            Text(this.info.description)
-              .fontSize(13)
-              .fontColor($r('app.color.settings_desc_color'))
-              .maxLines(2)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .width('100%')
-              .margin({ top: 6 })
-          }
-
-          Row() {
-            Text(this.info.filename)
-              .fontSize(12)
-              .fontColor($r('app.color.settings_desc_color'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .layoutWeight(1)
-            Text(this.getBaseName(this.info.filePath))
-              .fontSize(12)
-              .fontColor($r('app.color.settings_desc_color'))
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .margin({ left: 12 })
-            Text(this.formatSize(this.info.fileSize))
-              .fontSize(12)
-              .fontColor($r('app.color.settings_desc_color'))
-              .margin({ left: 12 })
-          }
-          .width('100%')
-          .margin({ top: 8 })
-        }
-        .padding(16)
-        .width('100%')
-      }
-    }
-    .width('100%')
-    .onClick(() => {
-      HapticManager.performClick();
-      this.onLaunch(this.info);
-    })
-  }
-
-  private formatSize(bytes: number): string {
-    if (bytes <= 0) return '';
-    if (bytes < 1024) return `${bytes}B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-  }
-
-  private getBaseName(path: string): string {
-    const slash = path.lastIndexOf('/');
-    return slash >= 0 ? path.substring(slash + 1) : path;
-  }
-}
-
 @Entry
 @ComponentV2
 struct Index {
@@ -180,7 +93,7 @@ struct Index {
   @Local selectedIndex: number = 0;
   @Local searchMode: boolean = false;
   @Local searchQuery: string = '';
-  @Local listVersion: number = 0;
+  @Local flatItems: FlatItem[] = [];
   private navPathStack: NavPathStack = new NavPathStack();
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private listScroller: Scroller = new Scroller();
@@ -212,6 +125,7 @@ struct Index {
     } catch (_e) {
       this.rawList = [];
       this.mrpList = [];
+      this.flatItems = [];
     }
     this.isScanning = false;
   }
@@ -239,7 +153,7 @@ struct Index {
     }
     this.mrpList = list;
     this.rebuildGroups();
-    this.listVersion++;
+    this.rebuildFlatItems();
   }
 
   private rebuildGroups(): void {
@@ -250,6 +164,23 @@ struct Index {
       this.groupedItems = [];
       this.indexArray = ['#'];
     }
+  }
+
+  private rebuildFlatItems(): void {
+    const items: FlatItem[] = [];
+    if (this.sortMode === 1 && this.searchQuery.length === 0) {
+      for (const group of this.groupedItems) {
+        items.push({ type: 'header', letter: group.letter, data: emptyMrpInfoData(), key: 'h_' + group.letter });
+        for (const card of group.items) {
+          items.push({ type: 'card', letter: '', data: card, key: card.filePath });
+        }
+      }
+    } else {
+      for (const card of this.mrpList) {
+        items.push({ type: 'card', letter: '', data: card, key: card.filePath });
+      }
+    }
+    this.flatItems = items;
   }
 
   private toggleSort(): void {
@@ -291,6 +222,18 @@ struct Index {
     });
   }
 
+  private formatSize(bytes: number): string {
+    if (bytes <= 0) return '';
+    if (bytes < 1024) return `${bytes}B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  }
+
+  private getBaseName(path: string): string {
+    const slash = path.lastIndexOf('/');
+    return slash >= 0 ? path.substring(slash + 1) : path;
+  }
+
   @Builder
   swipeDeleteButton(item: MrpInfoData) {
     Row() {
@@ -311,16 +254,6 @@ struct Index {
     .height('100%')
     .justifyContent(FlexAlign.Center)
     .alignItems(VerticalAlign.Center)
-  }
-
-  @Builder
-  groupHeader(letter: string) {
-    Text(letter)
-      .fontSize(14)
-      .fontColor($r('app.color.settings_desc_color'))
-      .fontWeight(FontWeight.Medium)
-      .width('100%')
-      .padding({ left: 20, top: 16, bottom: 4 })
   }
 
   build() {
@@ -360,7 +293,7 @@ struct Index {
                 .justifyContent(FlexAlign.Center)
                 .alignItems(HorizontalAlign.Center)
               }
-            } else if (this.mrpList.length === 0) {
+            } else if (this.flatItems.length === 0) {
               ListItem() {
                 Column() {
                   Text('暂无游戏')
@@ -392,34 +325,106 @@ struct Index {
                 .alignItems(HorizontalAlign.Center)
                 .padding({ top: 60, bottom: 60 })
               }
-            } else if (this.sortMode === 1 && this.searchQuery.length === 0) {
-              ForEach(this.groupedItems, (group: MrpGroup) => {
-                ListItemGroup({ header: this.groupHeader(group.letter), space: 8 }) {
-                  ForEach(group.items, (item: MrpInfoData) => {
-                    ListItem() {
-                      MrpCard({
-                        info: item,
-                        onLaunch: (item: MrpInfoData) => this.launchMrp(item)
-                      })
-                    }
-                    .padding({ left: 16, right: 16 })
-                    .swipeAction({ end: this.swipeDeleteButton(item) })
-                    .transition(DELETE_TRANSITION)
-                  }, (item: MrpInfoData) => item.filePath + '_' + this.listVersion)
-                }
-              }, (group: MrpGroup) => group.letter + '_' + group.items.length + '_' + this.listVersion)
             } else {
-              ForEach(this.mrpList, (item: MrpInfoData) => {
-                ListItem() {
-                  MrpCard({
-                    info: item,
-                    onLaunch: (item: MrpInfoData) => this.launchMrp(item)
-                  })
-                }
-                .padding({ left: 16, right: 16 })
-                .swipeAction({ end: this.swipeDeleteButton(item) })
-                .transition(DELETE_TRANSITION)
-              }, (item: MrpInfoData) => item.filePath + '_' + this.listVersion)
+              Repeat<FlatItem>(this.flatItems)
+                .each((ri: RepeatItem<FlatItem>) => {
+                  ListItem() {
+                    Text(ri.item.data.appname)
+                  }
+                })
+                .key((item: FlatItem): string => item.key)
+                .templateId((item: FlatItem): string => item.type)
+                .template('header', (ri: RepeatItem<FlatItem>) => {
+                  ListItem() {
+                    Text(ri.item.letter)
+                      .fontSize(14)
+                      .fontColor($r('app.color.settings_desc_color'))
+                      .fontWeight(FontWeight.Medium)
+                      .width('100%')
+                      .padding({ left: 20, top: 16, bottom: 4 })
+                  }
+                })
+                .template('card', (ri: RepeatItem<FlatItem>) => {
+                  ListItem() {
+                    Column() {
+                      ImmersiveLightWrapper({
+                        radius: CARD_RADIUS,
+                        lightHeight: 80,
+                        bgColor: $r('app.color.settings_card_bg'),
+                        blurRadius: 30
+                      }) {
+                        Column() {
+                          Row() {
+                            Text(ri.item.data.appname)
+                              .fontSize(17)
+                              .fontColor($r('app.color.settings_about_title'))
+                              .fontWeight(FontWeight.Bold)
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                              .layoutWeight(1)
+                            Text(`v${ri.item.data.version}`)
+                              .fontSize(12)
+                              .fontColor($r('app.color.settings_desc_color'))
+                              .margin({ left: 8 })
+                          }
+                          .width('100%')
+
+                          if (ri.item.data.vendor.length > 0) {
+                            Text(ri.item.data.vendor)
+                              .fontSize(12)
+                              .fontColor($r('app.color.settings_desc_color'))
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                              .width('100%')
+                              .margin({ top: 4 })
+                          }
+
+                          if (ri.item.data.description.length > 0) {
+                            Text(ri.item.data.description)
+                              .fontSize(13)
+                              .fontColor($r('app.color.settings_desc_color'))
+                              .maxLines(2)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                              .width('100%')
+                              .margin({ top: 6 })
+                          }
+
+                          Row() {
+                            Text(ri.item.data.filename)
+                              .fontSize(12)
+                              .fontColor($r('app.color.settings_desc_color'))
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                              .layoutWeight(1)
+                            Text(this.getBaseName(ri.item.data.filePath))
+                              .fontSize(12)
+                              .fontColor($r('app.color.settings_desc_color'))
+                              .maxLines(1)
+                              .textOverflow({ overflow: TextOverflow.Ellipsis })
+                              .margin({ left: 12 })
+                            Text(this.formatSize(ri.item.data.fileSize))
+                              .fontSize(12)
+                              .fontColor($r('app.color.settings_desc_color'))
+                              .margin({ left: 12 })
+                          }
+                          .width('100%')
+                          .margin({ top: 8 })
+                        }
+                        .padding(16)
+                        .width('100%')
+                      }
+                    }
+                    .width('100%')
+                    .onClick(() => {
+                      HapticManager.performClick();
+                      this.launchMrp(ri.item.data);
+                    })
+                  }
+                  .padding({ left: 16, right: 16 })
+                  .swipeAction({ end: this.swipeDeleteButton(ri.item.data) })
+                  .transition(DELETE_TRANSITION)
+                }, { cachedCount: 5 })
+                .virtualScroll({ totalCount: this.flatItems.length })
             }
           }
           .width('100%')
@@ -427,16 +432,24 @@ struct Index {
           .scrollBar(BarState.Off)
           .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
           .clip(false)
-          .cachedCount(2, true)
+          .cachedCount(5, true)
           .expandSafeArea()
           .onScrollIndex((start: number) => {
-            if (this.sortMode !== 1 || this.mrpList.length === 0) return;
-            const groups = this.groupedItems;
-            if (start >= 0 && start < groups.length) {
-              const letter = groups[start].letter;
-              const idx = this.indexArray.indexOf(letter);
-              if (idx >= 0) {
-                this.selectedIndex = idx;
+            if (this.sortMode !== 1 || this.flatItems.length === 0) return;
+            const offset = this.searchMode ? 1 : 0;
+            const idx = start - offset;
+            if (idx < 0 || idx >= this.flatItems.length) return;
+            const item = this.flatItems[idx];
+            if (item.type === 'header') {
+              const ai = this.indexArray.indexOf(item.letter);
+              if (ai >= 0) this.selectedIndex = ai;
+            } else if (item.type === 'card') {
+              for (let i = idx; i >= 0; i--) {
+                if (this.flatItems[i].type === 'header') {
+                  const ai = this.indexArray.indexOf(this.flatItems[i].letter);
+                  if (ai >= 0) this.selectedIndex = ai;
+                  break;
+                }
               }
             }
           })
@@ -450,7 +463,7 @@ struct Index {
           this.isRefreshing = false;
         })
 
-          if (this.sortMode === 1 && this.mrpList.length > 0 && this.searchQuery.length === 0) {
+          if (this.sortMode === 1 && this.flatItems.length > 0 && this.searchQuery.length === 0) {
             AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
               .color($r('app.color.settings_desc_color'))
               .selectedColor($r('app.color.accent_color'))
@@ -468,9 +481,12 @@ struct Index {
               .height('100%')
               .margin({ right: 4 })
               .onSelect((index: number) => {
-                const groups = this.groupedItems;
-                if (index >= 0 && index < groups.length) {
-                  this.listScroller.scrollToIndex(index, false, ScrollAlign.CENTER);
+                const letter = this.indexArray[index];
+                const offset = this.searchMode ? 1 : 0;
+                const flatIdx = this.flatItems.findIndex((fi: FlatItem) =>
+                  fi.type === 'header' && fi.letter === letter);
+                if (flatIdx >= 0) {
+                  this.listScroller.scrollToIndex(flatIdx + offset, false, ScrollAlign.CENTER);
                 }
               })
           }
