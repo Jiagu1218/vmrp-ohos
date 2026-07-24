@@ -2,6 +2,7 @@ import { AbilityConstant, ConfigurationConstant, UIAbility, Want, common } from 
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window, AppStorageV2 } from '@kit.ArkUI';
 import { AvoidData } from '../common/AvoidData';
+import { PendingMrpUri } from '../common/PendingMrpUri';
 import { VmrpEngineTs } from '../vmrp/VmrpEngine';
 
 const DOMAIN = 0x0000;
@@ -16,7 +17,22 @@ export default class EntryAbility extends UIAbility {
     } catch (err) {
       hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
+    this.handleFileWant(want);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+  }
+
+  onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
+    this.handleFileWant(want);
+    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+  }
+
+  private handleFileWant(want: Want): void {
+    const uri = want.uri;
+    if (uri !== undefined && uri !== null && uri.length > 0) {
+      const pending = AppStorageV2.connect(PendingMrpUri, 'pendingMrpUri', () => new PendingMrpUri())!;
+      pending.uri = uri;
+      hilog.info(DOMAIN, 'testTag', 'handleFileWant uri: %{public}s', uri);
+    }
   }
 
   onDestroy(): void {

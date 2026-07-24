@@ -13,6 +13,7 @@ import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
 import { HapticManager } from '../common/HapticManager';
 import { FlatItem, MrpGroup, CARD_RADIUS, DELETE_TRANSITION, emptyMrpInfoData, groupByLetter, buildIndexArray } from '../model/MrpListModel';
 import { FavoriteStore } from '../model/FavoriteStore';
+import { PendingMrpUri } from '../common/PendingMrpUri';
 
 @Entry
 @ComponentV2
@@ -53,6 +54,7 @@ struct Index {
 
   onPageShow(): void {
     this.scanMrpFiles();
+    this.checkPendingMrpUri();
   }
 
   private scanMrpFiles(): void {
@@ -76,6 +78,22 @@ struct Index {
       this.flatItems = [];
     }
     this.isScanning = false;
+  }
+
+  private async checkPendingMrpUri(): Promise<void> {
+    const pending = AppStorageV2.connect(PendingMrpUri, 'pendingMrpUri', () => new PendingMrpUri())!;
+    const uri = pending.uri;
+    if (!uri || uri.length === 0) return;
+    pending.uri = '';
+    const ctx = gAbilityContext;
+    if (!ctx) return;
+    const localPath = await VmrpAssets.importMrp(ctx, uri);
+    if (!localPath || localPath.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: '导入失败' });
+      return;
+    }
+    this.scanMrpFiles();
+    this.navPathStack.pushPathByName('Emulator', localPath);
   }
 
   private applySort(): void {
