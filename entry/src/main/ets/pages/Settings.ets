@@ -716,7 +716,7 @@ export struct SettingsPage {
             GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {
-                  Text('VMRP')
+                  Text('旧梦曲奇')
                     .fontSize(20)
                     .fontColor($r('app.color.settings_about_title'))
                     .fontWeight(FontWeight.Bold)
@@ -728,7 +728,7 @@ export struct SettingsPage {
                 .width('100%')
                 .alignItems(HorizontalAlign.Start)
                 .padding({ left: PAD_H, right: PAD_H, top: 16, bottom: 8 })
-                Text('VMRP 是一款基于 Mythroad 平台的 MRP 应用模拟器，可在 HarmonyOS 设备上运行经典的 MRP 小游戏与应用。')
+                Text('旧梦曲奇是一款基于 Mythroad 平台的 MRP 应用模拟器，可在 HarmonyOS 设备上运行经典的 MRP 小游戏与应用。')
                   .fontSize(14)
                   .fontColor($r('app.color.settings_desc_color'))
                   .lineHeight(22)
