@@ -34,20 +34,20 @@ const MEMORY_OPTIONS: SelectOption[] = [
 ];
 const MEMORY_VALUES: number[] = [1, 2, 4, 6, 8, 16];
 const STRENGTH_OPTIONS: SelectOption[] = [
-  { value: '轻柔' }, { value: '适中' }, { value: '强烈' }
+  { value: $r('app.string.haptic_gentle') }, { value: $r('app.string.haptic_moderate') }, { value: $r('app.string.haptic_strong') }
 ];
 const STRENGTH_VALUES: HapticStrength[] =
   [HapticStrength.LIGHT, HapticStrength.MEDIUM, HapticStrength.STRONG];
 const SHAKE_INTENSITY_OPTIONS: SelectOption[] = [
-  { value: '轻柔' }, { value: '适中' }, { value: '强烈' }
+  { value: $r('app.string.haptic_gentle') }, { value: $r('app.string.haptic_moderate') }, { value: $r('app.string.haptic_strong') }
 ];
 const SHAKE_INTENSITY_VALUES: number[] = [0, 1, 2];
 const DISPLAY_FILTER_OPTIONS: SelectOption[] = [
-  { value: '原汁原味' }, { value: '柔和平滑' }, { value: '边缘抗锯齿' }, { value: '高级抗锯齿' }, { value: 'AI 超分' }
+  { value: $r('app.string.filter_original') }, { value: $r('app.string.filter_smooth') }, { value: $r('app.string.filter_edge_aa') }, { value: $r('app.string.filter_advanced_aa') }, { value: $r('app.string.filter_ai_upscale') }
 ];
 const DISPLAY_FILTER_VALUES: number[] = [0, 1, 2, 3, 4];
 const SCREEN_EFFECT_OPTIONS: SelectOption[] = [
-  { value: '关闭' }, { value: '完整 CRT' }, { value: 'LCD 网格' }, { value: '仅扫描线' }
+  { value: $r('app.string.effect_off') }, { value: $r('app.string.effect_crt') }, { value: $r('app.string.effect_lcd_grid') }, { value: $r('app.string.effect_scanline') }
 ];
 const SCREEN_EFFECT_VALUES: number[] = [0, 1, 2, 3];
 const SCREEN_EFFECT_STRENGTH_DEFAULT: number = 0.5;
@@ -67,7 +67,7 @@ const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
 const KEY_SPEED_MULT = 'speed_multiplier';
 const KEY_GAMEPAD_BINDINGS = 'gamepad_bindings';
 const SPEED_OPTIONS: SelectOption[] = [
-  { value: '1x 正常' }, { value: '2x 加速' }, { value: '3x 高速' }, { value: '4x 极速' }
+  { value: $r('app.string.speed_1x') }, { value: $r('app.string.speed_2x') }, { value: $r('app.string.speed_3x') }, { value: $r('app.string.speed_4x') }
 ];
 const SPEED_VALUES: number[] = [1, 2, 3, 4];
 
@@ -332,13 +332,13 @@ export struct SettingsPage {
 
   confirmClearFiles(): void {
     this.getUIContext().showAlertDialog({
-      title: '清空游戏文件',
-      message: '将删除所有游戏、存档与缓存（含导入的 MRP），基础资源会在下次启动时自动恢复。此操作不可撤销，确定继续吗？',
+      title: $r('app.string.dialog_title_clear'),
+      message: $r('app.string.dialog_msg_clear'),
       alignment: DialogAlignment.Center,
       autoCancel: true,
-      primaryButton: { value: '取消', action: () => {} },
+      primaryButton: { value: $r('app.string.btn_cancel'), action: () => {} },
       secondaryButton: {
-        value: '清空',
+        value: $r('app.string.btn_clear'),
         fontColor: '#D63B55',
         action: () => {
           try { this.engine.stop(); } catch (_e) {}
@@ -346,7 +346,7 @@ export struct SettingsPage {
           if (!ctx) return;
           const ok = VmrpAssets.clearWorkDir(ctx);
           this.getUIContext().getPromptAction().showToast({
-            message: ok ? '已清空，重启应用后生效' : '清空失败', duration: 2500
+            message: ok ? $r('app.string.toast_cleared') : $r('app.string.toast_clear_failed'), duration: 2500
           });
         }
       }
@@ -382,24 +382,24 @@ export struct SettingsPage {
       const uris = await docPicker.save(opt);
       if (!uris || uris.length === 0) return;
       const destUri = uris[0];
-      this.getUIContext().getPromptAction().showToast({ message: '正在备份...' });
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_backing_up') });
       const ok = await VmrpAssets.backupToZip(ctx, destUri, fileName);
-      this.getUIContext().getPromptAction().showToast({ message: ok ? '备份成功' : '备份失败', duration: 2500 });
+      this.getUIContext().getPromptAction().showToast({ message: ok ? $r('app.string.toast_backup_ok') : $r('app.string.toast_backup_failed'), duration: 2500 });
     } catch (e) {
       console.error(`doBackup failed: ${JSON.stringify(e)}`);
-      this.getUIContext().getPromptAction().showToast({ message: '备份失败', duration: 2500 });
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_backup_failed'), duration: 2500 });
     }
   }
 
   confirmRestore(): void {
     this.getUIContext().showAlertDialog({
-      title: '恢复数据',
-      message: '将从备份文件恢复数据，当前的游戏、存档和缓存将被覆盖。确定继续吗？',
+      title: $r('app.string.dialog_title_restore'),
+      message: $r('app.string.dialog_msg_restore'),
       alignment: DialogAlignment.Center,
       autoCancel: true,
-      primaryButton: { value: '取消', action: () => {} },
+      primaryButton: { value: $r('app.string.btn_cancel'), action: () => {} },
       secondaryButton: {
-        value: '选择备份文件',
+        value: $r('app.string.dialog_btn_select_backup'),
         fontColor: '#D63B55',
         action: async () => {
           try {
@@ -413,14 +413,14 @@ export struct SettingsPage {
             try { this.engine.stop(); } catch (_e) {}
             const ctx = this.getUIContext().getHostContext();
             if (!ctx) return;
-            this.getUIContext().getPromptAction().showToast({ message: '正在恢复...' });
+            this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_restoring') });
             const ok = await VmrpAssets.restoreFromZip(ctx, srcUri);
             this.getUIContext().getPromptAction().showToast({
-              message: ok ? '恢复成功，重启应用后生效' : '恢复失败', duration: 2500
+              message: ok ? $r('app.string.toast_restore_ok') : $r('app.string.toast_restore_failed'), duration: 2500
             });
           } catch (e) {
             console.error(`doRestore failed: ${JSON.stringify(e)}`);
-            this.getUIContext().getPromptAction().showToast({ message: '恢复失败', duration: 2500 });
+            this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_restore_failed'), duration: 2500 });
           }
         }
       }
@@ -437,14 +437,14 @@ export struct SettingsPage {
       const docPicker = new picker.DocumentViewPicker();
       const uris = await docPicker.select(opt);
       if (!uris || uris.length === 0) return;
-      this.getUIContext().getPromptAction().showToast({ message: '正在导入...' });
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_importing') });
       const count = await VmrpAssets.importMrpBatch(ctx, uris);
       this.getUIContext().getPromptAction().showToast({
-        message: count > 0 ? `已导入 ${count} 个游戏` : '导入失败', duration: 2500
+        message: count > 0 ? `${$r('app.string.toast_import_ok_prefix')}${count}${$r('app.string.toast_import_ok_suffix')}` : $r('app.string.toast_import_failed'), duration: 2500
       });
     } catch (e) {
       console.error(`doImportMrp failed: ${JSON.stringify(e)}`);
-      this.getUIContext().getPromptAction().showToast({ message: '导入失败', duration: 2500 });
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_failed'), duration: 2500 });
     }
   }
 
@@ -455,10 +455,10 @@ export struct SettingsPage {
         // ── 模拟器 ──
         ListItem() {
           Column() {
-            SectionHeader({ title: '模拟器' })
+            SectionHeader({ title: $r('app.string.settings_section_emulator') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
                Column() {
-                 SRow({ label: '屏幕分辨率' }) {
+                 SRow({ label: $r('app.string.settings_label_resolution') }) {
                    SSelect({
                      opts: SCREEN_SIZE_OPTIONS,
                      selected: this.screenSizeIndex,
@@ -466,9 +466,9 @@ export struct SettingsPage {
                      onSelect: (index: number) => { this.saveScreenSize(index); }
                    })
                  }
-                 SDesc({ text: '设置模拟器屏幕分辨率，需在下一次启动时生效。不同 MRP 应用可能需要匹配其原始设备的分辨率。' })
+                 SDesc({ text: $r('app.string.settings_desc_resolution') })
                  SDivider()
-                 SRow({ label: '内存大小' }) {
+                 SRow({ label: $r('app.string.settings_label_memory') }) {
                   SSelect({
                     opts: MEMORY_OPTIONS,
                     selected: this.selectedIndex,
@@ -479,9 +479,9 @@ export struct SettingsPage {
                     }
                   })
                 }
-                 SDesc({ text: '内存大小决定 MRP 可见的堆空间，需在下一次启动时生效。' })
+                 SDesc({ text: $r('app.string.settings_desc_memory') })
                  SDivider()
-                 SRow({ label: '模拟速度' }) {
+                  SRow({ label: $r('app.string.settings_label_speed') }) {
                    SSelect({
                      opts: SPEED_OPTIONS,
                      selected: this.speedMultIndex,
@@ -491,7 +491,7 @@ export struct SettingsPage {
                      }
                    })
                  }
-                 SDesc({ text: '加快游戏运行速度，1x为正常速度，4x为极速。运行中也可在模拟器页面临时切换。' })
+                 SDesc({ text: $r('app.string.settings_desc_speed') })
                }
             }
           }
@@ -501,10 +501,10 @@ export struct SettingsPage {
         // ── 画面 ──
         ListItem() {
           Column() {
-            SectionHeader({ title: '画面' })
+            SectionHeader({ title: $r('app.string.settings_section_display') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
-                SRow({ label: '缩放滤镜' }) {
+                SRow({ label: $r('app.string.settings_label_filter') }) {
                   SSelect({
                     opts: DISPLAY_FILTER_OPTIONS,
                     selected: this.displayFilterIndex,
@@ -516,11 +516,11 @@ export struct SettingsPage {
                   })
                 }
                 SDesc({ text: this.xengineMode > 0
-                  ? '当前设备支持马良GPU硬件超分' + (this.xengineMode === 2 ? '（AI超分），选择AI超分时自动使用马良神经网络上采样' : '（空域超分），选择AI超分时自动使用马良GPU空域上采样') + '，画质优于自研FSRCNNX。即时生效。'
-                  : '原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线，AI超分使用FSRCNNX锐化上采样。即时生效。' })
+                  ? `${$r('app.string.settings_desc_filter_ai')}${this.xengineMode === 2 ? $r('app.string.settings_desc_filter_ai_neural') : $r('app.string.settings_desc_filter_ai_spatial')}${$r('app.string.settings_desc_filter_ai_end')}`
+                  : $r('app.string.settings_desc_filter_default') })
 
                 SDivider()
-                SRow({ label: '屏幕效果' }) {
+                SRow({ label: $r('app.string.settings_label_screen_effect') }) {
                   SSelect({
                     opts: SCREEN_EFFECT_OPTIONS,
                     selected: this.screenEffectIndex,
@@ -531,66 +531,66 @@ export struct SettingsPage {
                     }
                   })
                 }
-                SDesc({ text: '完整CRT模拟显像管电视（磷光余辉+荫罩+扫描线+桶形畸变），LCD网格模拟老式手机屏幕竖条纹，仅扫描线只加扫描线效果。' })
+                SDesc({ text: $r('app.string.settings_desc_screen_effect') })
 
                 SDivider()
-                SSliderLabel({ label: '效果强度', valueText: `${this.screenEffectStrength.toFixed(2)}` })
+                SSliderLabel({ label: $r('app.string.settings_label_effect_strength'), valueText: `${this.screenEffectStrength.toFixed(2)}` })
                 SSlider({
                   value: this.screenEffectStrength, min: 0.0, max: 1.0, step: 0.05,
                   onChange: (v: number) => { this.screenEffectStrength = v; this.saveDisplayFilter(); }
                 })
 
                 SDivider()
-                SSliderLabel({ label: '亮度', valueText: `${this.brightnessVal.toFixed(2)}` })
+                SSliderLabel({ label: $r('app.string.settings_label_brightness'), valueText: `${this.brightnessVal.toFixed(2)}` })
                 SSlider({
                   value: this.brightnessVal, min: -0.3, max: 0.3, step: 0.02,
                   onChange: (v: number) => { this.brightnessVal = v; this.saveDisplayFilter(); }
                 })
 
                 SDivider()
-                SSliderLabel({ label: '对比度', valueText: `${this.contrastVal.toFixed(2)}` })
+                SSliderLabel({ label: $r('app.string.settings_label_contrast'), valueText: `${this.contrastVal.toFixed(2)}` })
                 SSlider({
                   value: this.contrastVal, min: 0.5, max: 2.0, step: 0.05,
                   onChange: (v: number) => { this.contrastVal = v; this.saveDisplayFilter(); }
                 })
 
                 SDivider()
-                SSliderLabel({ label: '饱和度', valueText: `${this.saturationVal.toFixed(2)}` })
+                SSliderLabel({ label: $r('app.string.settings_label_saturation'), valueText: `${this.saturationVal.toFixed(2)}` })
                 SSlider({
                   value: this.saturationVal, min: 0.0, max: 2.0, step: 0.05,
                   onChange: (v: number) => { this.saturationVal = v; this.saveDisplayFilter(); }
                 })
 
                 SDivider()
-                SRow({ label: '子像素渲染' }) {
+                SRow({ label: $r('app.string.settings_label_subpixel') }) {
                   Toggle({ type: ToggleType.Switch, isOn: this.subpixelRender === 1 })
                     .selectedColor($r('app.color.accent_color'))
                     .switchPointColor('#FFFFFF')
                     .onChange((isOn: boolean) => { this.subpixelRender = isOn ? 1 : 0; this.saveDisplayFilter(); })
                 }
-                SDesc({ text: '利用 LCD 子像素 RGB 排列提升文字和边缘的清晰度，在高分辨率屏幕上效果明显。' })
+                SDesc({ text: $r('app.string.settings_desc_subpixel') })
 
                 SDivider()
-                SRow({ label: 'Gamma 校正' }) {
+                SRow({ label: $r('app.string.settings_label_gamma') }) {
                   Toggle({ type: ToggleType.Switch, isOn: this.gammaCorrect === 1 })
                     .selectedColor($r('app.color.accent_color'))
                     .switchPointColor('#FFFFFF')
                     .onChange((isOn: boolean) => { this.gammaCorrect = isOn ? 1 : 0; this.saveDisplayFilter(); })
                 }
-                SDesc({ text: '将 sRGB 伽马曲线应用于亮度/对比度/饱和度调整前，避免色彩偏移。建议保持开启。' })
+                SDesc({ text: $r('app.string.settings_desc_gamma') })
 
                 SDivider()
-                SRow({ label: 'RGB565 抖动' }) {
+                SRow({ label: $r('app.string.settings_label_dither') }) {
                   Toggle({ type: ToggleType.Switch, isOn: this.ditherEnabled === 1 })
                     .selectedColor($r('app.color.accent_color'))
                     .switchPointColor('#FFFFFF')
                     .onChange((isOn: boolean) => { this.ditherEnabled = isOn ? 1 : 0; this.saveDisplayFilter(); })
                 }
-                SDesc({ text: 'RGB565 转 RGBA 时施加 Bayer 抖动，减少色带过渡的阶梯感。建议保持开启。' })
+                SDesc({ text: $r('app.string.settings_desc_dither') })
 
                 SDivider()
                 Column() {
-                  Button('重置画面设置')
+                  Button($r('app.string.settings_btn_reset_display'))
                     .width('100%')
                     .height(40)
                     .fontSize(14)
@@ -623,10 +623,10 @@ export struct SettingsPage {
         // ── 交互 ──
         ListItem() {
           Column() {
-            SectionHeader({ title: '交互' })
+            SectionHeader({ title: $r('app.string.settings_section_interaction') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
-                SRow({ label: '按键震动' }) {
+                 SRow({ label: $r('app.string.settings_label_key_haptic') }) {
                   Toggle({ type: ToggleType.Switch, isOn: this.hapticEnabled })
                     .selectedColor($r('app.color.accent_color'))
                     .switchPointColor('#FFFFFF')
@@ -634,7 +634,7 @@ export struct SettingsPage {
                 }
                 SDivider()
                 Row() {
-                  Text('震动强度')
+                   Text($r('app.string.settings_label_haptic_strength'))
                     .fontSize(16)
                     .fontColor(this.hapticEnabled ? $r('app.color.settings_label_color') : $r('app.color.settings_haptic_disabled'))
                     .layoutWeight(1)
@@ -651,10 +651,10 @@ export struct SettingsPage {
                 .padding({ left: PAD_H, right: PAD_H })
                 .enabled(this.hapticEnabled)
                 .opacity(this.hapticEnabled ? 1 : 0.35)
-                SDesc({ text: '调节按键触控时的震动反馈力度，选择后即时体验。' })
+                SDesc({ text: $r('app.string.settings_desc_haptic_strength') })
                 SDivider()
-                SRow({ label: '手柄映射' }) {
-                  Button('设置按键映射')
+                 SRow({ label: $r('app.string.settings_label_gamepad') }) {
+                   Button($r('app.string.settings_btn_gamepad_map'))
                     .height(36)
                     .fontSize(13)
                     .fontColor('#FFFFFF')
@@ -663,7 +663,7 @@ export struct SettingsPage {
                     .borderRadius(8)
                     .onClick(() => { this.openGamepadDialog(); })
                 }
-                SDesc({ text: '自定义手柄按键→MRP映射，支持摇杆方向与组合键。' })
+                SDesc({ text: $r('app.string.settings_desc_gamepad') })
               }
             }
           }
@@ -673,10 +673,10 @@ export struct SettingsPage {
         // ── 游戏震动 ──
         ListItem() {
           Column() {
-            SectionHeader({ title: '游戏震动' })
+            SectionHeader({ title: $r('app.string.settings_section_game_shake') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
-                SRow({ label: '震动强度' }) {
+                 SRow({ label: $r('app.string.settings_label_shake_intensity') }) {
                   SSelect({
                     opts: SHAKE_INTENSITY_OPTIONS,
                     selected: this.shakeIntensityIndex,
@@ -684,7 +684,7 @@ export struct SettingsPage {
                     onSelect: (index: number) => { this.saveShakeIntensity(index); }
                   })
                 }
-                SDesc({ text: '调节游戏中 mr_startShake 触发的振动强度。轻柔=短振, 强烈=长振+闹钟模式。即时生效。' })
+                SDesc({ text: $r('app.string.settings_desc_shake_intensity') })
               }
             }
           }
@@ -694,15 +694,15 @@ export struct SettingsPage {
         // ── 动感 ──
         ListItem() {
           Column() {
-            SectionHeader({ title: '动感' })
+            SectionHeader({ title: $r('app.string.settings_section_motion') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
-                SSliderLabel({ label: '灵敏度', valueText: `${this.sensitivity.toFixed(1)}x` })
+                SSliderLabel({ label: $r('app.string.settings_label_sensitivity'), valueText: `${this.sensitivity.toFixed(1)}x` })
                 SSlider({
                   value: this.sensitivity, min: 0.2, max: 3.0, step: 0.1,
                   onChange: (v: number) => { this.saveSensitivity(v); }
                 })
-                SDesc({ text: '调节加速度传感器灵敏度倍率，1.0 为默认值。值越大，动感游戏中球的移动越灵敏。需重启游戏后生效。' })
+                SDesc({ text: $r('app.string.settings_desc_sensitivity') })
               }
             }
           }
@@ -712,15 +712,15 @@ export struct SettingsPage {
         // ── 关于 ──
         ListItem() {
           Column() {
-            SectionHeader({ title: '关于' })
+            SectionHeader({ title: $r('app.string.settings_section_about') })
             GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {
-                  Text('旧梦曲奇')
+                  Text($r('app.string.settings_about_name'))
                     .fontSize(20)
                     .fontColor($r('app.color.settings_about_title'))
                     .fontWeight(FontWeight.Bold)
-                  Text('MRP 模拟器')
+                  Text($r('app.string.settings_about_subtitle'))
                     .fontSize(13)
                     .fontColor($r('app.color.settings_about_subtitle'))
                     .margin({ top: 2 })
@@ -728,7 +728,7 @@ export struct SettingsPage {
                 .width('100%')
                 .alignItems(HorizontalAlign.Start)
                 .padding({ left: PAD_H, right: PAD_H, top: 16, bottom: 8 })
-                Text('旧梦曲奇是一款基于 Mythroad 平台的 MRP 应用模拟器，可在 HarmonyOS 设备上运行经典的 MRP 小游戏与应用。')
+                Text($r('app.string.settings_about_desc'))
                   .fontSize(14)
                   .fontColor($r('app.color.settings_desc_color'))
                   .lineHeight(22)
@@ -743,39 +743,39 @@ export struct SettingsPage {
         // ── 数据管理 ──
         ListItem() {
           Column() {
-            SectionHeader({ title: '数据管理' })
+            SectionHeader({ title: $r('app.string.settings_section_data') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 Column() {
-                  Button('备份数据')
+                  Button($r('app.string.settings_btn_backup'))
                     .width('100%').height(44).fontSize(16)
                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
                     .onClick(() => { this.doBackup(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 10, bottom: 0 })
-                Text('将游戏、存档和缓存打包为 zip 保存到下载目录')
+                Text($r('app.string.settings_desc_backup'))
                   .fontSize(12).fontColor($r('app.color.settings_desc_color'))
                   .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 0 })
                 SDivider()
                 Column() {
-                  Button('恢复数据')
+                  Button($r('app.string.settings_btn_restore'))
                     .width('100%').height(44).fontSize(16)
                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
                     .onClick(() => { this.confirmRestore(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
-                Text('从 zip 文件导入文件到内存卡(沙箱),同名覆盖')
+                Text($r('app.string.settings_desc_restore'))
                   .fontSize(12).fontColor($r('app.color.settings_desc_color'))
                   .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 0 })
                 SDivider()
                 Column() {
-                  Button('导入游戏')
+                  Button($r('app.string.settings_btn_import'))
                     .width('100%').height(44).fontSize(16)
                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
                     .onClick(() => { this.doImportMrp(); })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
-                Text('批量导入 .mrp 游戏文件到内存卡')
+                Text($r('app.string.settings_desc_import'))
                   .fontSize(12).fontColor($r('app.color.settings_desc_color'))
                   .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 10 })
               }
@@ -791,7 +791,7 @@ export struct SettingsPage {
             GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {
-                  Button('清空游戏文件')
+                   Button($r('app.string.settings_btn_clear_files'))
                     .width('100%').height(48).fontSize(16)
                     .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
                     .onClick(() => { this.confirmClearFiles(); })
@@ -799,7 +799,7 @@ export struct SettingsPage {
                 .padding({ left: PAD_H, right: PAD_H, top: 8, bottom: 4 })
                 SDivider()
                 Column() {
-                  Button('恢复默认设置')
+                   Button($r('app.string.settings_btn_reset_defaults'))
                     .width('100%').height(48).fontSize(16)
                     .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
                     .onClick(() => { this.resetDefaults(); })
@@ -820,7 +820,7 @@ export struct SettingsPage {
       .expandSafeArea()
     }
     .titleBar({
-      content: { title: { mainTitle: '设置' } },
+      content: { title: { mainTitle: $r('app.string.settings_title') } },
       style: {
         scrollEffectOpts: {
           enableScrollEffect: true,
@@ -859,12 +859,12 @@ interface BackupNameDialogParams {
 @Builder
 function BackupNameDialogBuilder($$: BackupNameDialogParams) {
   Column() {
-    Text('备份文件名')
+    Text($r('app.string.dialog_title_backup_name'))
       .fontSize(17)
       .fontColor($r('app.color.settings_about_title'))
       .fontWeight(FontWeight.Medium)
       .margin({ top: 20, bottom: 6 })
-    Text('将保存为 zip 文件到下载目录，同名文件将被覆盖')
+    Text($r('app.string.dialog_desc_backup_name'))
       .fontSize(12)
       .fontColor($r('app.color.settings_desc_color'))
       .margin({ bottom: 14 })
@@ -877,11 +877,11 @@ function BackupNameDialogBuilder($$: BackupNameDialogParams) {
       .fontColor($r('app.color.settings_about_title'))
       .borderRadius(10)
     Row() {
-      Button('取消')
+      Button($r('app.string.btn_cancel'))
         .width(100).height(40)
         .backgroundColor($r('app.color.settings_cancel_btn_bg')).fontColor($r('app.color.settings_cancel_btn_fg'))
         .onClick(() => { $$.onCancel(); })
-      Button('备份')
+      Button($r('app.string.btn_backup'))
         .width(100).height(40)
         .backgroundColor($r('app.color.accent_color')).fontColor('#FFFFFF')
         .onClick(() => { $$.onConfirm($$.fileName); })

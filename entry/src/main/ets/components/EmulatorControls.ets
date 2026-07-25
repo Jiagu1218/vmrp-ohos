@@ -67,7 +67,7 @@ export struct DPadBtn {
 
 @ComponentV2
 export struct SoftKeyBtn {
-  @Param chipLabel: string = '';
+  @Param chipLabel: ResourceStr = '';
   @Param keyVal: number = 0;
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
   @Param softKeyH: number = 28;
@@ -99,7 +99,7 @@ export struct DPadWithFunc {
   build() {
     Column({ space: 14 }) {
       Row({ space: 12 }) {
-        SoftKeyBtn({ chipLabel: '左软', keyVal: MR_KEY_SOFTLEFT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
+        SoftKeyBtn({ chipLabel: $r('app.string.soft_left'), keyVal: MR_KEY_SOFTLEFT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
 
         DPadBtn({
           label: '▲', labelFontSize: this.dpadSize * 0.2, labelFontColor: DPAD_ARROW,
@@ -107,7 +107,7 @@ export struct DPadWithFunc {
           onKeyTouch: this.onKeyTouch
         })
 
-        SoftKeyBtn({ chipLabel: '右软', keyVal: MR_KEY_SOFTRIGHT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
+        SoftKeyBtn({ chipLabel: $r('app.string.soft_right'), keyVal: MR_KEY_SOFTRIGHT, onKeyTouch: this.onKeyTouch, softKeyH: this.softKeyH })
       }
       .justifyContent(FlexAlign.Center)
       .alignItems(VerticalAlign.Center)
@@ -261,7 +261,7 @@ export struct TopScreen {
 
 @ComponentV2
 export struct StatusBarChip {
-  @Param chipLabel: string = '';
+  @Param chipLabel: ResourceStr = '';
   @Param chipFontColor: ResourceColor = NUMKEY_TEXT;
   @Param chipBgColor: ResourceColor = NUMKEY_BG;
   @Param onChipClick: () => void = () => {};
@@ -345,7 +345,7 @@ export struct EditDialogContent {
 
   build() {
     Column() {
-      Text('请输入文字')
+      Text($r('app.string.edit_dialog_hint'))
         .fontSize(16)
         .fontColor('#CCCCCC')
         .margin({ top: 16, bottom: 10 })
@@ -357,7 +357,7 @@ export struct EditDialogContent {
         .backgroundColor('#1A1A2E')
         .fontColor('#FFFFFF')
       Row() {
-        Button('取消')
+        Button($r('app.string.btn_cancel'))
           .width(100)
           .height(40)
           .backgroundColor('#333355')
@@ -365,7 +365,7 @@ export struct EditDialogContent {
           .onClick(() => {
             this.onCancel();
           })
-        Button('确定')
+        Button($r('app.string.btn_confirm'))
           .width(100)
           .height(40)
           .backgroundColor(ACCENT_COLOR)
