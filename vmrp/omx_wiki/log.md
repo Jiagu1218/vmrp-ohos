@@ -592,3 +592,37 @@
 ## [2026-07-22T07:43:48.000Z] verify
 - **Pages:** gjxqy-local-download-protocol-and-fixture-id-mismatch.md
 - **Summary:** Final post-edit target rerun passed without retry in 44.74 seconds; retained bytes again prove the exact derived download, installed res.bin1, updated res.v, and positive save-selection frame.
+## [2026-07-25T07:28:38.109Z] lint
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md, cookie-mrp-restart-and-full-runtime-version-contract.md, dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gfhcq-game-stutter-performance-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, gsha-old-compact-timer-download-callback-fix.md, gtxzj-date-guard-and-default-runtime-assets.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, mps-selector-100-is-not-record-100.md, op6120-independent-scrram-4m-startup-fix.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, rzsgqd-background-music-silent-debugging.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-line-wrap-progress-2026-07-16.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md, wbrw-proxy2-white-matte-progress-2026-07-16.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md
+- **Summary:** Lint: 34 issues (27 orphan, 0 stale, 2 broken, 2 contradictions)
+
+## [2026-07-25T07:29:05.008Z] query
+- **Pages:** dota-browser-plugin-second-simpledownload-trigger.md, gsha-old-compact-timer-download-callback-fix.md
+- **Summary:** Query "gjxwsmn netpay" → 2 results (of 2 total)
+
+## [2026-07-25T07:31:12.008Z] ingest
+- **Pages:** gjxwsmn-netpay-plugin-update-progress.md
+- **Summary:** Created new page "gjxwsmn netpay plugin update progress"
+
+## [2026-07-25T07:31:23.506Z] query
+- **Pages:** gjxwsmn-netpay-plugin-update-progress.md, gms-payment-latency-analysis.md, gtxzj-date-guard-and-default-runtime-assets.md
+- **Summary:** Query "gjxwsmn PROP route token combo.sid" → 3 results (of 20 total)
+
+## [2026-07-25T07:32:08.908Z] lint
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md, cookie-mrp-restart-and-full-runtime-version-contract.md, dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gfhcq-game-stutter-performance-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gjxwsmn-netpay-plugin-update-progress.md, gms-payment-latency-analysis.md, gsha-old-compact-timer-download-callback-fix.md, gtxzj-date-guard-and-default-runtime-assets.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, mps-selector-100-is-not-record-100.md, op6120-independent-scrram-4m-startup-fix.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, rzsgqd-background-music-silent-debugging.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-line-wrap-progress-2026-07-16.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md, wbrw-proxy2-white-matte-progress-2026-07-16.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md
+- **Summary:** Lint: 36 issues (28 orphan, 0 stale, 2 broken, 2 contradictions)
+
+## [2026-07-25T07:41:03.446Z] ingest
+- **Pages:** gjxwsmn-netpay-plugin-update-progress.md
+- **Summary:** Updated "gjxwsmn netpay plugin update progress" with new content
+## [2026-07-25T10:27:32.935Z] ingest
+- **Pages:** gsht-black-screen-nested-resource-owner-progress.md
+- **Summary:** Created new page "GSHT black screen nested resource owner progress"
+
+## [2026-07-25T10:47:59.799Z] add
+- **Pages:** arm-ext-canonical-empty-event-layer-recovery.md, cookie-child-return-opening-folder-frame-replay.md, cookie-e2e-key-timer-generation-boundary.md, cookie-mrp-restart-and-full-runtime-version-contract.md, dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-record-pack-slot-fix.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gfhcq-game-stutter-performance-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gjxwsmn-netpay-plugin-update-progress.md, gms-payment-latency-analysis.md, gsha-old-compact-timer-download-callback-fix.md, gsht-black-screen-nested-resource-owner-progress.md, gtxzj-date-guard-and-default-runtime-assets.md, gwyaz-installed-file-probe-and-wrapper-rw-owner-fix.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, mps-selector-100-is-not-record-100.md, op6120-independent-scrram-4m-startup-fix.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, optwar-exit-plugin-stall-fix-progress.md, private-loader-wrapper-package-context-repair.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, rzsgqd-background-music-silent-debugging.md, sanguo-black-screen-dynamic-lg-mem-arena-fix.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-line-wrap-progress-2026-07-16.md, wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-input-paste-ucs2-table77-fix.md, wbrw-manual-clipboard-and-menu-exit-verification.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-image-loading-2026-07-12.md, wbrw-proxy2-web-page-rendering.md, wbrw-proxy2-white-matte-progress-2026-07-16.md, wbrw-startup-stall.md, wxmdld-wrapped-lg-mem-first-fit-fix.md
+- **Summary:** Refreshed wiki index and derived metadata surfaces
+
+## [2026-07-25T11:15:01.000Z] complete
+- **Pages:** gsht-black-screen-nested-resource-owner-progress.md
+- **Summary:** Replaced stale arbitrary stack-owner scanning with active Thumb leaf-frame decoding; verified diagnostic-free GSHT title rendering and no-retry 31-file/54-test compatibility.

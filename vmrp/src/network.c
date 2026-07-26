@@ -55,15 +55,49 @@ static int isCMWAP = FALSE;  // 当前 mr_initNetwork 模式，只用于之后�
 static struct rb_root sockets = RB_ROOT;
 
 #define SKYENGINE_DNS_MAP_MAX 32
+#define SKYENGINE_DNS_ROUTE_MAX 256
 #define VMRP_DNS_NAME_MAX 255
+#define VMRP_DNS_ROUTE_TOKEN_PREFIX 0xF0000000u
 
 typedef struct {
     char original[VMRP_DNS_NAME_MAX + 1];
     char fake[VMRP_DNS_NAME_MAX + 1];
+    int hasFakePort;
+    uint16_t fakePort;
 } DnsMapEntry;
 
 static DnsMapEntry dnsMap[SKYENGINE_DNS_MAP_MAX];
 static int dnsMapCount = 0;
+static uint32_t dnsMapGeneration = 0;
+
+typedef struct {
+    uint32_t token;
+    uint32_t resolvedIp;
+    uint32_t generation;
+    uint16_t port;
+} DnsRouteRecord;
+
+static DnsRouteRecord dnsRoutes[SKYENGINE_DNS_ROUTE_MAX];
+static int dnsRouteCount = 0;
+static uint32_t dnsRouteSequence = 0;
+
+typedef struct {
+    char name[VMRP_DNS_NAME_MAX + 1];
+    int mapped;
+    int hasPort;
+    uint16_t port;
+    uint32_t generation;
+} DnsLookupTarget;
+
+#ifdef _MSC_VER
+static SRWLOCK dnsMapLock = SRWLOCK_INIT;
+static void lockDnsMap(void) { AcquireSRWLockExclusive(&dnsMapLock); }
+static void unlockDnsMap(void) { ReleaseSRWLockExclusive(&dnsMapLock); }
+#else
+static pthread_mutex_t dnsMapLock = PTHREAD_MUTEX_INITIALIZER;
+static void lockDnsMap(void) { pthread_mutex_lock(&dnsMapLock); }
+static void unlockDnsMap(void) { pthread_mutex_unlock(&dnsMapLock); }
+#endif
 
 #define VMRP_NET_LOG_ENABLED() (getenv("SKYENGINE_NETWORK_LOG") != NULL || getenv("SKYENGINE_LOG") != NULL)
 #define VMRP_NET_LOG(...)                       \
@@ -135,12 +169,48 @@ static int copyNormalizedDomain(char* dst, size_t dstSize, const char* src) {
     return MR_SUCCESS;
 }
 
+static int parsePortNumber(const char* src, uint16_t* outPort) {
+    int value = 0;
+    if (!src || !*src || !outPort) return MR_FAILED;
+    while (*src) {
+        if (!isdigit((unsigned char)*src)) return MR_FAILED;
+        value = value * 10 + (*src - '0');
+        if (value > 65535) return MR_FAILED;
+        src++;
+    }
+    if (value == 0) return MR_FAILED;
+    *outPort = (uint16_t)value;
+    return MR_SUCCESS;
+}
+
+static int copyNormalizedDnsTarget(char* dst, size_t dstSize, uint16_t* outPort,
+                                   int* outHasPort, const char* src) {
+    char endpoint[VMRP_DNS_NAME_MAX + 1];
+    char* colon;
+    if (!dst || !outPort || !outHasPort) return MR_FAILED;
+    if (copyNormalizedDomain(endpoint, sizeof(endpoint), src) != MR_SUCCESS) return MR_FAILED;
+
+    *outHasPort = FALSE;
+    *outPort = 0;
+    colon = strrchr(endpoint, ':');
+    if (colon) {
+        if (strchr(endpoint, ':') != colon) return MR_FAILED;
+        *colon = '\0';
+        if (parsePortNumber(colon + 1, outPort) != MR_SUCCESS) return MR_FAILED;
+        *outHasPort = TRUE;
+    }
+    if (copyNormalizedDomain(dst, dstSize, endpoint) != MR_SUCCESS) return MR_FAILED;
+    return MR_SUCCESS;
+}
+
 static int parseDnsMapEntry(char* entry) {
     char* sep;
     char* original;
     char* fake;
     char originalNorm[VMRP_DNS_NAME_MAX + 1];
     char fakeNorm[VMRP_DNS_NAME_MAX + 1];
+    uint16_t fakePort = 0;
+    int hasFakePort = FALSE;
 
     entry = trimSpaces(entry);
     if (!*entry) return MR_SUCCESS;
@@ -159,16 +229,30 @@ static int parseDnsMapEntry(char* entry) {
     original = trimSpaces(entry);
     fake = trimSpaces(fake);
     if (copyNormalizedDomain(originalNorm, sizeof(originalNorm), original) != MR_SUCCESS ||
-        copyNormalizedDomain(fakeNorm, sizeof(fakeNorm), fake) != MR_SUCCESS) {
+        copyNormalizedDnsTarget(fakeNorm, sizeof(fakeNorm), &fakePort, &hasFakePort, fake) != MR_SUCCESS) {
         return MR_FAILED;
     }
     if (dnsMapCount >= SKYENGINE_DNS_MAP_MAX) return MR_FAILED;
 
-    strcpy(dnsMap[dnsMapCount].original, originalNorm);
-    strcpy(dnsMap[dnsMapCount].fake, fakeNorm);
-    VMRP_NET_LOG("dns_map[%d]: %s -> %s\n", dnsMapCount, originalNorm, fakeNorm);
+    DnsMapEntry* target = &dnsMap[dnsMapCount];
+    memset(target, 0, sizeof(*target));
+    strcpy(target->original, originalNorm);
+    strcpy(target->fake, fakeNorm);
+    target->hasFakePort = hasFakePort;
+    target->fakePort = fakePort;
+    if (hasFakePort) {
+        VMRP_NET_LOG("dns_map[%d]: %s -> %s:%u\n", dnsMapCount, originalNorm, fakeNorm, (unsigned)fakePort);
+    } else {
+        VMRP_NET_LOG("dns_map[%d]: %s -> %s\n", dnsMapCount, originalNorm, fakeNorm);
+    }
     dnsMapCount++;
     return MR_SUCCESS;
+}
+
+static void invalidateDnsRoutesLocked(void) {
+    dnsRouteCount = 0;
+    dnsMapGeneration++;
+    if (dnsMapGeneration == 0) dnsMapGeneration = 1;
 }
 
 int32 my_configureDnsMap(const char* map) {
@@ -176,15 +260,21 @@ int32 my_configureDnsMap(const char* map) {
     char* entry;
     char* next;
 
+    lockDnsMap();
     dnsMapCount = 0;
+    invalidateDnsRoutesLocked();
     VMRP_NET_LOG("configure_dns_map raw='%s'\n", map ? map : "(null)");
     if (!map || !*map) {
         VMRP_NET_LOG("configure_dns_map cleared\n");
+        unlockDnsMap();
         return MR_SUCCESS;
     }
 
     buf = malloc(strlen(map) + 1);
-    if (!buf) return MR_FAILED;
+    if (!buf) {
+        unlockDnsMap();
+        return MR_FAILED;
+    }
     strcpy(buf, map);
 
     entry = buf;
@@ -203,6 +293,7 @@ int32 my_configureDnsMap(const char* map) {
             free(buf);
             dnsMapCount = 0;
             VMRP_NET_LOG("configure_dns_map failed at entry='%s'\n", entry);
+            unlockDnsMap();
             return MR_FAILED;
         }
         entry = next;
@@ -210,25 +301,137 @@ int32 my_configureDnsMap(const char* map) {
 
     free(buf);
     VMRP_NET_LOG("configure_dns_map count=%d\n", dnsMapCount);
+    unlockDnsMap();
     return MR_SUCCESS;
 }
 
-static const char* getDnsLookupName(const char* name, char* mappedName, size_t mappedNameSize) {
+static int getDnsLookupTarget(const char* name, DnsLookupTarget* target) {
     char normalized[VMRP_DNS_NAME_MAX + 1];
-    if (copyNormalizedDomain(normalized, sizeof(normalized), name) != MR_SUCCESS) {
+    int count;
+
+    if (!target || copyNormalizedDomain(normalized, sizeof(normalized), name) != MR_SUCCESS) {
         VMRP_NET_LOG("dns_lookup invalid name='%s'\n", name ? name : "(null)");
-        return name;
+        return MR_FAILED;
     }
+
+    memset(target, 0, sizeof(*target));
+    strcpy(target->name, normalized);
+    lockDnsMap();
     for (int i = dnsMapCount - 1; i >= 0; i--) {
         if (strcmp(dnsMap[i].original, normalized) == 0) {
-            snprintf(mappedName, mappedNameSize, "%s", dnsMap[i].fake);
-            printf("dns map: %s -> %s\n", name, mappedName);
-            VMRP_NET_LOG("dns_lookup hit: %s -> %s\n", normalized, mappedName);
-            return mappedName;
+            strcpy(target->name, dnsMap[i].fake);
+            target->mapped = TRUE;
+            target->hasPort = dnsMap[i].hasFakePort;
+            target->port = dnsMap[i].fakePort;
+            target->generation = dnsMapGeneration;
+            break;
         }
     }
-    VMRP_NET_LOG("dns_lookup miss: %s (entries=%d)\n", normalized, dnsMapCount);
-    return name;
+    count = dnsMapCount;
+    unlockDnsMap();
+
+    if (!target->mapped) {
+        VMRP_NET_LOG("dns_lookup miss: %s (entries=%d)\n", normalized, count);
+    } else if (target->hasPort) {
+        printf("dns map: %s -> %s:%u\n", name, target->name, (unsigned)target->port);
+        VMRP_NET_LOG("dns_lookup hit: %s -> %s:%u generation=%u\n",
+                     normalized, target->name, (unsigned)target->port,
+                     (unsigned)target->generation);
+    } else {
+        printf("dns map: %s -> %s\n", name, target->name);
+        VMRP_NET_LOG("dns_lookup hit: %s -> %s\n", normalized, target->name);
+    }
+    return MR_SUCCESS;
+}
+
+enum {
+    DNS_ROUTE_ERROR = -1,
+    DNS_ROUTE_NONE = 0,
+    DNS_ROUTE_APPLIED = 1
+};
+
+static int dnsRouteTokenInUseLocked(uint32_t token) {
+    for (int i = 0; i < dnsRouteCount; i++) {
+        if (dnsRoutes[i].token == token) return TRUE;
+    }
+    return FALSE;
+}
+
+static int createDnsMappedRoute(const DnsLookupTarget* target, uint32_t resolvedIp,
+                                uint32_t* outToken) {
+    DnsRouteRecord* route;
+    uint32_t token;
+
+    if (!target || !target->hasPort || !outToken) return MR_FAILED;
+
+    lockDnsMap();
+    if (target->generation != dnsMapGeneration) {
+        unlockDnsMap();
+        return MR_FAILED;
+    }
+
+    /* Reusing an identical immutable endpoint bounds repeated lookups without
+     * changing any token already returned to the guest. */
+    for (int i = 0; i < dnsRouteCount; i++) {
+        route = &dnsRoutes[i];
+        if (route->generation == target->generation &&
+            route->resolvedIp == resolvedIp && route->port == target->port) {
+            *outToken = route->token;
+            unlockDnsMap();
+            return MR_SUCCESS;
+        }
+    }
+    if (dnsRouteCount >= SKYENGINE_DNS_ROUTE_MAX) {
+        VMRP_NET_LOG("dns_route capacity exhausted (%d)\n", SKYENGINE_DNS_ROUTE_MAX);
+        unlockDnsMap();
+        return MR_FAILED;
+    }
+
+    /* A distinct DNS answer gets an immutable route, so it cannot redirect a
+     * token already returned to the guest.  Skip -1, the ABI failure value. */
+    do {
+        dnsRouteSequence = (dnsRouteSequence + 1) & 0x0FFFFFFFu;
+        token = VMRP_DNS_ROUTE_TOKEN_PREFIX | dnsRouteSequence;
+    } while (token == UINT32_MAX || dnsRouteTokenInUseLocked(token));
+
+    route = &dnsRoutes[dnsRouteCount++];
+    route->token = token;
+    route->resolvedIp = resolvedIp;
+    route->generation = target->generation;
+    route->port = target->port;
+    *outToken = token;
+    unlockDnsMap();
+    return MR_SUCCESS;
+}
+
+static int applyDnsMappedRoute(int32_t* ip, uint16_t* port) {
+    uint32_t token;
+    uint32_t resolvedIp = 0;
+    uint16_t mappedPort = 0;
+    int found = FALSE;
+
+    if (!ip || !port) return DNS_ROUTE_ERROR;
+    token = (uint32_t)*ip;
+
+    lockDnsMap();
+    for (int i = 0; i < dnsRouteCount; i++) {
+        if (dnsRoutes[i].token == token && dnsRoutes[i].generation == dnsMapGeneration) {
+            resolvedIp = dnsRoutes[i].resolvedIp;
+            mappedPort = dnsRoutes[i].port;
+            found = TRUE;
+            break;
+        }
+    }
+    unlockDnsMap();
+
+    /* Only an exact active token is synthetic.  Unmatched values, including
+     * ordinary 240/4 addresses and stale tokens, retain normal IPv4 behavior. */
+    if (!found) return DNS_ROUTE_NONE;
+    *ip = (int32_t)resolvedIp;
+    *port = mappedPort;
+    VMRP_NET_LOG("dns_route hit: token=0x%X -> ip=0x%X port=%u\n",
+                 (unsigned)token, (unsigned)resolvedIp, (unsigned)mappedPort);
+    return DNS_ROUTE_APPLIED;
 }
 
 /* 从 "host" 或 "host:port" 形式的字符串里提取 host 和 port。
@@ -449,6 +652,12 @@ static VMRP_THREAD_RET my_connectAsync(void* arg) {
 int32 my_connect(int32 s, int32 ip, uint16 port, int32 type) {
     uIntMap* obj = uIntMap_search(&sockets, (uint32_t)s);
     mSocket* data = (mSocket*)obj->data;
+    int routeResult = applyDnsMappedRoute(&ip, &port);
+    if (routeResult == DNS_ROUTE_ERROR) {
+        data->state = MR_FAILED;
+        data->realState = MR_FAILED;
+        return MR_FAILED;
+    }
     if (ip == 0x0A0000AC && data->cmwapMode) {
         // 10.0.0.172 是 CMWAP 代理地址，桌面端不存在该代理
         // 伪装连接成功，实际连接在 my_send 第一次发送时根据 CONNECT 头建立
@@ -558,6 +767,9 @@ int32 my_closeNetwork(void) {
 #ifdef WIN_PLAT
     WSACleanup();
 #endif
+    lockDnsMap();
+    invalidateDnsRoutesLocked();
+    unlockDnsMap();
     return MR_SUCCESS;
 }
 
@@ -642,18 +854,18 @@ typedef struct {
 
 static int32 my_getHostByNameSync(const char* name) {
     int32 ret = MR_FAILED;
-    char mappedName[VMRP_DNS_NAME_MAX + 1];
-    const char* lookupName = getDnsLookupName(name, mappedName, sizeof(mappedName));
+    DnsLookupTarget target;
+    if (getDnsLookupTarget(name, &target) != MR_SUCCESS) return MR_FAILED;
 
 #if 1
     struct addrinfo *result, *res;
-    printf("getaddrinfo of %s\n", lookupName);
-    VMRP_NET_LOG("get_host name='%s' lookup='%s'\n", name ? name : "(null)", lookupName ? lookupName : "(null)");
-    int gai = getaddrinfo(lookupName, NULL, NULL, &result);
+    printf("getaddrinfo of %s\n", target.name);
+    VMRP_NET_LOG("get_host name='%s' lookup='%s'\n", name ? name : "(null)", target.name);
+    int gai = getaddrinfo(target.name, NULL, NULL, &result);
     if (gai != 0) {
         printf("getaddrinfo failed!\n");
         VMRP_NET_LOG("getaddrinfo failed name='%s' lookup='%s' code=%d\n",
-                     name ? name : "(null)", lookupName ? lookupName : "(null)", gai);
+                     name ? name : "(null)", target.name, gai);
         return ret;
     }
     for (res = result; res; res = res->ai_next) {
@@ -668,18 +880,28 @@ static int32 my_getHostByNameSync(const char* name) {
     }
     freeaddrinfo(result);
 #else
-    struct hostent* remoteHost = gethostbyname(name);
+    struct hostent* remoteHost = gethostbyname(target.name);
     if (remoteHost != NULL) {
         if (remoteHost->h_addrtype == AF_INET) {
             if (remoteHost->h_addr_list[0] != NULL) {
                 struct in_addr addr;
                 addr.s_addr = *(u_long*)remoteHost->h_addr_list[0];
                 printf("%s\n", inet_ntoa(addr));
-                return ntohl(addr.s_addr);
+                ret = ntohl(addr.s_addr);
             }
         }
     }
 #endif
+    if (ret != MR_FAILED && target.hasPort) {
+        uint32_t routeToken;
+        if (createDnsMappedRoute(&target, (uint32_t)ret, &routeToken) != MR_SUCCESS) {
+            VMRP_NET_LOG("dns_route creation failed or lookup became stale\n");
+            return MR_FAILED;
+        }
+        VMRP_NET_LOG("get_host route name='%s' real_ip=0x%X token=0x%X\n",
+                     name, (unsigned)ret, (unsigned)routeToken);
+        return (int32)routeToken;
+    }
     return ret;
 }
 
@@ -751,6 +973,9 @@ int checkWritable(SOCKET_T socket) {
 int32 my_sendto(int32 s, const char* buf, int len, int32 ip, uint16 port) {
     uIntMap* obj = uIntMap_search(&sockets, (uint32_t)s);
     mSocket* data = (mSocket*)obj->data;
+    if (applyDnsMappedRoute(&ip, &port) == DNS_ROUTE_ERROR) {
+        return MR_FAILED;
+    }
 
     struct sockaddr_in to;
     to.sin_family = AF_INET;

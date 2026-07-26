@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SkyEngineE2e, SkyEngineWorkspace } from "../engine-e2e.js";
-import fs from "fs";
+import fs, { cpSync } from "fs";
 
 describe("gghjt pixel flow", () => {
   let engine: SkyEngineE2e | undefined;
@@ -251,10 +251,14 @@ describe("gghjt pixel flow", () => {
       await engine.delay(1_000);
 
     }
-    await engine.delay(memCheckTime);
-    const boot = await engine.screen("bgm-select");
-    // rgb(72,88,0)
-    expect(boot.pixel(227, 308)).toEqual([0, 0, 0]);
+    await vi.waitFor(async () => {
+      if (!engine) throw new Error("engine is undefined");
+      const boot = await engine.screen("bgm-select");
+      // rgb(0,0,0)
+      expect(boot.pixel(227, 308)).toEqual([0, 0, 0]);
+      // rgb(248, 252, 248)
+      expect(boot.pixel(131, 77)).toEqual([248, 252, 248]);
+    }, { timeout: 10_000, interval: 1_000 });
 
     // 是否开启音乐？-> 否
     await engine.click(230, 308, 1_000);
@@ -311,14 +315,17 @@ describe("gghjt pixel flow", () => {
       timeout: 20_000,
       interval: 1_000
     })
+
+    // 替换netpay.mrp
+    cpSync('test/fixtures/plugins/netpay.mrp', ws.path('mythroad/plugins/netpay.mrp'), { force: true });
   
     // 点击确定进入付费界面
-    await engine.click(15, 308, 1_000);
+    await engine.key('LEFT_SOFT', 1_000);
     
     await engine.delay(2_000);
     const pay = await engine.screen("pay-start");
     expect(pay.pixel(104, 147)).toEqual([104, 104, 224]);
-      expect(pay.pixel(12, 302)).toEqual([248, 252, 248]);
+    expect(pay.pixel(12, 302)).toEqual([248, 252, 248]);
 
     {
       // 取消下载返回主菜单
@@ -352,7 +359,10 @@ describe("gghjt pixel flow", () => {
     fs.rmSync(ws.path('mythroad/gghjt'), { force: true, recursive: true });
     fs.rmSync(ws.path('mythroad/cache'), { force: true, recursive: true });
     fs.cpSync('test/fixtures/gghjt', ws.path('mythroad/gghjt'), { recursive: true });
-    engine = await SkyEngineE2e.start("test/fixtures/gghjt.mrp", { workDir: ws.dir });
+    engine = await SkyEngineE2e.start("test/fixtures/gghjt.mrp", {
+      workDir: ws.dir,
+      dnsMap: 'rop.skymobiapp.com->127.0.0.1;spd.skymobiapp.com->159.75.119.124'
+    });
 
     {
       // 检测内存
@@ -361,10 +371,14 @@ describe("gghjt pixel flow", () => {
       await engine.delay(1_000);
 
     }
-    await engine.delay(memCheckTime);
-    const boot = await engine.screen("bgm-select");
-    // rgb(72,88,0)
-    expect(boot.pixel(227, 308)).toEqual([0, 0, 0]);
+    await vi.waitFor(async () => {
+      if (!engine) throw new Error("engine is undefined");
+      const boot = await engine.screen("bgm-select");
+      // rgb(0,0,0)
+      expect(boot.pixel(227, 308)).toEqual([0, 0, 0]);
+      // rgb(248, 252, 248)
+      expect(boot.pixel(131, 77)).toEqual([248, 252, 248]);
+    }, { timeout: 10_000, interval: 1_000 });
 
     // 是否开启音乐？-> 否
     await engine.click(230, 308, 1_000);

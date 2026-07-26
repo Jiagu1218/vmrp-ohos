@@ -253,9 +253,62 @@ static void arm_ext_sync_r9_for_code_addr(ArmExtModule *m, uint32_t addr) {
     }
 }
 
+/* Resolve the one saved LR that belongs to the wrapper leaf thunk currently
+ * executing a table bridge.  Thumb PUSH stores LR after every low register,
+ * so the matching PUSH/POP register list determines the exact stack slot.
+ * Looking only at this active frame is essential: private stacks are reused,
+ * and older completed frames can retain perfectly valid child return values. */
+static int arm_ext_active_thumb_thunk_saved_lr(ArmExtModule *m, uint32_t lr,
+                                                uint32_t sp,
+                                                uint32_t *saved_lr_addr) {
+    uint32_t return_pc = lr & ~1u;
+    if (!m || !saved_lr_addr || !(lr & 1u) || return_pc < 4u ||
+        !arm_ptr_span(m, return_pc - 2u, 4u))
+        return 0;
+
+    uint16_t call = 0;
+    uint16_t pop = 0;
+    memcpy(&call, arm_ptr(m, return_pc - 2u), 2u);
+    memcpy(&pop, arm_ptr(m, return_pc), 2u);
+    if ((call & 0xFF87u) != 0x4780u ||
+        (pop & 0xFE00u) != 0xBC00u || !(pop & 0x0100u))
+        return 0;
+
+    uint16_t pop_regs = pop & 0x00FFu;
+    for (uint32_t back = 4u; back <= 32u && return_pc >= back; back += 2u) {
+        uint32_t insn_addr = return_pc - back;
+        if (!arm_ptr_span(m, insn_addr, 2u)) return 0;
+        uint16_t insn = 0;
+        memcpy(&insn, arm_ptr(m, insn_addr), 2u);
+
+        if ((insn & 0xFE00u) == 0xB400u) {
+            uint16_t push_regs = insn & 0x00FFu;
+            if (!(insn & 0x0100u) || push_regs != pop_regs) return 0;
+
+            uint32_t low_reg_count = 0;
+            for (uint16_t bits = push_regs; bits; bits >>= 1u)
+                low_reg_count += bits & 1u;
+            uint32_t lr_offset = low_reg_count * 4u;
+            if (sp > UINT32_MAX - lr_offset ||
+                !arm_ptr_span(m, sp + lr_offset, 4u))
+                return 0;
+            *saved_lr_addr = sp + lr_offset;
+            return 1;
+        }
+
+        /* A second frame operation or an explicit SP adjustment means this is
+         * not the small symmetric leaf veneer described by the trailing POP.
+         * Do not guess through a larger wrapper function. */
+        if ((insn & 0xFE00u) == 0xBC00u ||
+            (insn & 0xFF00u) == 0xB000u)
+            return 0;
+    }
+    return 0;
+}
+
 ArmExtNestedModule *arm_ext_resource_owner_for_lr(ArmExtModule *m,
-                                                         uint32_t *owner_p,
-                                                         uint32_t *owner_helper) {
+                                                   uint32_t *owner_p,
+                                                   uint32_t *owner_helper) {
     uint32_t helper = 0;
     uint32_t p = 0;
     ArmExtNestedModule *owner = NULL;
@@ -271,36 +324,34 @@ ArmExtNestedModule *arm_ext_resource_owner_for_lr(ArmExtModule *m,
         uint32_t sp = reg_read32(m->uc, UC_ARM_REG_SP);
         /* Shared wrapper thunks hide the child caller from table bridges: LR
          * names the thunk's instruction after BLX, while the thunk has saved
-         * the child's LR in its small stack frame.  Recover only a structurally
-         * valid Thumb call return into a registered child, and only when the
-         * direct return belongs to the wrapper.  The bounded scan avoids using
-         * unrelated active/foreground state as a resource-owner fallback. */
+         * its caller's LR in a symmetric leaf frame.  Decode that active frame
+         * rather than scanning unrelated words from reused stack storage. */
         if (return_pc >= EXT_CODE_ADDR &&
             return_pc < EXT_CODE_ADDR + m->code_len) {
-            for (uint32_t off = 0; off < 16u * 4u; off += 4u) {
+            uint32_t saved_lr_addr = 0;
+            if (arm_ext_active_thumb_thunk_saved_lr(
+                    m, lr, sp, &saved_lr_addr)) {
                 uint32_t candidate = 0;
-                if (!arm_ptr_span(m, sp + off, 4u)) break;
-                memcpy(&candidate, arm_ptr(m, sp + off), 4u);
-                if (!(candidate & 1u) || (candidate & ~1u) < 2u) continue;
-
+                memcpy(&candidate, arm_ptr(m, saved_lr_addr), 4u);
                 uint32_t caller_pc = candidate & ~1u;
                 uint32_t stack_helper = 0;
                 uint32_t stack_p = arm_ext_p_for_code_addr(
                     m, candidate, &stack_helper);
                 ArmExtNestedModule *stack_owner =
                     arm_ext_find_nested_module_by_p(m, stack_p);
-                if (!stack_owner) continue;
-                if (!arm_ptr_span(m, caller_pc - 2u, 2u)) continue;
-                uint16_t call = 0;
-                memcpy(&call, arm_ptr(m, caller_pc - 2u), 2u);
-                /* Private children enter wrapper bridges through BLX Rm.  A
-                 * matching return address proves this stack word is a call
-                 * frame, rather than data that happens to fall in code RAM. */
-                if ((call & 0xFF87u) != 0x4780u) continue;
-                p = stack_p;
-                helper = stack_helper;
-                owner = stack_owner;
-                break;
+                if ((candidate & 1u) && caller_pc >= 2u && stack_owner &&
+                    arm_ptr_span(m, caller_pc - 2u, 2u)) {
+                    uint16_t child_call = 0;
+                    memcpy(&child_call, arm_ptr(m, caller_pc - 2u), 2u);
+                    /* Private children enter shared wrapper thunks through
+                     * BLX Rm.  Together with the decoded active frame this
+                     * proves callback ancestry without package heuristics. */
+                    if ((child_call & 0xFF87u) == 0x4780u) {
+                        p = stack_p;
+                        helper = stack_helper;
+                        owner = stack_owner;
+                    }
+                }
             }
         }
     }
