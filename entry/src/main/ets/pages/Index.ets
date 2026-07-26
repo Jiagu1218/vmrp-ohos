@@ -53,8 +53,16 @@ struct Index {
   }
 
   onPageShow(): void {
-    this.scanMrpFiles();
+    this.ensureAndScan();
     this.checkPendingMrpUri();
+  }
+
+  private async ensureAndScan(): Promise<void> {
+    const ctx = gAbilityContext;
+    if (ctx) {
+      await VmrpAssets.ensureRuntime(ctx);
+    }
+    this.scanMrpFiles();
   }
 
   private scanMrpFiles(): void {
