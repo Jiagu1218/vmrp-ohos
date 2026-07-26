@@ -46,7 +46,7 @@ interface GridRowBreakpoints {
 
 @ComponentV2
 struct EmulatorPage {
-  @Local statusText: string = '未启动';
+  @Local statusText: string = '';
   @Local runningState: boolean = false;
   @Local screenVisible: boolean = true;
   @Local editText: string = '';
@@ -83,6 +83,7 @@ struct EmulatorPage {
   private bottomSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
 
   aboutToAppear(): void {
+    this.statusText = '';
     try {
       const d = display.getDefaultDisplaySync();
       const wVP = this.getUIContext().px2vp(d.width);
@@ -121,21 +122,21 @@ struct EmulatorPage {
 
   async bootstrap(): Promise<void> {
     try {
-      this.statusText = '正在加载...';
+      this.statusText = 'Loading...';
       await this.engine.init();
       const ctx = gAbilityContext ?? this.getUIContext().getHostContext();
       if (!ctx) {
-        this.statusText = '初始化失败';
+        this.statusText = 'Init failed';
         return;
       }
-      this.statusText = '准备资源...';
+      this.statusText = 'Preparing...';
       const workDir = await VmrpAssets.ensureRuntime(ctx);
       let ok = this.engine.loadLib('libvmrp.so');
       if (!ok) {
         ok = this.engine.loadLib(`${ctx.bundleCodeDir}/lib/arm64/libvmrp.so`);
       }
       if (!ok) {
-        this.statusText = '加载失败';
+        this.statusText = 'Load failed';
         return;
       }
       this.engine.setScreen(240, 320);
@@ -192,12 +193,12 @@ struct EmulatorPage {
         this.navPathStack.pop();
       });
       this.engine.createSurfaceNode(this.nodeContent);
-      this.statusText = '启动中...';
-      await this.startMrp();
-    } catch (e) {
-      const err = e as Error;
-      this.statusText = `失败: ${err?.message ?? String(e)}`;
-    }
+      this.statusText = 'Starting...';
+       await this.startMrp();
+     } catch (e) {
+       const err = e as Error;
+        this.statusText = `Failed: ${err?.message ?? String(e)}`;
+     }
   }
 
   private openEditDialog(): void {
@@ -225,16 +226,16 @@ struct EmulatorPage {
 
   async startMrp(): Promise<void> {
     if (this.mrpPath.length === 0) {
-      this.statusText = '未指定 MRP';
+      this.statusText = 'No MRP';
       return;
     }
     try {
       const r = this.engine.start(this.mrpPath, 'start.mr', '_dsm');
       this.runningState = this.engine.isRunning();
-      this.statusText = `${r}, ${this.runningState ? '运行中' : '已停止'}`;
+      this.statusText = `${r}, ${this.runningState ? 'Running' : 'Stopped'}`;
     } catch (e) {
       const err = e as Error;
-      this.statusText = `失败: ${err?.message ?? String(e)}`;
+      this.statusText = `Failed: ${err?.message ?? String(e)}`;
     }
   }
 
@@ -455,14 +456,14 @@ struct EmulatorPage {
          if (this.gamepadConnected) {
            StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT })
          }
-         StatusBarChip({ chipLabel: '设置', onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
-        StatusBarChip({
-          chipLabel: '数字',
+          StatusBarChip({ chipLabel: $r('app.string.emulator_chip_settings'), onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
+         StatusBarChip({
+           chipLabel: $r('app.string.emulator_chip_numpad'),
           chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
           onChipClick: () => { this.showNumPadVal = !this.showNumPadVal; }
         })
         StatusBarChip({
-          chipLabel: this.showControls ? '收起' : '按键',
+           chipLabel: this.showControls ? $r('app.string.emulator_chip_collapse') : $r('app.string.emulator_chip_controls'),
           chipFontColor: DPAD_ARROW,
           onChipClick: () => { this.showControls = !this.showControls; }
         })
@@ -588,7 +589,7 @@ struct EmulatorPage {
                 Column() {
                   ImmersiveLightWrapper({ radius: 13, lightHeight: 80 }) {
                     Stack() {
-                      Text(this.showNumPadVal ? '收起数字' : '数字')
+                      Text(this.showNumPadVal ? $r('app.string.emulator_btn_collapse_numpad') : $r('app.string.emulator_chip_numpad'))
                         .fontSize(11)
                         .fontColor(this.showNumPadVal ? DPAD_ARROW : '#CCCCCC')
                     }

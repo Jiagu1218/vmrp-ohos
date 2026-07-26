@@ -13,4 +13,8 @@
 
 #include "dsm_defs.h"
 
+/* 重力感应：宿主写入加速度(mG)并投递 MR_MOTION_EVENT。
+ * 仅在 MRP 应用已 mr_plat(4004/4005) 开启监听时投递。 */
+void dsm_set_motion_acc(int32 x, int32 y, int32 z);
+
 #endif

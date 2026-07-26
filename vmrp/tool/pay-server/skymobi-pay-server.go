@@ -1,4 +1,4 @@
-// tool/skymobi-pay-server.go
+// tool/pay-server/skymobi-pay-server.go
 //
 // netpay.mrp（skymobi 付费 SDK）在启动时会向 rop.skymobiapp.com:80 发起
 // HTTP POST /payOneAsTlv，body 是一段 TLV（Type-Length-Value）二进制，携带
@@ -6,25 +6,22 @@
 // 付费/授权。真机上服务器返回校验结果，netpay 据此放行游戏。该服务器已下线，
 // gxdzc 等游戏因此卡在等待回复处（见 docs 分析）。
 //
-// 本程序是一个本地假服务器。DNS 解析已在模拟器内部完成重定向（见
-// src/network.c 的 my_getHostByNameSync：rop.skymobiapp.com -> 127.0.0.1，
-// 无需改 /etc/hosts），netpay 的请求会直接落到本机。服务器做两件事：
+// 本程序是一个本地假服务器。用 skyengine 的 --dns-map 把
+// rop.skymobiapp.com 指向本机后，netpay 的请求会直接落到这里。服务器做两件事：
 //   1) 完整解析并打印请求的 HTTP 头与 TLV body —— 用于逆向 netpay 实际发送
 //      的字段，进而推导出能让它放行的"成功"响应格式。
-//   2) 返回一段可配置的 TLV 响应（默认是 best-effort 的"成功"占位，需要根据
-//      netpay 对响应的解析行为继续打磨）。
+//   2) 按请求阶段返回 TLV 响应：PREREG 不授权；REG echo 请求事务号，若上报
+//      netpay appid 480010/version 386 则返回交互式插件更新，否则返回持久注册动作；
+//      PROP 返回 netpay v370 解析器定义的道具支付完成动作。
 //
 // 用法：
-//   go run tool/skymobi-pay-server.go
-//   sudo PORT=80 go run tool/skymobi-pay-server.go
-//   # netpay 写死连 80 端口。若不想用 root，可改连别的端口：先用
-//   #   VMRP_PAY_HOST=127.0.0.1 启动 skyengine（IP 重定向），再配合端口转发，
-//   #   例如  socat TCP-LISTEN:80,fork,reuseaddr TCP:127.0.0.1:8080
-//   #   然后  PORT=8080 go run tool/skymobi-pay-server.go
+//   go run tool/pay-server/skymobi-pay-server.go
+//   # 另一个终端启动 skyengine:
+//   #   build/skyengine --dns-map \
+//   #     'rop.skymobiapp.com->127.0.0.1:8088;spd.skymobiapp.com->159.75.119.124' ...
 //
 // 环境变量：
-//   PORT            监听端口，默认 80（skymobi 请求里写死的是 80 端口）
-//   RESP_TLV_FILE   指定一个文件，其内容作为响应 body 原样返回（覆盖默认响应）
+//   PORT            监听端口，默认 8088
 //   RESP_HTTP_FILE  指定一个文件，其内容作为完整 HTTP 响应原样返回（连头部）
 //   LOG_RAW         设为 "1" 时额外打印每个请求收到的原始 body hex
 
@@ -110,6 +107,23 @@ func scanTlv(body []byte) (start int, records []tlvRecord, end int) {
 	return bestStart, bestRecords, bestEnd
 }
 
+func parseTlvExact(body []byte) ([]tlvRecord, bool) {
+	var records []tlvRecord
+	off := 0
+	for off+8 <= len(body) {
+		typ := binary.BigEndian.Uint32(body[off:])
+		length := binary.BigEndian.Uint32(body[off+4:])
+		if int(length) > len(body)-(off+8) {
+			return nil, false
+		}
+		val := make([]byte, length)
+		copy(val, body[off+8:off+8+int(length)])
+		records = append(records, tlvRecord{Type: typ, Len: length, Value: val})
+		off += 8 + int(length)
+	}
+	return records, off == len(body)
+}
+
 func preview(data []byte, max int) string {
 	n := len(data)
 	if n > max {
@@ -159,20 +173,108 @@ func toAsciiSafe(data []byte) string {
 
 // ---------- 默认响应 ----------
 
-func buildDefaultBody() []byte {
-	if f := os.Getenv("RESP_TLV_FILE"); f != "" {
-		data, err := os.ReadFile(f)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "读取 RESP_TLV_FILE(%s) 失败: %v\n", f, err)
-			os.Exit(1)
-		}
-		return data
+var nonEntitlingBody = append(
+	tlvEncode(0x03f1, []byte("000000006")),
+	tlvEncode(0x044f, []byte{0x00, 0x00, 0x00, 0x00})...,
+)
+
+const (
+	netpayAppID            uint32 = 480010
+	installedNetpayVersion uint32 = 386
+	serverNetpayVersion    uint32 = 387
+)
+
+func tlvMap(records []tlvRecord) map[uint32]tlvRecord {
+	out := make(map[uint32]tlvRecord, len(records))
+	for _, rec := range records {
+		out[rec.Type] = rec
 	}
-	// 占位"成功"响应：result(0x044f?)=0 等，后续按 netpay 解析行为修订
+	return out
+}
+
+func readU32beRecord(record tlvRecord, ok bool) (uint32, bool) {
+	if !ok || len(record.Value) != 4 {
+		return 0, false
+	}
+	return binary.BigEndian.Uint32(record.Value), true
+}
+
+func installedPluginVersion(fields map[uint32]tlvRecord, appID uint32) (uint32, bool) {
+	pluginList, ok := fields[0x046e]
+	if !ok {
+		return 0, false
+	}
+
+	pluginRecords, exact := parseTlvExact(pluginList.Value)
+	if !exact {
+		return 0, false
+	}
+	pluginFields := tlvMap(pluginRecords)
+	appIDRecord, hasAppID := pluginFields[0x03e9]
+	reportedAppID, ok := readU32beRecord(appIDRecord, hasAppID)
+	if !ok || reportedAppID != appID {
+		return 0, false
+	}
+	versionRecord, hasVersion := pluginFields[0x046f]
+	return readU32beRecord(versionRecord, hasVersion)
+}
+
+func buildPluginUpdateBody(txn []byte) []byte {
+	// TLV 117 is copied into netpay's render-suppression state. Zero selects
+	// the confirmation path and leaves the real verdload progress UI enabled.
+	var updateItem []byte
+	updateItem = append(updateItem, tlvEncode(113, u32be(netpayAppID))...)
+	updateItem = append(updateItem, tlvEncode(114, u32be(1))...)
+	updateItem = append(updateItem, tlvEncode(115, u32be(netpayAppID))...)
+	updateItem = append(updateItem, tlvEncode(116, u32be(serverNetpayVersion))...)
+	updateItem = append(updateItem, tlvEncode(117, u32be(0))...)
+
 	var body []byte
-	body = append(body, tlvEncode(0x03f1, []byte("000000006"))...)
-	body = append(body, tlvEncode(0x044f, []byte{0x00, 0x00, 0x00, 0x00})...)
+	body = append(body, tlvEncode(101, txn)...)
+	body = append(body, tlvEncode(100, u32be(203))...)
+	body = append(body, tlvEncode(200, []byte{12})...)
+	body = append(body, tlvEncode(111, u32be(1))...)
+	body = append(body, tlvEncode(112, updateItem)...)
 	return body
+}
+
+func buildContinuationBody(txn []byte) []byte {
+	var body []byte
+	body = append(body, tlvEncode(101, txn)...)
+	body = append(body, tlvEncode(100, u32be(200))...)
+	body = append(body, tlvEncode(200, []byte{12})...)
+	return body
+}
+
+func buildDefaultBody(records []tlvRecord) []byte {
+	fields := tlvMap(records)
+	stage := ""
+	if rec, ok := fields[0x0452]; ok {
+		stage = string(rec.Value)
+	}
+	txn, ok := fields[0x045b]
+	if !ok || len(txn.Value) != 4 {
+		fmt.Fprintf(os.Stderr, "%s request missing 4-byte transaction TLV 0x045b\n", stage)
+		return append([]byte(nil), nonEntitlingBody...)
+	}
+	if stage == "REG" {
+		if version, ok := installedPluginVersion(fields, netpayAppID); ok && version == installedNetpayVersion {
+			fmt.Printf("REG reports netpay appid=%d version=%d; returning interactive update version=%d\n",
+				netpayAppID, version, serverNetpayVersion)
+			return buildPluginUpdateBody(txn.Value)
+		}
+		return buildContinuationBody(txn.Value)
+	}
+
+	if stage == "PROP" {
+		// v370 的通用响应解析器读取 101/100/200；status 200 通过状态门，
+		// action 12 进入道具支付的正常完成分支。保守地在 101 中回显请求的
+		// 0x045b；目标版本会解析该字段，但未发现它参与后续判断。
+		return buildContinuationBody(txn.Value)
+	}
+
+	// PREREG 和未知阶段保持非授权响应，避免在线响应制造授权假阳性。
+	return append([]byte(nil), nonEntitlingBody...)
 }
 
 // ---------- HTTP handler ----------
@@ -241,7 +343,11 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respBody := buildDefaultBody()
+	exactRecords, exactOk := parseTlvExact(body)
+	if !exactOk {
+		fmt.Printf("[#%d] exact TLV parse failed; using non-entitling response\n", id)
+	}
+	respBody := buildDefaultBody(exactRecords)
 	fmt.Printf("[#%d] -> reply %dB body\n", id, len(respBody))
 	w.Header().Set("Content-Type", "application/x-tar")
 	w.Header().Set("Connection", "close")
@@ -252,19 +358,18 @@ func handler(w http.ResponseWriter, r *http.Request) {
 func main() {
 	port := os.Getenv("PORT")
 	if port == "" {
-		port = "80"
+		port = "8088"
 	}
 
 	addr := "0.0.0.0:" + port
 
 	fmt.Printf("skymobi fake pay-server listening on %s\n", addr)
-	fmt.Println("DNS 已在 src/network.c 内重定向 rop.skymobiapp.com -> 127.0.0.1，")
-	fmt.Println("直接启动 skyengine 即可，netpay 的 POST /payOneAsTlv 会落到这里。")
+	fmt.Println("使用 --dns-map 'rop.skymobiapp.com->127.0.0.1:<PORT>;spd.skymobiapp.com->159.75.119.124' 启用本地 pay 与真实插件下载。")
 
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		if isPermissionError(err) {
-			fmt.Fprintf(os.Stderr, "监听 %s 失败：端口 <1024 需要 root。请用  sudo PORT=%s go run tool/skymobi-pay-server.go\n", port, port)
+			fmt.Fprintf(os.Stderr, "监听 %s 失败：端口 <1024 需要 root。请用  sudo PORT=%s go run tool/pay-server/skymobi-pay-server.go\n", port, port)
 		} else if isAddrInUse(err) {
 			fmt.Fprintf(os.Stderr, "端口 %s 已被占用。\n", port)
 		} else {

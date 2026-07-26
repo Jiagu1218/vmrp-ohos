@@ -1,0 +1,12 @@
+{
+  "UniformDataTypeDeclarations": [
+    {
+      "TypeId": "com.example.vmrpohos.mrp",
+      "BelongingToTypes": ["general.file"],
+      "FilenameExtensions": [".mrp"],
+      "MIMETypes": ["application/x-mrp"],
+      "Description": "MRP application package for Mythroad platform.",
+      "ReferenceURL": ""
+    }
+  ]
+}

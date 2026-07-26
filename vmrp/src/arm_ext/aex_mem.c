@@ -904,6 +904,36 @@ static void arm_ext_collect_protect_range_(ArmExtBumpBlock *ranges,
     (*count)++;
 }
 
+static int arm_ext_compact_protection_envelope_(uint32_t user_addr,
+                                                uint32_t user_len,
+                                                uint32_t *addr_out,
+                                                uint32_t *len_out) {
+    if (!user_addr || !user_len || user_addr < 4u ||
+        !addr_out || !len_out) {
+        return 0;
+    }
+
+    /*
+     * This SDK allocator stores a four-byte requested-length word immediately
+     * before the returned pointer, while its free-list nodes and allocation
+     * sizes are eight-byte aligned.  Protecting only the returned payload lets
+     * cut_range leave a four-byte tail before it; the guest malloc then treats
+     * that tail as a remainder node and writes its size through user_addr[0].
+     * Round out to complete allocator cells so every retained free fragment can
+     * still hold the allocator's eight-byte {next,size} header. This is
+     * conservative free-list protection: a registered range need not itself
+     * come from this allocator, because only validated compact free nodes are
+     * trimmed and at most their adjacent partial cell is sacrificed.
+     */
+    uint32_t lo = (user_addr - 4u) & ~7u;
+    uint64_t end64 = (uint64_t)user_addr + user_len;
+    uint64_t hi64 = (end64 + 7u) & ~(uint64_t)7u;
+    if (hi64 > UINT32_MAX || hi64 <= lo) return 0;
+    *addr_out = lo;
+    *len_out = (uint32_t)hi64 - lo;
+    return 1;
+}
+
 /*
  * 已注册 EXT 模块的存活存储(文件映像 + ER_RW 静态段)不允许出现在 compact
  * free-list 里,否则后续 malloc 会把精灵/位图缓冲切进正在执行的代码或静态
@@ -948,7 +978,15 @@ static void arm_ext_collect_registered_module_ranges(ArmExtModule *m,
     for (uint32_t i = 0; i < n; ++i) {
         if (!mod[i].addr || !mod[i].len)
             continue;
-        arm_ext_collect_protect_range_(ranges, count, mod[i].addr, mod[i].len);
+        uint32_t file_addr = mod[i].addr;
+        uint32_t file_len = mod[i].len;
+        if (arm_ext_compact_protection_envelope_(mod[i].addr, mod[i].len,
+                                                 &file_addr, &file_len)) {
+            arm_ext_collect_protect_range_(ranges, count, file_addr, file_len);
+        } else {
+            arm_ext_collect_protect_range_(ranges, count, mod[i].addr,
+                                           mod[i].len);
+        }
         if (!mod[i].p_addr ||
             !arm_ext_addr_range_mapped(m, mod[i].p_addr, 8u))
             continue;
@@ -957,7 +995,15 @@ static void arm_ext_collect_registered_module_ranges(ArmExtModule *m,
         uint32_t rw_len = arm_ext_read_u32_or_zero_(m, mod[i].p_addr + AEX_P_ER_RW_LEN_OFF);
         if (!rw || !rw_len || !arm_ext_addr_range_mapped(m, rw, rw_len))
             continue;
-        arm_ext_collect_protect_range_(ranges, count, rw, rw_len);
+        uint32_t protected_rw = rw;
+        uint32_t protected_rw_len = rw_len;
+        if (arm_ext_compact_protection_envelope_(rw, rw_len, &protected_rw,
+                                                 &protected_rw_len)) {
+            arm_ext_collect_protect_range_(ranges, count, protected_rw,
+                                           protected_rw_len);
+        } else {
+            arm_ext_collect_protect_range_(ranges, count, rw, rw_len);
+        }
     }
 }
 

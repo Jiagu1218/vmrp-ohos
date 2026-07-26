@@ -13,6 +13,7 @@ import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
 import { HapticManager } from '../common/HapticManager';
 import { FlatItem, MrpGroup, CARD_RADIUS, DELETE_TRANSITION, emptyMrpInfoData, groupByLetter, buildIndexArray } from '../model/MrpListModel';
 import { FavoriteStore } from '../model/FavoriteStore';
+import { PendingMrpUri } from '../common/PendingMrpUri';
 
 @Entry
 @ComponentV2
@@ -52,6 +53,15 @@ struct Index {
   }
 
   onPageShow(): void {
+    this.ensureAndScan();
+    this.checkPendingMrpUri();
+  }
+
+  private async ensureAndScan(): Promise<void> {
+    const ctx = gAbilityContext;
+    if (ctx) {
+      await VmrpAssets.ensureRuntime(ctx);
+    }
     this.scanMrpFiles();
   }
 
@@ -76,6 +86,22 @@ struct Index {
       this.flatItems = [];
     }
     this.isScanning = false;
+  }
+
+  private async checkPendingMrpUri(): Promise<void> {
+    const pending = AppStorageV2.connect(PendingMrpUri, 'pendingMrpUri', () => new PendingMrpUri())!;
+    const uri = pending.uri;
+    if (!uri || uri.length === 0) return;
+    pending.uri = '';
+    const ctx = gAbilityContext;
+    if (!ctx) return;
+    const localPath = await VmrpAssets.importMrp(ctx, uri);
+    if (!localPath || localPath.length === 0) {
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_import_failed') });
+      return;
+    }
+    this.scanMrpFiles();
+    this.navPathStack.pushPathByName('Emulator', localPath);
   }
 
   private applySort(): void {
@@ -189,11 +215,11 @@ struct Index {
     HapticManager.performClick();
     const promptAction: PromptAction = this.getUIContext().getPromptAction();
     promptAction.showDialog({
-      title: '删除游戏',
-      message: `确定删除「${item.appname}」吗？此操作不可恢复。`,
+      title: $r('app.string.index_dialog_delete_title'),
+      message: `${$r('app.string.index_dialog_delete_prefix')}${item.appname}${$r('app.string.index_dialog_delete_suffix')}`,
       buttons: [
-        { text: '取消', color: '#007DFF' },
-        { text: '删除', color: '#E84026' }
+        { text: $r('app.string.btn_cancel'), color: '#007DFF' },
+        { text: $r('app.string.btn_delete'), color: '#E84026' }
       ]
     }).then((data: ShowDialogSuccessResponse) => {
       if (data.index === 1) {
@@ -287,11 +313,11 @@ struct Index {
   @Builder
   emptyStateBuilder() {
     Column() {
-      Text(this.currentTab === 1 ? '暂无收藏' : '暂无游戏')
+      Text(this.currentTab === 1 ? $r('app.string.index_empty_no_fav') : $r('app.string.index_empty_no_game'))
         .fontSize(18)
         .fontColor($r('app.color.settings_about_title'))
         .fontWeight(FontWeight.Medium)
-      Text(this.currentTab === 1 ? '在游戏库中左划添加收藏' : '在设置中导入 .mrp 游戏文件')
+      Text(this.currentTab === 1 ? $r('app.string.index_empty_hint_fav') : $r('app.string.index_empty_hint_game'))
         .fontSize(13)
         .fontColor($r('app.color.settings_desc_color'))
         .margin({ top: 6 })
@@ -299,7 +325,7 @@ struct Index {
         Column() {
           ImmersiveLightWrapper({ radius: 22, lightHeight: 80 }) {
             Stack() {
-              Text('前往设置')
+              Text($r('app.string.index_btn_go_settings'))
                 .fontSize(14)
                 .fontColor('#FFFFFF')
                 .fontWeight(FontWeight.Medium)
@@ -417,7 +443,7 @@ struct Index {
           }
           if (this.searchMode) {
             ListItem() {
-              Search({ value: this.searchQuery, placeholder: '搜索游戏名称、厂商...' })
+              Search({ value: this.searchQuery, placeholder: $r('app.string.index_search_placeholder') })
                 .width('100%')
                 .height(40)
                 .backgroundColor($r('app.color.settings_card_bg'))
@@ -437,7 +463,7 @@ struct Index {
                   .width(40)
                   .height(40)
                   .color($r('app.color.accent_color'))
-                Text('扫描中...')
+                Text($r('app.string.index_scanning'))
                   .fontSize(13)
                   .fontColor($r('app.color.settings_desc_color'))
                   .margin({ top: 12 })
@@ -558,7 +584,7 @@ struct Index {
                   .width(40)
                   .height(40)
                   .color($r('app.color.accent_color'))
-                Text('扫描中...')
+                Text($r('app.string.index_scanning'))
                   .fontSize(13)
                   .fontColor($r('app.color.settings_desc_color'))
                   .margin({ top: 12 })
@@ -675,7 +701,7 @@ struct Index {
           selected: new SymbolGlyphModifier($r('sys.symbol.gamecontroller'))
             .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
             .fontColor([$r('app.color.accent_color')])
-        }, '游戏库'))
+        }, $r('app.string.index_tab_library')))
 
         TabContent() {
           this.favoritesContent()
@@ -687,7 +713,7 @@ struct Index {
           selected: new SymbolGlyphModifier($r('sys.symbol.heart'))
             .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
             .fontColor([$r('app.color.accent_color')])
-        }, '收藏'))
+        }, $r('app.string.index_tab_favorites')))
       }
       .barOverlap(true)
       .vertical(false)
@@ -715,12 +741,12 @@ struct Index {
     }
     .titleBar({
       content: {
-        title: { mainTitle: this.currentTab === 1 ? '收藏' : 'MRP 游戏库' },
+        title: { mainTitle: this.currentTab === 1 ? $r('app.string.index_tab_favorites') : $r('app.string.index_title_library') },
         menu: {
           value: [
             {
               content: {
-                label: '搜索',
+                label: $r('app.string.index_menu_search'),
                 icon: $r('sys.symbol.magnifyingglass'),
                 isEnabled: true,
                 action: () => this.toggleSearch()
@@ -728,7 +754,7 @@ struct Index {
             },
             {
               content: {
-                label: this.sortMode === 0 ? '按时间' : '按名称',
+                label: this.sortMode === 0 ? $r('app.string.index_menu_sort_time') : $r('app.string.index_menu_sort_name'),
                 icon: $r('sys.symbol.sort'),
                 isEnabled: true,
                 action: () => this.toggleSort()
@@ -736,7 +762,7 @@ struct Index {
             },
             {
               content: {
-                label: '设置',
+                label: $r('app.string.index_menu_settings'),
                 icon: $r('sys.symbol.gearshape'),
                 isEnabled: true,
                 action: () => this.openSettings()

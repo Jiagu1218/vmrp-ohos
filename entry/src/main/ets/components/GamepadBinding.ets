@@ -94,23 +94,23 @@ export function jsonToBindings(json: string): GpBinding[] {
 export const GP_SRC_LABELS: Record<string, string> = {
   'dpad_up': 'D-Pad ↑', 'dpad_down': 'D-Pad ↓', 'dpad_left': 'D-Pad ←', 'dpad_right': 'D-Pad →',
   'dpad_up_right': 'D-Pad ↗', 'dpad_down_right': 'D-Pad ↘', 'dpad_down_left': 'D-Pad ↙', 'dpad_up_left': 'D-Pad ↖',
-  'stick_l_up': '左摇杆 ↑', 'stick_l_down': '左摇杆 ↓', 'stick_l_left': '左摇杆 ←', 'stick_l_right': '左摇杆 →',
-  'stick_l_up_right': '左摇杆 ↗', 'stick_l_down_right': '左摇杆 ↘', 'stick_l_down_left': '左摇杆 ↙', 'stick_l_up_left': '左摇杆 ↖',
-  'stick_r_up': '右摇杆 ↑', 'stick_r_down': '右摇杆 ↓', 'stick_r_left': '右摇杆 ←', 'stick_r_right': '右摇杆 →',
-  'stick_r_up_right': '右摇杆 ↗', 'stick_r_down_right': '右摇杆 ↘', 'stick_r_down_left': '右摇杆 ↙', 'stick_r_up_left': '右摇杆 ↖',
+  'stick_l_up': 'L-Stick ↑', 'stick_l_down': 'L-Stick ↓', 'stick_l_left': 'L-Stick ←', 'stick_l_right': 'L-Stick →',
+  'stick_l_up_right': 'L-Stick ↗', 'stick_l_down_right': 'L-Stick ↘', 'stick_l_down_left': 'L-Stick ↙', 'stick_l_up_left': 'L-Stick ↖',
+  'stick_r_up': 'R-Stick ↑', 'stick_r_down': 'R-Stick ↓', 'stick_r_left': 'R-Stick ←', 'stick_r_right': 'R-Stick →',
+  'stick_r_up_right': 'R-Stick ↗', 'stick_r_down_right': 'R-Stick ↘', 'stick_r_down_left': 'R-Stick ↙', 'stick_r_up_left': 'R-Stick ↖',
   'btn_a': 'A', 'btn_b': 'B', 'btn_x': 'X', 'btn_y': 'Y',
   'btn_l1': 'L1', 'btn_r1': 'R1', 'btn_start': 'Start', 'btn_select': 'Select'
 };
 
 export const MR_KEY_NAMES_MAP: Record<number, string> = {
-  12: '方向上', 13: '方向下', 14: '方向左', 15: '方向右',
-  20: '确认', 17: '左软键', 18: '右软键',
-  10: '✱', 11: '#', 16: '电源', 19: '拨号',
+  12: 'D-Up', 13: 'D-Down', 14: 'D-Left', 15: 'D-Right',
+  20: 'OK', 17: 'L-Sft', 18: 'R-Sft',
+  10: '✱', 11: '#', 16: 'Pwr', 19: 'Dial',
   0: '0', 1: '1', 2: '2', 3: '3', 4: '4', 5: '5', 6: '6', 7: '7', 8: '8', 9: '9'
 };
 
 export function bindingDisplayText(b: GpBinding): string {
-  if (b.mrKeys.length === 0) return '未设置';
+  if (b.mrKeys.length === 0) return '-';
   const parts: string[] = [];
   for (const k of b.mrKeys) {
     const name = MR_KEY_NAMES_MAP[k];
@@ -120,7 +120,7 @@ export function bindingDisplayText(b: GpBinding): string {
 }
 
 export const GAMEPAD_PRESET_OPTIONS: SelectOption[] = [
-  { value: '经典' }, { value: '方向优先' }, { value: '数字键盘' }
+  { value: $r('app.string.preset_classic') }, { value: $r('app.string.preset_direction_first') }, { value: $r('app.string.preset_numpad') }
 ];
 
 export interface GamepadDialogParams {
@@ -157,7 +157,7 @@ export struct GamepadDialogContent {
 
   build() {
     Column() {
-      Text('手柄按键映射')
+      Text($r('app.string.gp_title'))
         .fontSize(17)
         .fontColor($r('app.color.settings_about_title'))
         .fontWeight(FontWeight.Medium)
@@ -166,7 +166,7 @@ export struct GamepadDialogContent {
       if (this.listeningIdx >= 0) {
         Row() {
           LoadingProgress().width(16).height(16).color($r('app.color.accent_color'))
-          Text(`等待按下 → ${this.listenSrcLabel}`)
+          Text(`${$r('app.string.gp_waiting_prefix')}${this.listenSrcLabel}`)
             .fontSize(14)
             .fontColor($r('app.color.accent_color'))
             .fontWeight(FontWeight.Medium)
@@ -178,7 +178,7 @@ export struct GamepadDialogContent {
       }
 
       Row() {
-        Text('预设:')
+        Text($r('app.string.gp_preset_label'))
           .fontSize(13)
           .fontColor($r('app.color.settings_desc_color'))
         ForEach(GAMEPAD_PRESET_OPTIONS, (opt: SelectOption, idx: number) => {
@@ -211,12 +211,12 @@ export struct GamepadDialogContent {
                 .fontColor($r('app.color.settings_label_color'))
                 .layoutWeight(1)
               if (this.listeningIdx === idx) {
-                Text('请按键...')
+                Text($r('app.string.gp_press_key'))
                   .fontSize(12)
                   .fontColor($r('app.color.accent_color'))
                   .fontWeight(FontWeight.Bold)
               } else {
-                Button('设置')
+                Button($r('app.string.btn_set'))
                   .height(26)
                   .fontSize(11)
                   .fontColor($r('app.color.accent_color'))
@@ -246,7 +246,7 @@ export struct GamepadDialogContent {
       .scrollBar(BarState.Auto)
 
       Row() {
-        Button('关闭')
+        Button($r('app.string.btn_close'))
           .width(100).height(36)
           .backgroundColor($r('app.color.settings_cancel_btn_bg'))
           .fontColor($r('app.color.settings_cancel_btn_fg'))

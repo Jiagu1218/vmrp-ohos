@@ -8,7 +8,7 @@ export { CARD_RADIUS, ROW_H, PAD_H, SEC_TOP, SEC_BOT }
 
 @ComponentV2
 export struct SectionHeader {
-  @Param title: string = '';
+  @Param title: ResourceStr = '';
   build() {
     Text(this.title)
       .fontSize(14)
@@ -32,7 +32,7 @@ export struct SDivider {
 
 @ComponentV2
 export struct SDesc {
-  @Param text: string = '';
+  @Param text: ResourceStr = '';
   build() {
     Text(this.text)
       .fontSize(12)
@@ -45,7 +45,7 @@ export struct SDesc {
 @ComponentV2
 export struct SRow {
   @BuilderParam content: () => void;
-  @Param label: string = '';
+  @Param label: ResourceStr = '';
   build() {
     Row() {
       Text(this.label)
@@ -63,7 +63,7 @@ export struct SRow {
 
 @ComponentV2
 export struct SSliderLabel {
-  @Param label: string = '';
+  @Param label: ResourceStr = '';
   @Param valueText: string = '';
   build() {
     Row() {

@@ -30,6 +30,21 @@
             "actions": [
               "ohos.want.action.home"
             ]
+          },
+          {
+            "actions": [
+              "ohos.want.action.viewData"
+            ],
+            "entities": [
+              "entity.system.file"
+            ],
+            "uris": [
+              {
+                "scheme": "file",
+                "utd": "com.example.vmrpohos.mrp",
+                "linkFeature": "FileOpen"
+              }
+            ]
           }
         ]
       }
