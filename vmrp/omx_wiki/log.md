@@ -85,7 +85,6 @@
 ## [2026-06-27T08:45:44.402Z] add
 - **Pages:** dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, opglqa-font-download-repeat-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md
 - **Summary:** Refreshed wiki index and derived metadata surfaces
-
 ## [2026-06-27T09:09:19.252Z] query
 - **Pages:** dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-dsm-package-provenance.md, opglqa-font-download-repeat-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gms-payment-latency-analysis.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md
 - **Summary:** Query "dota simpleDownload browser plugin network state investigation" → 6 results (of 6 total)
@@ -626,3 +625,34 @@
 ## [2026-07-25T11:15:01.000Z] complete
 - **Pages:** gsht-black-screen-nested-resource-owner-progress.md
 - **Summary:** Replaced stale arbitrary stack-owner scanning with active Thumb leaf-frame decoding; verified diagnostic-free GSHT title rendering and no-retry 31-file/54-test compatibility.
+## [2026-07-26T08:07:01.956Z] query
+- **Pages:** gghjt-modal-timer-and-cold-extraction-regressions.md, gsha-old-compact-timer-download-callback-fix.md, wbrw-proxy2-web-page-rendering.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, cookie-mrp-restart-and-full-runtime-version-contract.md, gfhcq-game-stutter-performance-investigation.md, gjxqy-missing-installed-resource-black-scene.md, private-loader-wrapper-package-context-repair.md, wbrw-manual-clipboard-and-menu-exit-verification.md, gjxwsmn-netpay-plugin-update-progress.md, gsht-black-screen-nested-resource-owner-progress.md, gtxzj-date-guard-and-default-runtime-assets.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-primary-black-clear-damage-synthesis.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-line-wrap-progress-2026-07-16.md, wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md, wbrw-proxy2-font-mrp-download.md
+- **Summary:** Query "gtlbd text render timer disappearing" → 20 results (of 38 total)
+
+## [2026-07-26T08:08:42.842Z] query
+- **Pages:** private-loader-wrapper-package-context-repair.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gsha-old-compact-timer-download-callback-fix.md, wbrw-proxy2-web-page-rendering.md, gjxwsmn-netpay-plugin-update-progress.md, gtxzj-date-guard-and-default-runtime-assets.md, wbrw-input-paste-ucs2-table77-fix.md, cookie-mrp-restart-and-full-runtime-version-contract.md, dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-second-simpledownload-trigger.md, gfhcq-game-stutter-performance-investigation.md, op6120-independent-scrram-4m-startup-fix.md, wbrw-html2sky-native-elements-and-ppm-verification-2026-07-12.md, wbrw-proxy2-image-loading-2026-07-12.md, wxmdld-wrapped-lg-mem-first-fit-fix.md, arm-ext-canonical-empty-event-layer-recovery.md, dota-browser-plugin-network-state-investigation.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gjxqy-missing-installed-resource-black-scene.md, gsht-black-screen-nested-resource-owner-progress.md
+- **Summary:** Query "timer text disappear subsequent text lost edit mode" → 20 results (of 29 total)
+
+## [2026-07-26T08:09:54.684Z] ingest
+- **Pages:** gtlbd-text-disappearance-debugging-progress.md
+- **Summary:** Created new page "GTLBD text disappearance debugging progress"
+
+## [2026-07-26T08:22:09.239Z] ingest
+- **Pages:** gtlbd-text-disappearance-debugging-progress.md
+- **Summary:** Updated "GTLBD text disappearance debugging progress" with new content
+
+## [2026-07-26T08:51:51.939Z] ingest
+- **Pages:** gtlbd-text-disappearance-debugging-progress.md
+- **Summary:** Updated "GTLBD text disappearance debugging progress" with new content
+
+## [2026-07-26T09:50:52.272Z] ingest
+- **Pages:** gtlbd-text-disappearance-debugging-progress.md
+- **Summary:** Updated "GTLBD text disappearance debugging progress" with new content
+
+## [2026-07-26T09:58:21.881Z] ingest
+- **Pages:** gtlbd-text-disappearance-debugging-progress.md
+- **Summary:** Updated "GTLBD text disappearance debugging progress" with new content
+
+## [2026-07-26T09:58:28.720Z] lint
+- **Pages:** cookie-child-return-opening-folder-frame-replay.md, cookie-mrp-restart-and-full-runtime-version-contract.md, dota-browser-plugin-dsm-package-provenance.md, dota-browser-plugin-network-state-investigation.md, dota-browser-plugin-second-simpledownload-trigger.md, dota-download-browser-components-transition-frame-fix.md, dota-download-browser-components-waiting-hypothesis-invalidated.md, gfhcq-game-stutter-performance-investigation.md, gghjt-modal-timer-and-cold-extraction-regressions.md, gjxqy-local-download-protocol-and-fixture-id-mismatch.md, gjxqy-missing-installed-resource-black-scene.md, gjxwsmn-netpay-plugin-update-progress.md, gms-payment-latency-analysis.md, gsha-old-compact-timer-download-callback-fix.md, gsht-black-screen-nested-resource-owner-progress.md, gtlbd-text-disappearance-debugging-progress.md, gtxzj-date-guard-and-default-runtime-assets.md, gzwdzjs-arm-ext-drawbitmap-source-overrun.md, gzwdzjs-play-mr-ucs2gb-caller-owned-output-pointer-fix.md, gzwdzjs-primary-black-clear-damage-synthesis.md, gzwdzjs-table-bridge-stale-epilogue-guard.md, mps-selector-100-is-not-record-100.md, op6120-independent-scrram-4m-startup-fix.md, opglqa-font-download-repeat-investigation.md, optwar-exit-plugin-component-update-stall.md, optwar-exit-plugin-no-network-investigation.md, rx4-5-arm-ext-0x80000000-platform-io-mapping.md, rzsgqd-background-music-silent-debugging.md, wbrw-go-html2sky-rendering-final-verification-2026-07-12.md, wbrw-go-html2sky-rendering-progress-2026-07-12.md, wbrw-html2sky-completion-audit-2026-07-12-latest.md, wbrw-html2sky-line-wrap-progress-2026-07-16.md, wbrw-html2sky-post-cleanup-final-evidence-2026-07-12.md, wbrw-proxy2-font-mrp-download.md, wbrw-proxy2-web-page-rendering.md, wbrw-proxy2-white-matte-progress-2026-07-16.md, wbrw-proxy2-bitmap-logo-gif-adaptation-2026-07-13.md
+- **Summary:** Lint: 44 issues (32 orphan, 2 stale, 3 broken, 2 contradictions)

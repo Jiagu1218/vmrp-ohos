@@ -26,7 +26,7 @@
 #include "./include/file_lib.h"
 #include "./include/utils.h"
 
-#define DEFAULT_DNS_MAP "wap.skmeg.com->159.75.119.124;rop.skymobiapp.com->159.75.119.124;spd.skymobiapp.com->159.75.119.124;freeads.51mrp.com->159.75.119.124;proxy.51mrp.com->159.75.119.124;proxy2.51mrp.com->159.75.119.124;help.proxy.51mrp.com->159.75.119.124"
+#define DEFAULT_DNS_MAP "wap.skmeg.com->159.75.119.124;rop.skymobiapp.com->159.75.119.124;spd.skymobiapp.com->159.75.119.124;freeads.51mrp.com->159.75.119.124;proxy.51mrp.com->159.75.119.124;proxy2.51mrp.com->159.75.119.124;help.proxy.51mrp.com->159.75.119.124;211.155.236.18->159.75.119.124:80"
 
 #ifdef _WIN32
 static int wide_to_utf8(const wchar_t *wide, char *output, size_t output_size) {
