@@ -520,7 +520,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
-        .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
+        .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
         .clip(false)
         .cachedCount(5, true)
         .onScrollIndex((start: number) => {
@@ -641,7 +641,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
-        .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
+        .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
         .clip(false)
         .cachedCount(5, true)
         .onScrollIndex((start: number) => {
