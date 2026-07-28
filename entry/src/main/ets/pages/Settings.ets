@@ -339,7 +339,7 @@ export struct SettingsPage {
       primaryButton: { value: $r('app.string.btn_cancel'), action: () => {} },
       secondaryButton: {
         value: $r('app.string.btn_clear'),
-        fontColor: '#D63B55',
+        fontColor: $r('app.color.accent_color'),
         action: () => {
           try { this.engine.stop(); } catch (_e) {}
           const ctx = this.getUIContext().getHostContext();
@@ -400,7 +400,7 @@ export struct SettingsPage {
       primaryButton: { value: $r('app.string.btn_cancel'), action: () => {} },
       secondaryButton: {
         value: $r('app.string.dialog_btn_select_backup'),
-        fontColor: '#D63B55',
+        fontColor: $r('app.color.accent_color'),
         action: async () => {
           try {
             const opt = new picker.DocumentSelectOptions();
@@ -418,6 +418,10 @@ export struct SettingsPage {
             this.getUIContext().getPromptAction().showToast({
               message: ok ? $r('app.string.toast_restore_ok') : $r('app.string.toast_restore_failed'), duration: 2500
             });
+            if (ok) {
+              const abilityCtx = ctx as common.UIAbilityContext;
+              abilityCtx.terminateSelf();
+            }
           } catch (e) {
             console.error(`doRestore failed: ${JSON.stringify(e)}`);
             this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_restore_failed'), duration: 2500 });
@@ -654,14 +658,15 @@ export struct SettingsPage {
                 SDesc({ text: $r('app.string.settings_desc_haptic_strength') })
                 SDivider()
                  SRow({ label: $r('app.string.settings_label_gamepad') }) {
-                   Button($r('app.string.settings_btn_gamepad_map'))
-                    .height(36)
-                    .fontSize(13)
-                    .fontColor('#FFFFFF')
-                    .fontWeight(FontWeight.Medium)
-                    .backgroundColor($r('app.color.accent_color'))
-                    .borderRadius(8)
-                    .onClick(() => { this.openGamepadDialog(); })
+                    Button($r('app.string.settings_btn_gamepad_map'))
+                     .height(36)
+                     .fontSize(13)
+                     .fontColor('#FFFFFF')
+                     .fontWeight(FontWeight.Medium)
+                     .backgroundColor($r('app.color.accent_color'))
+                     .borderRadius(8)
+                     .onClick(() => { this.openGamepadDialog(); })
+                     .accessibilityLevel('yes')
                 }
                 SDesc({ text: $r('app.string.settings_desc_gamepad') })
               }
@@ -748,9 +753,10 @@ export struct SettingsPage {
               Column() {
                 Column() {
                   Button($r('app.string.settings_btn_backup'))
-                    .width('100%').height(44).fontSize(16)
-                    .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
-                    .onClick(() => { this.doBackup(); })
+                     .width('100%').height(44).fontSize(16)
+                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
+                     .onClick(() => { this.doBackup(); })
+                     .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 10, bottom: 0 })
                 Text($r('app.string.settings_desc_backup'))
@@ -759,9 +765,10 @@ export struct SettingsPage {
                 SDivider()
                 Column() {
                   Button($r('app.string.settings_btn_restore'))
-                    .width('100%').height(44).fontSize(16)
-                    .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
-                    .onClick(() => { this.confirmRestore(); })
+                     .width('100%').height(44).fontSize(16)
+                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
+                     .onClick(() => { this.confirmRestore(); })
+                     .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
                 Text($r('app.string.settings_desc_restore'))
@@ -770,9 +777,10 @@ export struct SettingsPage {
                 SDivider()
                 Column() {
                   Button($r('app.string.settings_btn_import'))
-                    .width('100%').height(44).fontSize(16)
-                    .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
-                    .onClick(() => { this.doImportMrp(); })
+                     .width('100%').height(44).fontSize(16)
+                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
+                     .onClick(() => { this.doImportMrp(); })
+                     .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
                 Text($r('app.string.settings_desc_import'))
@@ -792,17 +800,19 @@ export struct SettingsPage {
               Column() {
                 Column() {
                    Button($r('app.string.settings_btn_clear_files'))
-                    .width('100%').height(48).fontSize(16)
-                    .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
-                    .onClick(() => { this.confirmClearFiles(); })
+                     .width('100%').height(48).fontSize(16)
+                     .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
+                     .onClick(() => { this.confirmClearFiles(); })
+                     .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 8, bottom: 4 })
                 SDivider()
                 Column() {
                    Button($r('app.string.settings_btn_reset_defaults'))
-                    .width('100%').height(48).fontSize(16)
-                    .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
-                    .onClick(() => { this.resetDefaults(); })
+                     .width('100%').height(48).fontSize(16)
+                     .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
+                     .onClick(() => { this.resetDefaults(); })
+                     .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 8 })
               }

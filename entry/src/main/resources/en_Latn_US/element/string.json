@@ -188,6 +188,18 @@
     { "name": "mr_soft_left", "value": "L-Soft" },
     { "name": "mr_soft_right", "value": "R-Soft" },
     { "name": "mr_power", "value": "Power" },
-    { "name": "mr_dial", "value": "Dial" }
+    { "name": "mr_dial", "value": "Dial" },
+
+    { "name": "a11y_card_game", "value": "%s, version %d" },
+    { "name": "a11y_btn_favorite", "value": "Favorite" },
+    { "name": "a11y_btn_unfavorite", "value": "Unfavorite" },
+    { "name": "a11y_btn_delete", "value": "Delete" },
+    { "name": "a11y_btn_go_settings", "value": "Go to Settings" },
+    { "name": "a11y_speed_chip", "value": "Speed %s" },
+    { "name": "a11y_gamepad_chip", "value": "Gamepad" },
+    { "name": "a11y_settings_chip", "value": "Settings" },
+    { "name": "a11y_numpad_chip", "value": "Numpad" },
+    { "name": "a11y_controls_chip", "value": "Controls" },
+    { "name": "a11y_gp_set_key", "value": "Set key" }
   ]
 }

@@ -188,6 +188,18 @@
     { "name": "mr_soft_left", "value": "左软键" },
     { "name": "mr_soft_right", "value": "右软键" },
     { "name": "mr_power", "value": "电源" },
-    { "name": "mr_dial", "value": "拨号" }
+    { "name": "mr_dial", "value": "拨号" },
+
+    { "name": "a11y_card_game", "value": "%s，版本 %d" },
+    { "name": "a11y_btn_favorite", "value": "收藏" },
+    { "name": "a11y_btn_unfavorite", "value": "取消收藏" },
+    { "name": "a11y_btn_delete", "value": "删除" },
+    { "name": "a11y_btn_go_settings", "value": "前往设置" },
+    { "name": "a11y_speed_chip", "value": "速度 %s" },
+    { "name": "a11y_gamepad_chip", "value": "手柄" },
+    { "name": "a11y_settings_chip", "value": "设置" },
+    { "name": "a11y_numpad_chip", "value": "数字键盘" },
+    { "name": "a11y_controls_chip", "value": "控制面板" },
+    { "name": "a11y_gp_set_key", "value": "设置按键" }
   ]
 }

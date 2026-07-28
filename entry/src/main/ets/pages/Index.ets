@@ -256,35 +256,39 @@ struct Index {
   @Builder
   swipeEndBuilder(item: MrpInfoData, isFav: boolean) {
     Row({ space: 16 }) {
-      Column() {
-        SymbolGlyph(isFav ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
-          .fontSize(18)
-          .fontColor([isFav ? Color.Red : Color.White])
-      }
-      .width(48)
-      .height(48)
-      .borderRadius(24)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
-      .backdropBlur(24)
-      .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
-      .onClick(() => this.toggleFavorite(item))
+       Column() {
+         SymbolGlyph(isFav ? $r('sys.symbol.heart_fill') : $r('sys.symbol.heart'))
+           .fontSize(18)
+           .fontColor([isFav ? Color.Red : Color.White])
+       }
+       .width(48)
+       .height(48)
+       .borderRadius(24)
+       .justifyContent(FlexAlign.Center)
+       .alignItems(HorizontalAlign.Center)
+       .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
+       .backdropBlur(24)
+       .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
+       .onClick(() => this.toggleFavorite(item))
+       .accessibilityText(isFav ? $r('app.string.a11y_btn_unfavorite') : $r('app.string.a11y_btn_favorite'))
+       .accessibilityLevel('yes')
 
-      Column() {
-        SymbolGlyph($r('sys.symbol.trash'))
-          .fontSize(18)
-          .fontColor([Color.Red])
-      }
-      .width(48)
-      .height(48)
-      .borderRadius(24)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-      .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
-      .backdropBlur(24)
-      .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
-      .onClick(() => this.deleteMrp(item))
+       Column() {
+         SymbolGlyph($r('sys.symbol.trash'))
+           .fontSize(18)
+           .fontColor([Color.Red])
+       }
+       .width(48)
+       .height(48)
+       .borderRadius(24)
+       .justifyContent(FlexAlign.Center)
+       .alignItems(HorizontalAlign.Center)
+       .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
+       .backdropBlur(24)
+       .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
+       .onClick(() => this.deleteMrp(item))
+       .accessibilityText($r('app.string.a11y_btn_delete'))
+       .accessibilityLevel('yes')
     }
     .padding({ left: 16 })
   }
@@ -305,7 +309,9 @@ struct Index {
       .shadow({ radius: 20, color: $r('app.color.immersive_shadow') })
       .backdropBlur(24)
       .border({ width: 0.5, color: $r('app.color.immersive_border_dark') })
-      .onClick(() => this.deleteMrp(item))
+             .onClick(() => this.deleteMrp(item))
+       .accessibilityText($r('app.string.a11y_btn_delete'))
+       .accessibilityLevel('yes')
     }
     .padding({ left: 16 })
   }
@@ -317,8 +323,8 @@ struct Index {
         .fontSize(18)
         .fontColor($r('app.color.settings_about_title'))
         .fontWeight(FontWeight.Medium)
-      Text(this.currentTab === 1 ? $r('app.string.index_empty_hint_fav') : $r('app.string.index_empty_hint_game'))
-        .fontSize(13)
+       Text(this.currentTab === 1 ? $r('app.string.index_empty_hint_fav') : $r('app.string.index_empty_hint_game'))
+         .fontSize(14)
         .fontColor($r('app.color.settings_desc_color'))
         .margin({ top: 6 })
       if (this.currentTab === 0) {
@@ -337,6 +343,8 @@ struct Index {
         }
         .margin({ top: 24 })
         .onClick(() => { HapticManager.performClick(); this.openSettings(); })
+        .accessibilityText($r('app.string.a11y_btn_go_settings'))
+        .accessibilityLevel('yes')
       }
     }
     .width('100%')
@@ -364,7 +372,7 @@ struct Index {
                   .margin({ right: 6 })
               }
               Text(ri.item.data.appname)
-                .fontSize(17)
+                .fontSize(18)
                 .fontColor($r('app.color.settings_about_title'))
                 .fontWeight(FontWeight.Bold)
                 .maxLines(1)
@@ -389,7 +397,7 @@ struct Index {
 
             if (ri.item.data.description.length > 0) {
               Text(ri.item.data.description)
-                .fontSize(13)
+                .fontSize(14)
                 .fontColor($r('app.color.settings_desc_color'))
                 .maxLines(2)
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -426,6 +434,13 @@ struct Index {
       .onClick(() => {
         HapticManager.performClick();
         this.launchMrp(ri.item.data);
+      })
+      .accessibilityText($r('app.string.a11y_card_game', ri.item.data.appname, ri.item.data.version))
+      .accessibilityLevel('yes')
+      .stateStyles({
+        pressed: {
+          .scale({ x: 0.97, y: 0.97 })
+        }
       })
     }
     .padding({ left: 16, right: 16 })
@@ -464,7 +479,7 @@ struct Index {
                   .height(40)
                   .color($r('app.color.accent_color'))
                 Text($r('app.string.index_scanning'))
-                  .fontSize(13)
+                  .fontSize(14)
                   .fontColor($r('app.color.settings_desc_color'))
                   .margin({ top: 12 })
               }
@@ -505,7 +520,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
-        .padding({ left: 0, right: 0, top: 4, bottom: 84 })
+        .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
         .clip(false)
         .cachedCount(5, true)
         .onScrollIndex((start: number) => {
@@ -541,7 +556,7 @@ struct Index {
         AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
           .color($r('app.color.settings_desc_color'))
           .selectedColor($r('app.color.accent_color'))
-          .usingPopup(false)
+          .usingPopup(true)
           .font({ size: 10 })
           .selectedFont({ size: 12, weight: FontWeight.Bold })
           .popupFont({ size: 24, weight: FontWeight.Bold })
@@ -585,7 +600,7 @@ struct Index {
                   .height(40)
                   .color($r('app.color.accent_color'))
                 Text($r('app.string.index_scanning'))
-                  .fontSize(13)
+                  .fontSize(14)
                   .fontColor($r('app.color.settings_desc_color'))
                   .margin({ top: 12 })
               }
@@ -626,7 +641,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
-        .padding({ left: 0, right: 0, top: 4, bottom: 84 })
+        .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
         .clip(false)
         .cachedCount(5, true)
         .onScrollIndex((start: number) => {
@@ -662,7 +677,7 @@ struct Index {
           .color($r('app.color.settings_desc_color'))
           .selectedColor($r('app.color.accent_color'))
           .selectedBackgroundColor($r('app.color.settings_card_bg'))
-          .usingPopup(false)
+          .usingPopup(true)
           .font({ size: 10 })
           .selectedFont({ size: 12, weight: FontWeight.Bold })
           .itemSize(24)
@@ -719,7 +734,7 @@ struct Index {
       .vertical(false)
       .barPosition(BarPosition.End)
       .scrollable(false)
-      .animationDuration(0)
+      .animationDuration(300)
       .onChange((index: number) => {
         HapticManager.performClick();
         this.currentTab = index;

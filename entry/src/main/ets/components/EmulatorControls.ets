@@ -24,17 +24,17 @@ export interface EditDialogOptions {
   autoCancel: boolean;
 }
 
-export const SHELL_COLOR = '#1A1A2E';
-export const SCREEN_BG = '#000000';
-export const DPAD_BG = '#16213E';
-export const DPAD_ARROW = '#E94560';
-export const SOFTKEY_BG = '#0F3460';
-export const NUMKEY_BG = '#1A1A2E';
-export const NUMKEY_TEXT = '#A7A7C4';
-export const STATUS_TEXT = '#8888AA';
-export const RUN_DOT = '#4ADE80';
-export const SHELL_BORDER = '#2A2A4E';
-export const ACCENT_COLOR = '#E94560';
+export const SHELL_COLOR: ResourceColor = $r('app.color.shell_color');
+export const SCREEN_BG: ResourceColor = $r('app.color.emulator_screen_bg');
+export const DPAD_BG: ResourceColor = $r('app.color.dpad_bg');
+export const DPAD_ARROW: ResourceColor = $r('app.color.emulator_dpad_arrow');
+export const SOFTKEY_BG: ResourceColor = $r('app.color.softkey_bg');
+export const NUMKEY_BG: ResourceColor = $r('app.color.emulator_numkey_bg');
+export const NUMKEY_TEXT: ResourceColor = $r('app.color.emulator_numkey_text');
+export const STATUS_TEXT: ResourceColor = $r('app.color.emulator_status_text');
+export const RUN_DOT: ResourceColor = $r('app.color.status_dot_run');
+export const SHELL_BORDER: ResourceColor = $r('app.color.emulator_shell_border');
+export const ACCENT_COLOR: ResourceColor = $r('app.color.accent_color');
 
 @ComponentV2
 export struct DPadBtn {
@@ -62,6 +62,8 @@ export struct DPadBtn {
       }
     }
     .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
+    .accessibilityText(this.label)
+    .accessibilityLevel('yes')
   }
 }
 
@@ -78,7 +80,7 @@ export struct SoftKeyBtn {
         Stack() {
           Text(this.chipLabel)
             .fontSize(12)
-            .fontColor('#CCCCCC')
+            .fontColor($r('app.color.emulator_softkey_text'))
             .fontWeight(FontWeight.Medium)
         }
         .height(this.softKeyH)
@@ -87,6 +89,7 @@ export struct SoftKeyBtn {
       }
     }
     .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
+    .accessibilityLevel('yes')
   }
 }
 
@@ -120,7 +123,7 @@ export struct DPadWithFunc {
         })
 
         DPadBtn({
-          label: 'OK', labelFontSize: 14, labelFontColor: '#FFFFFF',
+          label: 'OK', labelFontSize: 14, labelFontColor: $r('app.color.emulator_ok_text'),
           btnSize: this.dpadSize * 0.28,
           isRound: true, keyVal: MR_KEY_SELECT, onKeyTouch: this.onKeyTouch
         })
@@ -168,6 +171,8 @@ export struct NumPadItem {
       }
     }
     .onTouch((e: TouchEvent) => this.onKeyTouch(this.itemKey, e))
+    .accessibilityText(`${this.itemKey === MR_KEY_STAR ? '✱' : this.itemKey === MR_KEY_POUND ? '#' : this.itemKey}`)
+    .accessibilityLevel('yes')
   }
 }
 
@@ -220,7 +225,7 @@ export struct TopScreen {
            .borderRadius(6)
            .clip(true)
            .scale({ x: this.scaleVal, y: this.scaleVal })
-           .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+            .shadow({ radius: 12, color: $r('app.color.immersive_shadow'), offsetX: 0, offsetY: 4 })
         }
         .width(this.bufW * this.scaleVal)
         .height(this.bufH * this.scaleVal)
@@ -281,6 +286,7 @@ export struct StatusBarChip {
     }
     .margin({ right: 4 })
     .onClick(() => { HapticManager.performClick(); this.onChipClick(); })
+    .accessibilityLevel('yes')
   }
 }
 
@@ -347,29 +353,29 @@ export struct EditDialogContent {
     Column() {
       Text($r('app.string.edit_dialog_hint'))
         .fontSize(16)
-        .fontColor('#CCCCCC')
+        .fontColor($r('app.color.emulator_edit_hint'))
         .margin({ top: 16, bottom: 10 })
       TextArea({ text: this.inputText })
         .onChange((v: string) => { this.inputText = v; })
         .width('90%')
         .layoutWeight(1)
         .fontSize(16)
-        .backgroundColor('#1A1A2E')
-        .fontColor('#FFFFFF')
+        .backgroundColor($r('app.color.emulator_edit_input_bg'))
+        .fontColor($r('app.color.emulator_edit_input_fg'))
       Row() {
         Button($r('app.string.btn_cancel'))
           .width(100)
           .height(40)
-          .backgroundColor('#333355')
-          .fontColor('#CCCCCC')
+          .backgroundColor($r('app.color.emulator_edit_cancel_bg'))
+          .fontColor($r('app.color.emulator_edit_cancel_fg'))
           .onClick(() => {
             this.onCancel();
           })
         Button($r('app.string.btn_confirm'))
           .width(100)
           .height(40)
-          .backgroundColor(ACCENT_COLOR)
-          .fontColor('#FFFFFF')
+          .backgroundColor($r('app.color.accent_color'))
+          .fontColor($r('app.color.emulator_ok_text'))
           .onClick(() => {
             this.onSubmit(this.inputText);
           })

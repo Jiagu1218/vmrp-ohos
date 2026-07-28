@@ -35,6 +35,22 @@
     { "name": "settings_cancel_btn_fg", "value": "#CCCCCC" },
     { "name": "immersive_border_dark", "value": "#65FFFFFF" },
     { "name": "immersive_shadow", "value": "#10000000" },
-    { "name": "status_bar_content", "value": "#FFFFFF" }
+    { "name": "status_bar_content", "value": "#FFFFFF" },
+    { "name": "emulator_screen_bg", "value": "#000000" },
+    { "name": "emulator_dpad_arrow", "value": "#E94560" },
+    { "name": "emulator_numkey_bg", "value": "#1A1A2E" },
+    { "name": "emulator_numkey_text", "value": "#A7A7C4" },
+    { "name": "emulator_status_text", "value": "#8888AA" },
+    { "name": "emulator_shell_border", "value": "#2A2A4E" },
+    { "name": "emulator_panel_bg", "value": "#0A0A1ECC" },
+    { "name": "emulator_bg", "value": "#0D0D1A" },
+    { "name": "emulator_idle_dot", "value": "#555577" },
+    { "name": "emulator_softkey_text", "value": "#CCCCCC" },
+    { "name": "emulator_ok_text", "value": "#FFFFFF" },
+    { "name": "emulator_edit_hint", "value": "#CCCCCC" },
+    { "name": "emulator_edit_input_bg", "value": "#1A1A2E" },
+    { "name": "emulator_edit_input_fg", "value": "#FFFFFF" },
+    { "name": "emulator_edit_cancel_bg", "value": "#333355" },
+    { "name": "emulator_edit_cancel_fg", "value": "#CCCCCC" }
   ]
 }

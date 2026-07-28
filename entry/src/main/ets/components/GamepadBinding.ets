@@ -224,6 +224,8 @@ export struct GamepadDialogContent {
                   .borderRadius(6)
                   .border({ width: 1, color: $r('app.color.accent_color') })
                   .padding({ left: 8, right: 8 })
+                  .accessibilityText($r('app.string.a11y_gp_set_key'))
+                  .accessibilityLevel('yes')
                   .onClick(() => {
                     this.listeningIdx = idx;
                     this.listenSrcLabel = GP_SRC_LABELS[b.src] ?? b.src;

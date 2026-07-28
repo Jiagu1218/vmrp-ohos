@@ -8,15 +8,12 @@ import { VmrpEngineTs } from '../vmrp/VmrpEngine';
 const DOMAIN = 0x0000;
 
 export let gAbilityContext: common.UIAbilityContext | null = null;
+export let gIsDarkMode: boolean = true;
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     gAbilityContext = this.context;
-    try {
-      this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
-    } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
-    }
+    gIsDarkMode = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     this.handleFileWant(want);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
   }
@@ -51,11 +48,13 @@ export default class EntryAbility extends UIAbility {
       try {
         const win = windowStage.getMainWindowSync();
         win.setWindowLayoutFullScreen(true);
+        const statusBarContentColor = gIsDarkMode ? '#FFFFFF' : '#182431';
+        const navBarContentColor = gIsDarkMode ? '#FFFFFF' : '#182431';
         win.setWindowSystemBarProperties({
           statusBarColor: '#00000000',
-          statusBarContentColor: '#FFFFFF',
+          statusBarContentColor: statusBarContentColor,
           navigationBarColor: '#00000000',
-          navigationBarContentColor: '#FFFFFF'
+          navigationBarContentColor: navBarContentColor
         });
         const avoid: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
         const uiCtx = win.getUIContext();
