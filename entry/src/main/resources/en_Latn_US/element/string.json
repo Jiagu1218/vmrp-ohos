@@ -200,6 +200,12 @@
     { "name": "a11y_settings_chip", "value": "Settings" },
     { "name": "a11y_numpad_chip", "value": "Numpad" },
     { "name": "a11y_controls_chip", "value": "Controls" },
-    { "name": "a11y_gp_set_key", "value": "Set key" }
+    { "name": "a11y_gp_set_key", "value": "Set key" },
+
+    { "name": "settings_label_dark_mode", "value": "Dark mode" },
+    { "name": "settings_desc_dark_mode", "value": "Reduce blue light to protect your eyes" },
+    { "name": "settings_label_follow_system", "value": "Follow system" },
+    { "name": "settings_desc_follow_system", "value": "Automatically follow system dark mode setting" },
+    { "name": "settings_section_appearance", "value": "Appearance" }
   ]
 }

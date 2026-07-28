@@ -1,6 +1,6 @@
 import { AppStorageV2, ComponentContent, LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
-import { common } from '@kit.AbilityKit';
+import { common, ConfigurationConstant } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType, hdsMaterial } from '@kit.UIDesignKit';
 import { AvoidData } from '../common/AvoidData';
@@ -66,6 +66,8 @@ const SCREEN_SIZE_H: number[] = [220, 320, 400, 480, 240, 800];
 const SCREEN_SIZE_DEFAULT_INDEX: number = 1;
 const KEY_SPEED_MULT = 'speed_multiplier';
 const KEY_GAMEPAD_BINDINGS = 'gamepad_bindings';
+const KEY_DARK_MODE = 'dark_mode';
+const KEY_FOLLOW_SYSTEM = 'follow_system';
 const SPEED_OPTIONS: SelectOption[] = [
   { value: $r('app.string.speed_1x') }, { value: $r('app.string.speed_2x') }, { value: $r('app.string.speed_3x') }, { value: $r('app.string.speed_4x') }
 ];
@@ -92,6 +94,8 @@ export struct SettingsPage {
   @Local speedMultIndex: number = 0;
   @Local gpBindings: GpBinding[] = defaultBindings();
   @Local xengineMode: number = 0;
+  @Local darkMode: boolean = true;
+  @Local followSystem: boolean = true;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -141,6 +145,14 @@ export struct SettingsPage {
       this.speedMultIndex = SPEED_VALUES.indexOf(speedMult);
       if (this.speedMultIndex < 0) this.speedMultIndex = 0;
       this.loadGpBindings(pref);
+      this.darkMode = pref.getSync(KEY_DARK_MODE, true) as boolean;
+      this.followSystem = pref.getSync(KEY_FOLLOW_SYSTEM, true) as boolean;
+      if (this.followSystem) {
+        const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+        if (ctx) {
+          this.darkMode = ctx.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+        }
+      }
     } catch (_e) {
     }
   }
@@ -208,6 +220,37 @@ export struct SettingsPage {
     if (!pref) return;
     pref.putSync(KEY_GAMEPAD_BINDINGS, bindingsToJson(this.gpBindings));
     pref.flush();
+  }
+
+  applyColorMode(): void {
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (!ctx) return;
+    const appCtx = ctx.getApplicationContext();
+    if (this.followSystem) {
+      appCtx.setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+    } else {
+      appCtx.setColorMode(this.darkMode ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT);
+    }
+  }
+
+  saveDarkMode(isDark: boolean): void {
+    this.darkMode = isDark;
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_DARK_MODE, isDark);
+    pref.flush();
+    if (!this.followSystem) {
+      this.applyColorMode();
+    }
+  }
+
+  saveFollowSystem(follow: boolean): void {
+    this.followSystem = follow;
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_FOLLOW_SYSTEM, follow);
+    pref.flush();
+    this.applyColorMode();
   }
 
   loadGpBindings(pref: preferences.Preferences): void {
@@ -305,6 +348,8 @@ export struct SettingsPage {
     this.subpixelRender = SUBPIXEL_RENDER_DEFAULT;
     this.gammaCorrect = GAMMA_CORRECT_DEFAULT;
     this.ditherEnabled = DITHER_DEFAULT;
+    this.darkMode = true;
+    this.followSystem = true;
     const pref = this.getPref();
     if (!pref) return;
     pref.putSync(KEY_MEMORY, 1);
@@ -321,8 +366,11 @@ export struct SettingsPage {
     pref.putSync(KEY_DITHER, DITHER_DEFAULT);
     pref.putSync(KEY_SCREEN_W, 240);
     pref.putSync(KEY_SCREEN_H, 320);
+    pref.putSync(KEY_DARK_MODE, true);
+    pref.putSync(KEY_FOLLOW_SYSTEM, true);
     pref.flush();
     this.applyDisplayFilter();
+    this.applyColorMode();
     const ctx = this.getUIContext().getHostContext();
     if (ctx) {
       HapticManager.saveEnabledPref(ctx, true);
@@ -618,6 +666,43 @@ export struct SettingsPage {
                     })
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 12 })
+              }
+            }
+          }
+        }
+        .padding({ left: 16, right: 16 })
+
+        // ── 外观 ──
+        ListItem() {
+          Column() {
+            SectionHeader({ title: $r('app.string.settings_section_appearance') })
+            ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
+              Column() {
+                SRow({ label: $r('app.string.settings_label_follow_system') }) {
+                  Toggle({ type: ToggleType.Switch, isOn: this.followSystem })
+                    .selectedColor($r('app.color.accent_color'))
+                    .switchPointColor('#FFFFFF')
+                    .onChange((isOn: boolean) => { this.saveFollowSystem(isOn); })
+                }
+                SDesc({ text: $r('app.string.settings_desc_follow_system') })
+                SDivider()
+                Row() {
+                  Text($r('app.string.settings_label_dark_mode'))
+                    .fontSize(16)
+                    .fontColor($r('app.color.settings_label_color'))
+                    .layoutWeight(1)
+                  Toggle({ type: ToggleType.Switch, isOn: this.darkMode })
+                    .selectedColor($r('app.color.accent_color'))
+                    .switchPointColor('#FFFFFF')
+                    .enabled(!this.followSystem)
+                    .onChange((isOn: boolean) => { this.saveDarkMode(isOn); })
+                }
+                .width('100%')
+                .height(ROW_H)
+                .alignItems(VerticalAlign.Center)
+                .padding({ left: PAD_H, right: PAD_H })
+                .opacity(this.followSystem ? 0.35 : 1)
+                SDesc({ text: $r('app.string.settings_desc_dark_mode') })
               }
             }
           }

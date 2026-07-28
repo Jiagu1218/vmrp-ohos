@@ -200,6 +200,12 @@
     { "name": "a11y_settings_chip", "value": "设置" },
     { "name": "a11y_numpad_chip", "value": "数字键盘" },
     { "name": "a11y_controls_chip", "value": "控制面板" },
-    { "name": "a11y_gp_set_key", "value": "设置按键" }
+    { "name": "a11y_gp_set_key", "value": "设置按键" },
+
+    { "name": "settings_label_dark_mode", "value": "深色模式" },
+    { "name": "settings_desc_dark_mode", "value": "减少屏幕蓝光，保护眼睛" },
+    { "name": "settings_label_follow_system", "value": "跟随系统" },
+    { "name": "settings_desc_follow_system", "value": "自动跟随系统深色模式设置" },
+    { "name": "settings_section_appearance", "value": "外观" }
   ]
 }
