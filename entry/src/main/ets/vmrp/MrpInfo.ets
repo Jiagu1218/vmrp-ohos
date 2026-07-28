@@ -31,7 +31,7 @@ export class MrpInfo {
       }
 
       const fileLen = view.getUint32(8, true);
-      const filename = MrpInfo.readString(view, 16, 12);
+      const filename = MrpInfo.decodeGbk(view, 16, 12);
       const appname = MrpInfo.decodeGbk(view, 28, 24);
       const appid = view.getUint32(68, true);
       const version = view.getUint32(72, true);

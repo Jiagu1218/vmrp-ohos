@@ -216,7 +216,7 @@ struct Index {
     const promptAction: PromptAction = this.getUIContext().getPromptAction();
     promptAction.showDialog({
       title: $r('app.string.index_dialog_delete_title'),
-      message: `${$r('app.string.index_dialog_delete_prefix')}${item.appname}${$r('app.string.index_dialog_delete_suffix')}`,
+      message: $r('app.string.index_dialog_delete_message', item.appname),
       buttons: [
         { text: $r('app.string.btn_cancel'), color: '#007DFF' },
         { text: $r('app.string.btn_delete'), color: '#E84026' }

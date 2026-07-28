@@ -166,7 +166,7 @@ export struct GamepadDialogContent {
       if (this.listeningIdx >= 0) {
         Row() {
           LoadingProgress().width(16).height(16).color($r('app.color.accent_color'))
-          Text(`${$r('app.string.gp_waiting_prefix')}${this.listenSrcLabel}`)
+          Text($r('app.string.gp_waiting', this.listenSrcLabel))
             .fontSize(14)
             .fontColor($r('app.color.accent_color'))
             .fontWeight(FontWeight.Medium)

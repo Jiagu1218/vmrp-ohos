@@ -440,7 +440,7 @@ export struct SettingsPage {
       this.getUIContext().getPromptAction().showToast({ message: $r('app.string.toast_importing') });
       const count = await VmrpAssets.importMrpBatch(ctx, uris);
       this.getUIContext().getPromptAction().showToast({
-        message: count > 0 ? `${$r('app.string.toast_import_ok_prefix')}${count}${$r('app.string.toast_import_ok_suffix')}` : $r('app.string.toast_import_failed'), duration: 2500
+        message: count > 0 ? $r('app.string.toast_import_ok', count) : $r('app.string.toast_import_failed'), duration: 2500
       });
     } catch (e) {
       console.error(`doImportMrp failed: ${JSON.stringify(e)}`);
@@ -516,7 +516,7 @@ export struct SettingsPage {
                   })
                 }
                 SDesc({ text: this.xengineMode > 0
-                  ? `${$r('app.string.settings_desc_filter_ai')}${this.xengineMode === 2 ? $r('app.string.settings_desc_filter_ai_neural') : $r('app.string.settings_desc_filter_ai_spatial')}${$r('app.string.settings_desc_filter_ai_end')}`
+                  ? (this.xengineMode === 2 ? $r('app.string.settings_desc_filter_ai_neural_full') : $r('app.string.settings_desc_filter_ai_spatial_full'))
                   : $r('app.string.settings_desc_filter_default') })
 
                 SDivider()

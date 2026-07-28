@@ -197,7 +197,8 @@ export class VmrpAssets {
   // 把用户选择的 MRP 文件复制到 mythroad 目录，返回目标路径。
   static async importMrp(ctx: common.Context, srcUri: string): Promise<string> {
     const mythroadDir = VmrpAssets.getMythroadDir(ctx);
-    const name = srcUri.substring(srcUri.lastIndexOf('/') + 1);
+    const encodedName = srcUri.substring(srcUri.lastIndexOf('/') + 1);
+    const name = decodeURIComponent(encodedName);
     const dst = `${mythroadDir}/${name}`;
     try {
       const srcFile = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
@@ -217,7 +218,8 @@ export class VmrpAssets {
     const mythroadDir = VmrpAssets.getMythroadDir(ctx);
     let count = 0;
     for (const srcUri of srcUris) {
-      const name = srcUri.substring(srcUri.lastIndexOf('/') + 1);
+      const encodedName = srcUri.substring(srcUri.lastIndexOf('/') + 1);
+      const name = decodeURIComponent(encodedName);
       if (!name.toLowerCase().endsWith('.mrp')) continue;
       const dst = `${mythroadDir}/${name}`;
       try {
