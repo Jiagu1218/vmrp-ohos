@@ -166,7 +166,7 @@ export struct GamepadDialogContent {
       if (this.listeningIdx >= 0) {
         Row() {
           LoadingProgress().width(16).height(16).color($r('app.color.accent_color'))
-          Text(`${$r('app.string.gp_waiting_prefix')}${this.listenSrcLabel}`)
+          Text($r('app.string.gp_waiting', this.listenSrcLabel))
             .fontSize(14)
             .fontColor($r('app.color.accent_color'))
             .fontWeight(FontWeight.Medium)
@@ -224,6 +224,8 @@ export struct GamepadDialogContent {
                   .borderRadius(6)
                   .border({ width: 1, color: $r('app.color.accent_color') })
                   .padding({ left: 8, right: 8 })
+                  .accessibilityText($r('app.string.a11y_gp_set_key'))
+                  .accessibilityLevel('yes')
                   .onClick(() => {
                     this.listeningIdx = idx;
                     this.listenSrcLabel = GP_SRC_LABELS[b.src] ?? b.src;

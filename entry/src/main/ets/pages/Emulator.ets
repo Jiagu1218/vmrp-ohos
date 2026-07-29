@@ -436,7 +436,7 @@ struct EmulatorPage {
           .width(6)
           .height(6)
           .borderRadius(3)
-          .backgroundColor(this.runningState ? RUN_DOT : '#555577')
+          .backgroundColor(this.runningState ? RUN_DOT : $r('app.color.emulator_idle_dot'))
           .margin({ right: 6 })
         Text(this.statusText)
           .fontSize(10)
@@ -473,16 +473,16 @@ struct EmulatorPage {
 
       if (this.showControls) {
         Column() {
-          GlassPanel({
-            blurRadius: 30,
-            panelBorderRadius: 16,
-            panelBorderColor: SHELL_BORDER,
-            panelBgColor: '#0A0A1ECC',
-            panelBorderWidth: 1
-          }) {
-            Scroll() {
-              Column() {
-                PhoneControls({
+           GlassPanel({
+             blurRadius: 30,
+             panelBorderRadius: 16,
+             panelBorderColor: SHELL_BORDER,
+             panelBgColor: $r('app.color.emulator_panel_bg'),
+             panelBorderWidth: 1
+           }) {
+             Scroll() {
+               Column() {
+                 PhoneControls({
                   onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
                   runningState: this.runningState,
                   showNumPadVal: this.showNumPadVal
@@ -523,7 +523,7 @@ struct EmulatorPage {
             x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH),
             y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH * 0.48 / this.bufH)
           })
-          .shadow({ radius: 12, color: '#33000000', offsetX: 0, offsetY: 4 })
+           .shadow({ radius: 12, color: $r('app.color.immersive_shadow'), offsetX: 0, offsetY: 4 })
         }
         .width('100%')
         .height('50%')
@@ -534,7 +534,7 @@ struct EmulatorPage {
             .width(6)
             .height(6)
             .borderRadius(3)
-            .backgroundColor(this.runningState ? RUN_DOT : '#555577')
+            .backgroundColor(this.runningState ? RUN_DOT : $r('app.color.emulator_idle_dot'))
             .margin({ right: 6 })
           Text(this.statusText)
             .fontSize(10)
@@ -569,7 +569,7 @@ struct EmulatorPage {
           blurRadius: 30,
           panelBorderRadius: 16,
           panelBorderColor: SHELL_BORDER,
-          panelBgColor: '#0A0A1ECC',
+          panelBgColor: $r('app.color.emulator_panel_bg'),
           panelBorderWidth: 1
         }) {
           Scroll() {
@@ -591,7 +591,7 @@ struct EmulatorPage {
                     Stack() {
                       Text(this.showNumPadVal ? $r('app.string.emulator_btn_collapse_numpad') : $r('app.string.emulator_chip_numpad'))
                         .fontSize(11)
-                        .fontColor(this.showNumPadVal ? DPAD_ARROW : '#CCCCCC')
+                        .fontColor(this.showNumPadVal ? DPAD_ARROW : $r('app.color.emulator_softkey_text'))
                     }
                     .height(26)
                     .padding({ left: 14, right: 14 })
@@ -631,7 +631,7 @@ struct EmulatorPage {
               blurRadius: 20,
               panelBorderRadius: 16,
               panelBorderColor: SHELL_BORDER,
-              panelBgColor: '#0A0A1ECC',
+              panelBgColor: $r('app.color.emulator_panel_bg'),
               panelBorderWidth: 1
             }) {
               this.screenShell({ isTop: true })
@@ -652,7 +652,7 @@ struct EmulatorPage {
               blurRadius: 20,
               panelBorderRadius: 16,
               panelBorderColor: SHELL_BORDER,
-              panelBgColor: '#0A0A1ECC',
+              panelBgColor: $r('app.color.emulator_panel_bg'),
               panelBorderWidth: 1
             }) {
               this.screenShell({ isTop: false })
@@ -691,7 +691,7 @@ struct EmulatorPage {
       }
       .width('100%')
       .height('100%')
-      .backgroundColor('#0D0D1A')
+      .backgroundColor($r('app.color.emulator_bg'))
       .focusScopeId('emulatorGroup', true, false)
       .defaultFocus(true)
       .onKeyEvent((event: KeyEvent) => {

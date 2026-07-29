@@ -56,10 +56,8 @@
     { "name": "settings_desc_speed", "value": "加快游戏运行速度，1x为正常速度，4x为极速。运行中也可在模拟器页面临时切换。" },
 
     { "name": "settings_label_filter", "value": "缩放滤镜" },
-    { "name": "settings_desc_filter_ai", "value": "当前设备支持马良GPU硬件超分" },
-    { "name": "settings_desc_filter_ai_neural", "value": "（AI超分），选择AI超分时自动使用马良神经网络上采样" },
-    { "name": "settings_desc_filter_ai_spatial", "value": "（空域超分），选择AI超分时自动使用马良GPU空域上采样" },
-    { "name": "settings_desc_filter_ai_end", "value": "，画质优于自研FSRCNNX。即时生效。" },
+    { "name": "settings_desc_filter_ai_neural_full", "value": "当前设备支持马良GPU硬件超分（AI超分），选择AI超分时自动使用马良神经网络上采样，画质优于自研FSRCNNX。即时生效。" },
+    { "name": "settings_desc_filter_ai_spatial_full", "value": "当前设备支持马良GPU硬件超分（空域超分），选择AI超分时自动使用马良GPU空域上采样，画质优于自研FSRCNNX。即时生效。" },
     { "name": "settings_desc_filter_default", "value": "原汁原味保留像素锯齿，柔和平滑全图模糊，边缘/高级抗锯齿只平滑斜线和曲线，AI超分使用FSRCNNX锐化上采样。即时生效。" },
 
     { "name": "settings_label_screen_effect", "value": "屏幕效果" },
@@ -121,8 +119,7 @@
     { "name": "toast_restore_failed", "value": "恢复失败" },
 
     { "name": "toast_importing", "value": "正在导入..." },
-    { "name": "toast_import_ok_prefix", "value": "已导入 " },
-    { "name": "toast_import_ok_suffix", "value": " 个游戏" },
+    { "name": "toast_import_ok", "value": "已导入 %d 个游戏" },
     { "name": "toast_import_failed", "value": "导入失败" },
 
     { "name": "emulator_status_not_started", "value": "未启动" },
@@ -131,7 +128,7 @@
     { "name": "emulator_status_preparing", "value": "准备资源..." },
     { "name": "emulator_status_load_failed", "value": "加载失败" },
     { "name": "emulator_status_starting", "value": "启动中..." },
-    { "name": "emulator_status_failed_prefix", "value": "失败: " },
+    { "name": "emulator_status_failed", "value": "失败: %s" },
     { "name": "emulator_status_no_mrp", "value": "未指定 MRP" },
     { "name": "emulator_status_running", "value": "运行中" },
     { "name": "emulator_status_stopped", "value": "已停止" },
@@ -160,11 +157,10 @@
     { "name": "index_empty_hint_game", "value": "在设置中导入 .mrp 游戏文件" },
     { "name": "index_btn_go_settings", "value": "前往设置" },
     { "name": "index_dialog_delete_title", "value": "删除游戏" },
-    { "name": "index_dialog_delete_prefix", "value": "确定删除「" },
-    { "name": "index_dialog_delete_suffix", "value": "」吗？此操作不可恢复。" },
+    { "name": "index_dialog_delete_message", "value": "确定删除「%s」吗？此操作不可恢复。" },
 
     { "name": "gp_title", "value": "手柄按键映射" },
-    { "name": "gp_waiting_prefix", "value": "等待按下 → " },
+    { "name": "gp_waiting", "value": "等待按下 → %s" },
     { "name": "gp_preset_label", "value": "预设:" },
     { "name": "gp_press_key", "value": "请按键..." },
     { "name": "gp_not_set", "value": "未设置" },
@@ -192,6 +188,24 @@
     { "name": "mr_soft_left", "value": "左软键" },
     { "name": "mr_soft_right", "value": "右软键" },
     { "name": "mr_power", "value": "电源" },
-    { "name": "mr_dial", "value": "拨号" }
+    { "name": "mr_dial", "value": "拨号" },
+
+    { "name": "a11y_card_game", "value": "%s，版本 %d" },
+    { "name": "a11y_btn_favorite", "value": "收藏" },
+    { "name": "a11y_btn_unfavorite", "value": "取消收藏" },
+    { "name": "a11y_btn_delete", "value": "删除" },
+    { "name": "a11y_btn_go_settings", "value": "前往设置" },
+    { "name": "a11y_speed_chip", "value": "速度 %s" },
+    { "name": "a11y_gamepad_chip", "value": "手柄" },
+    { "name": "a11y_settings_chip", "value": "设置" },
+    { "name": "a11y_numpad_chip", "value": "数字键盘" },
+    { "name": "a11y_controls_chip", "value": "控制面板" },
+    { "name": "a11y_gp_set_key", "value": "设置按键" },
+
+    { "name": "settings_label_dark_mode", "value": "深色模式" },
+    { "name": "settings_desc_dark_mode", "value": "减少屏幕蓝光，保护眼睛" },
+    { "name": "settings_label_follow_system", "value": "跟随系统" },
+    { "name": "settings_desc_follow_system", "value": "自动跟随系统深色模式设置" },
+    { "name": "settings_section_appearance", "value": "外观" }
   ]
 }

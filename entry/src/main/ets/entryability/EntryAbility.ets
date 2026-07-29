@@ -1,24 +1,58 @@
-import { AbilityConstant, ConfigurationConstant, UIAbility, Want, common } from '@kit.AbilityKit';
+import { AbilityConstant, ConfigurationConstant, UIAbility, Want, common, Configuration } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
 import { window, AppStorageV2 } from '@kit.ArkUI';
+import { preferences } from '@kit.ArkData';
 import { AvoidData } from '../common/AvoidData';
 import { PendingMrpUri } from '../common/PendingMrpUri';
 import { VmrpEngineTs } from '../vmrp/VmrpEngine';
 
 const DOMAIN = 0x0000;
+const PREF_NAME = 'vmrp_settings';
 
 export let gAbilityContext: common.UIAbilityContext | null = null;
+export let gIsDarkMode: boolean = true;
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     gAbilityContext = this.context;
-    try {
-      this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_DARK);
-    } catch (err) {
-      hilog.error(DOMAIN, 'testTag', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
-    }
+    gIsDarkMode = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    this.applyColorModeFromPref();
     this.handleFileWant(want);
     hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+  }
+
+  onConfigurationUpdate(newConfig: Configuration): void {
+    gIsDarkMode = newConfig.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
+    this.updateStatusBar();
+  }
+
+  private applyColorModeFromPref(): void {
+    try {
+      const pref = preferences.getPreferencesSync(this.context, { name: PREF_NAME });
+      const followSystem = pref.getSync('follow_system', true) as boolean;
+      if (followSystem) {
+        this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
+      } else {
+        const darkMode = pref.getSync('dark_mode', true) as boolean;
+        this.context.getApplicationContext().setColorMode(
+          darkMode ? ConfigurationConstant.ColorMode.COLOR_MODE_DARK : ConfigurationConstant.ColorMode.COLOR_MODE_LIGHT
+        );
+      }
+    } catch (_e) {}
+  }
+
+  private updateStatusBar(): void {
+    try {
+      const win = this.context.windowStage.getMainWindowSync();
+      const statusBarContentColor = gIsDarkMode ? '#FFFFFF' : '#182431';
+      const navBarContentColor = gIsDarkMode ? '#FFFFFF' : '#182431';
+      win.setWindowSystemBarProperties({
+        statusBarColor: '#00000000',
+        statusBarContentColor: statusBarContentColor,
+        navigationBarColor: '#00000000',
+        navigationBarContentColor: navBarContentColor
+      });
+    } catch (_e) {}
   }
 
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
@@ -51,12 +85,7 @@ export default class EntryAbility extends UIAbility {
       try {
         const win = windowStage.getMainWindowSync();
         win.setWindowLayoutFullScreen(true);
-        win.setWindowSystemBarProperties({
-          statusBarColor: '#00000000',
-          statusBarContentColor: '#FFFFFF',
-          navigationBarColor: '#00000000',
-          navigationBarContentColor: '#FFFFFF'
-        });
+        this.updateStatusBar();
         const avoid: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
         const uiCtx = win.getUIContext();
         const sysAvoid = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
