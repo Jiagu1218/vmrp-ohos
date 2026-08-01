@@ -2,7 +2,7 @@ import { abilityAccessCtrl } from '@kit.AbilityKit';
 import { NodeContent, ComponentContent, AppStorageV2, display } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import {
-  HdsNavDestination, ScrollEffectType, hdsMaterial
+  HdsNavDestination
 } from '@kit.UIDesignKit';
 import {
   VmrpEngineTs, VMRP_KEY_PRESS, VMRP_KEY_RELEASE
@@ -16,33 +16,11 @@ import { GlassPanel } from '../common/GlassPanel';
 import { GpBinding, defaultBindings as defaultGpBindings, jsonToBindings as gpJsonToBindings } from '../components/GamepadBinding';
 import { keyCodeToSrc, computeStickDirections } from '../components/GamepadHelpers';
 import {
-  DPadBtn, SoftKeyBtn, DPadWithFunc, NumPad, TopScreen, StatusBarChip,
-  BottomControls, PhoneControls, EditDialogContent, EditDialogContentBuilder,
-  ScreenShellParam, EditDialogContentBuilderParams, EditDialogOptions,
-  SCREEN_BG, DPAD_ARROW, NUMKEY_TEXT, NUMKEY_BG, RUN_DOT, SHELL_BORDER, ACCENT_COLOR, STATUS_TEXT
+  DPadWithFunc, NumPad, TopScreen, StatusBarChip,
+  PhoneControls, EditDialogContent, EditDialogContentBuilder,
+  EditDialogContentBuilderParams, EditDialogOptions,
+  SCREEN_BG, DPAD_ARROW, NUMKEY_TEXT, RUN_DOT, SHELL_BORDER, STATUS_TEXT
 } from '../components/EmulatorControls';
-
-interface GridRowColumns {
-  sm: number;
-  md: number;
-  lg: number;
-}
-
-interface GridRowGutter {
-  x: number;
-  y: number;
-}
-
-interface GridColSpan {
-  sm: number;
-  md: number;
-  lg: number;
-}
-
-interface GridRowBreakpoints {
-  value: string[];
-  reference: BreakpointsReference;
-}
 
 @ComponentV2
 struct EmulatorPage {
@@ -60,8 +38,11 @@ struct EmulatorPage {
   @Local screenAreaH: number = 320;
   @Local bufW: number = 240;
   @Local bufH: number = 320;
-  @Local dualAreaW: number = 400;
-  @Local dualAreaH: number = 600;
+  @Local isLandscape: boolean = false;
+  @Local leftColW: number = 200;
+  @Local midColW: number = 400;
+  @Local midColH: number = 600;
+  @Local rightColW: number = 200;
   @Local speedMultiplier: number = 1;
   @Local gamepadConnected: boolean = false;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
@@ -74,14 +55,7 @@ struct EmulatorPage {
   private stickPressedKeys: Set<number> = new Set();
   private nodeContent: NodeContent = new NodeContent();
   private mrpPath: string = '';
-  private gridColumns: GridRowColumns = { sm: 1, md: 2, lg: 2 };
-  private gridGutter: GridRowGutter = { x: 8, y: 6 };
-  private gridBreakpoints: GridRowBreakpoints = {
-    value: ['520vp', '840vp'],
-    reference: BreakpointsReference.WindowSize
-  };
-  private topSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
-  private bottomSpan: GridColSpan = { sm: 12, md: 6, lg: 6 };
+
 
   aboutToAppear(): void {
     this.statusText = '';
@@ -102,8 +76,11 @@ struct EmulatorPage {
       }
       this.screenAreaW = wVP;
       this.screenAreaH = hVP;
-      this.dualAreaW = wVP / 2 - 4;
-      this.dualAreaH = hVP;
+      this.isLandscape = wVP > hVP;
+      this.leftColW = wVP * 0.25;
+      this.midColW = wVP * 0.5;
+      this.midColH = hVP;
+      this.rightColW = wVP * 0.25;
       if (this.isFoldable) {
         display.on('foldStatusChange', (status: display.FoldStatus) => {
           this.foldStatus = status;
@@ -368,14 +345,56 @@ struct EmulatorPage {
   }
 
   @Builder
-  screenShell($$: ScreenShellParam) {
-    Column() {
-      if ($$.isTop) {
+  tabletLandscapeLayout() {
+    Row() {
+      Column() {
+        DPadWithFunc({
+          onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+          dpadSize: Math.min(this.leftColW * 0.55, 170),
+          softKeyH: 32
+        })
+
+        Flex({ direction: FlexDirection.Row, wrap: FlexWrap.Wrap, justifyContent: FlexAlign.Center, alignItems: ItemAlign.Center }) {
+          StatusBarChip({
+            chipLabel: `${this.speedMultiplier}x`,
+            chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
+            onChipClick: () => {
+              const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
+              this.speedMultiplier = next;
+              this.engine.setSpeedMultiplier(next);
+            }
+          }).margin(3)
+          StatusBarChip({
+            chipLabel: $r('app.string.emulator_chip_settings'),
+            onChipClick: () => this.navPathStack.pushPathByName('Settings', null)
+          }).margin(3)
+          StatusBarChip({
+            chipLabel: $r('app.string.emulator_chip_numpad'),
+            chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
+            onChipClick: () => { this.showNumPadVal = !this.showNumPadVal; }
+          }).margin(3)
+          if (this.gamepadConnected) {
+            StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT }).margin(3)
+          }
+        }
+        .margin({ top: 24 })
+        .constraintSize({ maxWidth: '90%' })
+      }
+      .width('25%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: 8, right: 8 })
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.leftColW = newVal.width as number;
+      })
+
+      Column() {
         TopScreen({
           nodeContent: this.nodeContent,
           statusText: this.statusText,
           runningState: this.runningState,
-          scaleVal: this.currentBp === 'sm' ? 1 : Math.min((this.dualAreaW - 24) / this.bufW, (this.dualAreaH * 0.5 - 36) / this.bufH),
+          scaleVal: Math.min((this.midColW - 24) / this.bufW, (this.midColH - 40) / this.bufH),
           bufW: this.bufW,
           bufH: this.bufH,
           screenVisible: this.screenVisible,
@@ -385,27 +404,150 @@ struct EmulatorPage {
             this.engine.setSpeedMultiplier(mult);
           }
         })
-      } else {
-        Scroll() {
-          Column() {
-            BottomControls({
-              onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
-              runningState: this.runningState,
-              dpadSizeVal: this.currentBp === 'sm' ? 110 : Math.min((this.dualAreaW - 24) * 0.4, 130),
-              btnSizeVal: this.currentBp === 'sm' ? 30 : Math.min((this.dualAreaW - 24) * 0.1, 36),
-              showNumPadVal: this.showNumPadVal
-            })
+      }
+      .width('50%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.midColW = newVal.width as number;
+        this.midColH = newVal.height as number;
+      })
+
+      Column() {
+        if (this.showNumPadVal) {
+          NumPad({
+            onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+            btnSizeVal: Math.min(this.rightColW * 0.2, 48),
+            gapVal: Math.min(this.rightColW * 0.06, 16),
+            widthVal: '85%'
+          })
+        }
+      }
+      .width('25%')
+      .height('100%')
+      .justifyContent(FlexAlign.Center)
+      .alignItems(HorizontalAlign.Center)
+      .padding({ left: 8, right: 8 })
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.rightColW = newVal.width as number;
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ bottom: this.avoidData.bottomVp })
+  }
+
+  @Builder
+  tabletPortraitLayout() {
+    Column() {
+      Stack() {
+        Stack() {
+          if (this.screenVisible) {
+            ContentSlot(this.nodeContent)
           }
         }
-        .scrollBar(BarState.Off)
+        .width(this.bufW)
+        .height(this.bufH)
+        .backgroundColor(SCREEN_BG)
+        .scale({
+          x: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH),
+          y: Math.min(this.screenAreaW / this.bufW, this.screenAreaH / this.bufH)
+        })
+      }
+      .width('100%')
+      .layoutWeight(1)
+      .alignContent(Alignment.Center)
+      .clip(true)
+      .onAreaChange((_old: Area, newVal: Area) => {
+        this.screenAreaW = newVal.width as number;
+        this.screenAreaH = newVal.height as number;
+      })
+
+      Row() {
+        Row()
+          .width(6)
+          .height(6)
+          .borderRadius(3)
+          .backgroundColor(this.runningState ? RUN_DOT : $r('app.color.emulator_idle_dot'))
+          .margin({ right: 6 })
+        Text(this.statusText)
+          .fontSize(10)
+          .fontColor(STATUS_TEXT)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
+        StatusBarChip({
+          chipLabel: `${this.speedMultiplier}x`,
+          chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
+          onChipClick: () => {
+            const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
+            this.speedMultiplier = next;
+            this.engine.setSpeedMultiplier(next);
+          }
+        })
+        if (this.gamepadConnected) {
+          StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT })
+        }
+        StatusBarChip({ chipLabel: $r('app.string.emulator_chip_settings'), onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
+        StatusBarChip({
+          chipLabel: $r('app.string.emulator_chip_numpad'),
+          chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
+          onChipClick: () => { this.showNumPadVal = !this.showNumPadVal; }
+        })
+        StatusBarChip({
+          chipLabel: this.showControls ? $r('app.string.emulator_chip_collapse') : $r('app.string.emulator_chip_controls'),
+          chipFontColor: DPAD_ARROW,
+          onChipClick: () => { this.showControls = !this.showControls; }
+        })
+      }
+      .width('100%')
+      .padding({ left: 8, right: 8, top: 4, bottom: 4 })
+
+      if (this.showControls) {
+        Column() {
+          GlassPanel({
+            blurRadius: 30,
+            panelBorderRadius: 16,
+            panelBorderColor: SHELL_BORDER,
+            panelBgColor: $r('app.color.emulator_panel_bg'),
+            panelBorderWidth: 1
+          }) {
+            Scroll() {
+              Column() {
+                Row() {
+                  DPadWithFunc({
+                    onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+                    dpadSize: Math.min(this.screenAreaW * 0.25, 160)
+                  })
+
+                  if (this.showNumPadVal) {
+                    NumPad({
+                      onKeyTouch: (key: number, e: TouchEvent) => this.onKeyTouch(key, e),
+                      btnSizeVal: Math.min(this.screenAreaW * 0.08, 44)
+                    })
+                  }
+                }
+                .width('100%')
+                .justifyContent(FlexAlign.Center)
+                .alignItems(VerticalAlign.Center)
+              }
+              .width('100%')
+              .padding({ top: 4, bottom: 4 })
+            }
+            .constraintSize({ maxHeight: '46%' })
+            .width('100%')
+            .scrollBar(BarState.Off)
+          }
+        }
         .width('100%')
-        .height('100%')
+        .constraintSize({ maxWidth: 720 })
       }
     }
     .width('100%')
     .height('100%')
     .alignItems(HorizontalAlign.Center)
-    .justifyContent(FlexAlign.Center)
+    .padding({ bottom: this.avoidData.bottomVp })
   }
 
   @Builder
@@ -620,65 +762,7 @@ struct EmulatorPage {
     .height('100%')
   }
 
-  @Builder
-  dualScreenLayout() {
-    GridRow({
-      columns: this.gridColumns,
-      gutter: this.gridGutter,
-      breakpoints: this.gridBreakpoints
-    }) {
-      GridCol({ span: this.topSpan }) {
-        Column() {
-          Column() {
-            GlassPanel({
-              blurRadius: 20,
-              panelBorderRadius: 16,
-              panelBorderColor: SHELL_BORDER,
-              panelBgColor: $r('app.color.emulator_panel_bg'),
-              panelBorderWidth: 1
-            }) {
-              this.screenShell({ isTop: true })
-            }
-          }
-          .width('100%')
-          .height('100%')
-        }
-        .width('100%')
-        .height('100%')
-      }
-      .height('100%')
 
-      GridCol({ span: this.bottomSpan }) {
-        Column() {
-          Column() {
-            GlassPanel({
-              blurRadius: 20,
-              panelBorderRadius: 16,
-              panelBorderColor: SHELL_BORDER,
-              panelBgColor: $r('app.color.emulator_panel_bg'),
-              panelBorderWidth: 1
-            }) {
-              this.screenShell({ isTop: false })
-            }
-          }
-          .width('100%')
-          .height('100%')
-        }
-        .width('100%')
-        .height('100%')
-      }
-      .height('100%')
-    }
-    .width('100%')
-    .height('100%')
-    .onBreakpointChange((bp: string) => {
-      this.currentBp = bp;
-    })
-    .onAreaChange((_old: Area, newVal: Area) => {
-      this.dualAreaW = (newVal.width as number) / 2 - 4;
-      this.dualAreaH = newVal.height as number;
-    })
-  }
 
   build() {
     HdsNavDestination() {
@@ -688,8 +772,10 @@ struct EmulatorPage {
           this.foldExpandedLayout()
         } else if (this.currentBp === 'sm') {
           this.phoneLayout()
+        } else if (this.isLandscape) {
+          this.tabletLandscapeLayout()
         } else {
-          this.dualScreenLayout()
+          this.tabletPortraitLayout()
         }
       }
       .width('100%')
@@ -697,6 +783,18 @@ struct EmulatorPage {
       .backgroundColor($r('app.color.emulator_bg'))
       .focusScopeId('emulatorGroup', true, false)
       .defaultFocus(true)
+      .onAreaChange((_old: Area, newVal: Area) => {
+        const w = newVal.width as number;
+        const h = newVal.height as number;
+        this.isLandscape = w > h;
+        if (w >= 840) {
+          this.currentBp = 'lg';
+        } else if (w >= 520) {
+          this.currentBp = 'md';
+        } else {
+          this.currentBp = 'sm';
+        }
+      })
       .onKeyEvent((event: KeyEvent) => {
         this.onGamepadKeyEvent(event);
       })

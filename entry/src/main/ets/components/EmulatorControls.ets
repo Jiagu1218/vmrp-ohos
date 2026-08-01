@@ -180,6 +180,8 @@ export struct NumPadItem {
 export struct NumPad {
   @Param onKeyTouch: (key: number, event: TouchEvent) => void = () => {};
   @Param btnSizeVal: number = 36;
+  @Param gapVal: number = 10;
+  @Param widthVal: ResourceStr = '45%';
 
   build() {
     Grid() {
@@ -191,10 +193,10 @@ export struct NumPad {
     }
     .columnsTemplate('1fr 1fr 1fr')
     .rowsTemplate('1fr 1fr 1fr 1fr')
-    .columnsGap(10)
-    .rowsGap(10)
-    .width('45%')
-    .height(this.btnSizeVal * 4 + 50)
+    .columnsGap(this.gapVal)
+    .rowsGap(this.gapVal)
+    .width(this.widthVal)
+    .height(this.btnSizeVal * 4 + this.gapVal * 3 + 20)
   }
 }
 
