@@ -491,18 +491,17 @@ if(EXISTS "${_VMRP_TIMER_OWNER}")
     if(NOT _timer_owner MATCHES "OHOS_TIMER_OWNER_FIX")
         string(FIND "${_timer_owner}" "primary_resume_without_timer_owner" _anchor_test)
         message(STATUS "[OHOS] timer_owner patch: anchor find pos=${_anchor_test} (>=0=found)")
-        # 修复1: modal close 时,条件分支改为永假(不清空 owner)
+        # OHOS_TIMER_OWNER_FIX: 上游 81aae96 的 primary_resume_without_timer_owner
+        # 在 OHOS 下清空 timer owner,导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
+        # 完全禁用该条件分支(if(0)),保持 v0.2.1 的无条件设 wrapper owner 行为。
         string(REPLACE
             "        if (code == 2 && foreground_child_active &&\n            wrapper_timer_live_at_close &&\n            primary_timer_live_at_close &&\n            m->timer_p_addr == m->p_addr &&\n            m->timer_helper_addr == m->helper_addr) {"
-            "        if (0 /* OHOS_TIMER_OWNER_FIX: 禁用上游 81aae96 的 owner 清空,OHOS 下导致 EXT_STOP_ADDR 死循环 */) {"
+            "        if (0 /* OHOS_TIMER_OWNER_FIX: 禁用上游 81aae96 的 owner 清空 */) {"
             _timer_owner "${_timer_owner}")
-        # 修复2: timer 恢复时,条件分支改为永假(保持无条件设 wrapper owner)
         string(REPLACE
             "        if (m->primary_resume_without_timer_owner &&\n            m->active_p_addr == m->primary_p_addr &&\n            m->active_helper_addr == m->primary_helper_addr) {"
             "        if (0 /* OHOS_TIMER_OWNER_FIX */) {"
             _timer_owner "${_timer_owner}")
-        string(FIND "${_timer_owner}" "OHOS_TIMER_OWNER_FIX" _fix_test)
-        message(STATUS "[OHOS] timer_owner patch: fix injected count via find=${_fix_test}")
         file(WRITE "${_VMRP_TIMER_OWNER}" "${_timer_owner}")
         message(STATUS "[OHOS] Patched arm_ext timer owner fix (OHOS_TIMER_OWNER_FIX)")
     else()
@@ -1009,18 +1008,22 @@ set(_VMRP_JIT "${_UC_ROOT}/qemu/accel/tcg/translate-all.c")
 if(EXISTS "${_VMRP_JIT}")
     file(READ "${_VMRP_JIT}" _jit)
     if(NOT _jit MATCHES "OHOS_TCI")
-        # 修复1: 64位默认 buffer 1GB→32MB (TCI 虽是数据内存但 32MB 够用且省内存)
-        string(REPLACE
-            "#define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (1 * GiB)"
-            "/* OHOS_TCI: 64位默认 1GB→32MB。 */\n#define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (32 * MiB)"
-            _jit "${_jit}")
+        # 修复1: 64位默认 buffer 1GB→32MB
+        # 注意:JIT 轮(OHOS_TCI_DISABLE=ON)保留原始 1GB(TB 缓存不足会导致频繁
+        # flush,可能引发性能问题或行为异常)。仅 TCI 轮缩小到 32MB。
+        if(NOT OHOS_TCI_DISABLE)
+            string(REPLACE
+                "#define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (1 * GiB)"
+                "/* OHOS_TCI: 64位默认 1GB→32MB。 */\n#define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (32 * MiB)"
+                _jit "${_jit}")
+        endif()
         # 修复2: TCI 模式 prot 去掉 EXEC (核心修复); MAP_JIT 仅 JIT 模式需要
         string(REPLACE
             "    int prot = PROT_WRITE | PROT_READ | PROT_EXEC;\n    int flags = MAP_PRIVATE | MAP_ANONYMOUS;\n    size_t size = tcg_ctx->code_gen_buffer_size;\n    void *buf;\n#ifdef USE_MAP_JIT\n    flags |= MAP_JIT;\n#endif"
             "    /* OHOS_TCI: 解释器模式 buffer 是普通数据内存,去掉 PROT_EXEC 绕过 HarmonyOS 7.0\n     * 匿名内存执行权限管控。JIT 模式(CONFIG_TCG_INTERPRETER=0)仍走 RWX。 */\n#if CONFIG_TCG_INTERPRETER\n    int prot = PROT_WRITE | PROT_READ;\n#else\n    int prot = PROT_WRITE | PROT_READ | PROT_EXEC;\n#endif\n    int flags = MAP_PRIVATE | MAP_ANONYMOUS;\n    size_t size = tcg_ctx->code_gen_buffer_size;\n    void *buf;\n#if !CONFIG_TCG_INTERPRETER\n#ifdef USE_MAP_JIT\n    flags |= MAP_JIT;\n#endif\n#endif"
             _jit "${_jit}")
         file(WRITE "${_VMRP_JIT}" "${_jit}")
-        message(STATUS "[OHOS] TCI: patched translate-all.c (RW buffer for interpreter, 32MB cap)")
+        message(STATUS "[OHOS] TCI: patched translate-all.c (RW buffer for interpreter, 32MB cap, JIT keeps 1GB)")
     endif()
 endif()
 
