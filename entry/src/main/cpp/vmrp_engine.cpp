@@ -12,6 +12,8 @@
  *     （vmrp 音频状态在无 SDL 时其内部锁为 no-op，且 PCM 数据是预解码好的。）
  */
 #include "vmrp_engine.h"
+#include <sys/mman.h>
+#include <errno.h>
 
 #include <dlfcn.h>
 #include <hilog/log.h>
@@ -105,19 +107,44 @@ bool VmrpEngine::Load(const std::string &so_path) {
     if (loaded_) return true;
     // 先重定向 stdout/stderr 到 hilog，确保后续 vmrp 的所有日志可见。
     RedirectStdioToHilog();
-    // 鸿蒙 MUSL-LDSO 命名空间隔离禁止 dlopen 绝对路径沙箱 so。
-    // 但 libvmrp.so 已作为 libentry.so 的依赖自动加载，dlopen("libvmrp.so")
-    // 不会走命名空间检查，而是返回已加载的 handle（引用计数+1）。
-    so_handle_ = dlopen("libvmrp.so", RTLD_NOW | RTLD_NOLOAD);
+
+    // 双 so 方案:探测 PROT_EXEC 能力,选 JIT(全速)或 TCI(保底)引擎 so。
+    // HarmonyOS 7.0 无 ACL 权限时 mmap(PROT_RWX) 失败 → 自动降级 TCI。
+    if (engine_mode_[0] == '\0') {  // 首次探测(本次运行内缓存)
+        void *p = mmap(nullptr, 4096, PROT_READ | PROT_WRITE | PROT_EXEC,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        bool jit_capable = (p != MAP_FAILED);
+        if (jit_capable) {
+            munmap(p, 4096);
+            LOGI("JIT probe: mmap(PROT_RWX) OK → JIT mode");
+        } else {
+            LOGI("JIT probe: mmap(PROT_RWX) failed (errno=%d) → TCI mode", errno);
+        }
+        engine_mode_ = jit_capable ? "JIT" : "TCI";
+    }
+    bool jit_capable = (engine_mode_[0] == 'J');
+
+    // JIT 可用 → libvmrp.so(JIT); 否则 → libvmrp_tci.so(TCI 保底)
+    const char *soname = jit_capable ? "libvmrp.so" : "libvmrp_tci.so";
+    // 先尝试 RTLD_NOLOAD(so 已加载则直接返回),否则按名加载
+    so_handle_ = dlopen(soname, RTLD_NOW | RTLD_NOLOAD);
     if (!so_handle_) {
-        // RTLD_NOLOAD 失败说明 libvmrp.so 未随 libentry.so 加载，尝试按名加载
-        so_handle_ = dlopen("libvmrp.so", RTLD_NOW);
+        so_handle_ = dlopen(soname, RTLD_NOW);
     }
     if (!so_handle_) {
-        LOGE("dlopen(libvmrp.so) failed: %s", dlerror());
-        return false;
+        LOGE("dlopen(%s) failed: %s", soname, dlerror());
+        // TCI 保底也失败时,尝试另一个 so(开发期/JIT so 缺失等边界)
+        const char *fallback = jit_capable ? "libvmrp_tci.so" : "libvmrp.so";
+        so_handle_ = dlopen(fallback, RTLD_NOW | RTLD_NOLOAD);
+        if (!so_handle_) so_handle_ = dlopen(fallback, RTLD_NOW);
+        if (!so_handle_) {
+            LOGE("dlopen(%s) fallback also failed: %s", fallback, dlerror());
+            return false;
+        }
+        soname = fallback;
+        LOGI("Engine fallback to %s", soname);
     }
-    LOGI("dlopen(libvmrp.so) OK (by name, no namespace check)");
+    LOGI("Engine mode: %s (JIT capable=%d)", soname, jit_capable);
 
     RESOLVE_SYM(so_handle_, "skyengine_api_init", init, int (*)(int, int));
     RESOLVE_SYM(so_handle_, "skyengine_api_set_work_dir", set_work_dir, int (*)(const char *));
@@ -161,6 +188,9 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "skyengine_api_start_dsmB", start_dsmB, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "skyengine_api_start_dsmC", start_dsmC, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "skyengine_api_start_dsm_ex", start_dsm_ex, int (*)(const char *, const char *));
+    // 双 so 方案:这两个原先在 vmrp_napi.cpp 链接期直接调用,现改为 dlsym
+    RESOLVE_SYM(so_handle_, "skyengine_api_set_memory", set_memory, int (*)(int));
+    RESOLVE_SYM(so_handle_, "skyengine_set_speed_multiplier", set_speed_multiplier, void (*)(int));
 
     // Volume API may not exist in older builds; optional resolve.
     {
@@ -246,19 +276,31 @@ int VmrpEngine::Start(const std::string &mrp, const std::string &ext, const std:
 int VmrpEngine::StartDsmB(const std::string &entry) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     if (!api_.start_dsmB) return -1;
-    return api_.start_dsmB(entry.empty() ? "*A" : entry.c_str());
+    auto t0 = std::chrono::steady_clock::now();
+    int r = api_.start_dsmB(entry.empty() ? "*A" : entry.c_str());
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    LOGI("StartDsmB(\"%s\") = %d (%lldms)", entry.c_str(), r, (long long)ms);
+    return r;
 }
 
 int VmrpEngine::StartDsmC(const std::string &entry) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     if (!api_.start_dsmC) return -1;
-    return api_.start_dsmC(entry.empty() ? "*A" : entry.c_str());
+    auto t0 = std::chrono::steady_clock::now();
+    int r = api_.start_dsmC(entry.empty() ? "*A" : entry.c_str());
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    LOGI("StartDsmC(\"%s\") = %d (%lldms)", entry.c_str(), r, (long long)ms);
+    return r;
 }
 
 int VmrpEngine::StartDsmEx(const std::string &path, const std::string &entry) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     if (!api_.start_dsm_ex) return -1;
-    return api_.start_dsm_ex(path.c_str(), entry.empty() ? nullptr : entry.c_str());
+    auto t0 = std::chrono::steady_clock::now();
+    int r = api_.start_dsm_ex(path.c_str(), entry.empty() ? nullptr : entry.c_str());
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    LOGI("StartDsmEx(\"%s\",\"%s\") = %d (%lldms)", path.c_str(), entry.c_str(), r, (long long)ms);
+    return r;
 }
 
 void VmrpEngine::Destroy() {

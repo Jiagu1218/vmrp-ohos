@@ -250,7 +250,9 @@ void arm_ext_record_timer_owner(ArmExtModule *m) {
     if (owner_p && owner_helper) {
         m->timer_p_addr = owner_p;
         m->timer_helper_addr = owner_helper;
-        if (arm_ext_diag_on()) {
+        /* timer-owner 专用开关只输出归属变更所需的寄存器/模块信息，
+         * 避免为定位短周期 timer 误路由而开启高流量的全局 ARM DIAG。 */
+        if (arm_ext_diag_on() || arm_ext_timer_owner_diag_on()) {
             printf("DIAG timer_owner lr=0x%X ownerP=0x%X ownerH=0x%X fromCurrent=%d activeP=0x%X activeH=0x%X currentP=0x%X currentH=0x%X\n",
                    lr, owner_p, owner_helper, owner_from_current_dispatch,
                    m->active_p_addr, m->active_helper_addr,

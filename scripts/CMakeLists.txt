@@ -446,7 +446,7 @@ endif()
 set(_VMRP_ARMEXT2 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
 if(EXISTS "${_VMRP_ARMEXT2}")
     file(READ "${_VMRP_ARMEXT2}" _aet2)
-    if(NOT _aet2 MATCHES "arm_ext_host_ptr")
+    if(NOT _aet2 MATCHES "OHOS_EXT_STOP_HOOK")
         string(PREPEND _aet2
 "/* OHOS: ARM 地址转 host 指针（供 case 800 修复）。arm_ext_internal.h 有完整定义。 */\n"
 "#include \"./include/arm_ext_internal.h\"\n"
@@ -454,15 +454,60 @@ if(EXISTS "${_VMRP_ARMEXT2}")
 "    if (!m || !m->mem) return NULL;\n"
 "    if (addr < 0x10000u || addr >= 0x1010000u) return NULL;\n"
 "    return (void*)((uint8_t*)m->mem + (addr - 0x10000u));\n"
+"}\n"
+"/* OHOS_EXT_STOP_HOOK: EXT_STOP_ADDR 的 code hook。\n"
+" * 上游 81aae96 的 timer owner 修改在 OHOS 下会导致插件退出后 ARM 代码\n"
+" * 跳到 EXT_STOP_ADDR(自跳转死循环)。Unicorn 的 exit-addr 快速路径在\n"
+" * 某些情况下未能正确终止,导致主线程阻塞被杀。此 hook 在执行到\n"
+" * EXT_STOP_ADDR 时立即 uc_emu_stop,JIT/TCI 均有效。 */\n"
+"static void hook_ext_stop(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {\n"
+"    (void)address; (void)size; (void)user_data;\n"
+"    uc_emu_stop(uc);\n"
 "}\n")
+        # 在 hook_table 注册后追加 EXT_STOP_ADDR hook 注册
+        string(REPLACE
+            "    err = uc_hook_add(m->uc, &m->hook, UC_HOOK_CODE, hook_table, m, EXT_TABLE_ADDR, EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4);"
+            "    err = uc_hook_add(m->uc, &m->hook, UC_HOOK_CODE, hook_table, m, EXT_TABLE_ADDR, EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4);\n    /* OHOS_EXT_STOP_HOOK */\n    {\n        uc_hook ext_stop_hook;\n        uc_hook_add(m->uc, &ext_stop_hook, UC_HOOK_CODE, hook_ext_stop, m, EXT_STOP_ADDR, EXT_STOP_ADDR + 1);\n    }"
+            _aet2 "${_aet2}")
         file(WRITE "${_VMRP_ARMEXT2}" "${_aet2}")
-        message(STATUS "[OHOS] Patched arm_ext_host_ptr")
+        message(STATUS "[OHOS] Patched arm_ext_host_ptr + EXT_STOP_ADDR hook")
     endif()
 endif()
 
 # --- Patch arm_ext_executor.c: T_MOTION_ACC 缓冲区 ---
 # 上游 651e421 已实现 arm_ext_host_motion_acc_slot() + motion_acc_addr 字段,
 # OHOS 不再注入 motion acc 分配/写入代码。
+
+# --- Patch arm_ext_executor.c: 禁用上游 81aae96 的 primary_resume_without_timer_owner ---
+# 上游 81aae96 为修 optwar modal close 卡顿,新增 primary_resume_without_timer_owner:
+# 在特定条件下清空 timer owner(timer_p_addr=0),让 primary 走"无 owner 恢复"路径。
+# 但在 OHOS async runner 模型下,清空 owner 会导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
+# OHOS 补丁:短路该条件,保持 v0.2.1 的无条件设 timer owner 行为。
+# 影响范围:仅 optwar 的特定 modal close 场景(timer 回调中关闭前台子模块),
+# 对其他应用无影响。
+set(_VMRP_TIMER_OWNER "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
+if(EXISTS "${_VMRP_TIMER_OWNER}")
+    file(READ "${_VMRP_TIMER_OWNER}" _timer_owner)
+    if(NOT _timer_owner MATCHES "OHOS_TIMER_OWNER_FIX")
+        string(FIND "${_timer_owner}" "primary_resume_without_timer_owner" _anchor_test)
+        message(STATUS "[OHOS] timer_owner patch: anchor find pos=${_anchor_test} (>=0=found)")
+        # OHOS_TIMER_OWNER_FIX: 上游 81aae96 的 primary_resume_without_timer_owner
+        # 在 OHOS 下清空 timer owner,导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
+        # 完全禁用该条件分支(if(0)),保持 v0.2.1 的无条件设 wrapper owner 行为。
+        string(REPLACE
+            "        if (code == 2 && foreground_child_active &&\n            wrapper_timer_live_at_close &&\n            primary_timer_live_at_close &&\n            m->timer_p_addr == m->p_addr &&\n            m->timer_helper_addr == m->helper_addr) {"
+            "        if (0 /* OHOS_TIMER_OWNER_FIX: 禁用上游 81aae96 的 owner 清空 */) {"
+            _timer_owner "${_timer_owner}")
+        string(REPLACE
+            "        if (m->primary_resume_without_timer_owner &&\n            m->active_p_addr == m->primary_p_addr &&\n            m->active_helper_addr == m->primary_helper_addr) {"
+            "        if (0 /* OHOS_TIMER_OWNER_FIX */) {"
+            _timer_owner "${_timer_owner}")
+        file(WRITE "${_VMRP_TIMER_OWNER}" "${_timer_owner}")
+        message(STATUS "[OHOS] Patched arm_ext timer owner fix (OHOS_TIMER_OWNER_FIX)")
+    else()
+        message(STATUS "[OHOS] timer_owner patch: SKIPPED (already has OHOS_TIMER_OWNER_FIX)")
+    endif()
+endif()
 
 # --- Patch mythroad.c: dsm_write_motion_acc_to_arm ---
 # 上游 651e421 已实现 mr_motion_input()(内部调 arm_ext_host_motion_acc_slot),
@@ -820,13 +865,183 @@ if(EXISTS "${_VMRP_SPEED_H}")
     endif()
 endif()
 
+# --- TCI (TCG Interpreter) port for HarmonyOS 7.0 W^X protection (OHOS_TCI) ---
+# 问题: HarmonyOS API18+ 默认禁止第三方应用分配 PROT_EXEC 内存(匿名内存执行
+# 权限管控)。Unicorn JIT 的 alloc_code_gen_buffer 直接 mmap(PROT_RWX) → EINVAL,
+# 应用启动即崩溃。所有 mmap/mprotect/memfd 绕过策略均失败(内核策略,非 bug)。
+# 官方通道: 申请 ACL 权限 ohos.permission.kernel.ALLOW_EXECUTABLE_FORT_MEMORY。
+# 保底方案: 移植 TCI 纯软件解释器,把 TCG backend 从「生成机器码到 RWX 内存」改为
+# 「序列化字节码到普通 RW 内存,再由 C 解释器循环执行」,完全不触碰 PROT_EXEC。
+# 参考: FUTO tci-emscripten 分支(基于 QEMU 5.1, 与本树 5.0.1 仅差一次版本)。
+# 性能: 比 JIT 慢 3-5×, 但 MRP 是 2G 时代低速 ARM 代码, 实测可接受。
+# 待 ACL 权限审批通过后可切回 JIT(届时移除本补丁块,恢复 translate-all.c 的 EXEC)。
+set(_OHOS_TCI_SRC "${CMAKE_CURRENT_LIST_DIR}/tci")
+set(_UC_ROOT "${VMRP_SRC_DIR}/third_party/unicorn")
+set(_UC_TCI_DIR "${_UC_ROOT}/qemu/tcg/tci")
+set(_UC_TCI_C "${_UC_ROOT}/qemu/tcg/tci.c")
+
+# OHOS_TCI_DISABLE: 双 so 方案。OFF(默认)=构建 TCI 版(libvmrp_tci.so);
+# ON=跳过 TCI 后端注入,构建纯 JIT 版(libvmrp.so,需 ACL 权限才能运行)。
+# translate-all.c 的 buffer/PROT 补丁两轮都跑(编译期 CONFIG_TCG_INTERPRETER 决定分支)。
+if(NOT OHOS_TCI_DISABLE)
+
+# (a) 拷贝 3 个 TCI 源文件到 unicorn 子模块树(幂等)
+if(EXISTS "${_OHOS_TCI_SRC}/tci.c")
+    file(MAKE_DIRECTORY "${_UC_TCI_DIR}")
+    file(COPY "${_OHOS_TCI_SRC}/tci.c"          DESTINATION "${_UC_ROOT}/qemu/tcg")
+    file(COPY "${_OHOS_TCI_SRC}/tcg-target.inc.c" DESTINATION "${_UC_TCI_DIR}")
+    file(COPY "${_OHOS_TCI_SRC}/tcg-target.h"   DESTINATION "${_UC_TCI_DIR}")
+    message(STATUS "[OHOS] TCI: copied tci.c + tcg/tci/{tcg-target.inc.c,tcg-target.h}")
+endif()
+
+# (b) 补丁 unicorn qemu/configure: 注入 --enable-interpreter 与 CONFIG_TCG_INTERPRETER
+set(_UC_CONFIGURE "${_UC_ROOT}/qemu/configure")
+if(EXISTS "${_UC_CONFIGURE}")
+    file(READ "${_UC_CONFIGURE}" _cfg)
+    if(NOT _cfg MATCHES "OHOS_TCI")
+        # 注入 interpreter 变量默认值(yes=TCI 强制启用,OHOS 无 PROT_EXEC)
+        string(REPLACE
+            "malloc_trim=\"\""
+            "malloc_trim=\"\"\ninterpreter=\"yes\"  # OHOS_TCI"
+            _cfg "${_cfg}")
+        # 在第二段参数解析(忽略段,锚点稳定)添加 --enable/--disable-interpreter,避免 unknown option
+        string(REPLACE
+            "  --cross-cc-*)\n  ;;"
+            "  --cross-cc-*)\n  ;;\n  --enable-interpreter)  # OHOS_TCI\n  ;;\n  --disable-interpreter)  # OHOS_TCI\n  ;;"
+            _cfg "${_cfg}")
+        # 帮助文本(在 avx512f 帮助行后追加)
+        string(REPLACE
+            "  avx512f         AVX512F optimization support"
+            "  avx512f         AVX512F optimization support\n  interpreter     TCG interpreter mode (OHOS_TCI)"
+            _cfg "${_cfg}")
+        # 状态打印
+        string(REPLACE
+            "echo \"avx512f optimization $avx512f_opt\""
+            "echo \"avx512f optimization $avx512f_opt\"\necho \"interpreter $interpreter\""
+            _cfg "${_cfg}")
+        # 关键: 输出 CONFIG_TCG_INTERPRETER=y 到 config-host.mak(紧跟 QEMU_INCLUDES 行)
+        # (create_config 的 CONFIG_*=y 规则会转成 #define CONFIG_TCG_INTERPRETER 1)
+        string(REPLACE
+            "echo \"QEMU_INCLUDES=$QEMU_INCLUDES\" >> $config_host_mak"
+            "echo \"QEMU_INCLUDES=$QEMU_INCLUDES\" >> $config_host_mak\nif test \"$interpreter\" = \"yes\" ; then\n  echo \"CONFIG_TCG_INTERPRETER=y\" >> $config_host_mak\nfi  # OHOS_TCI"
+            _cfg "${_cfg}")
+        # Darwin MAP_JIT 检测仅在非解释器模式需要(TCI 无可执行代码)
+        string(REPLACE
+            "if [ \"$darwin\" = \"yes\" ] ; then"
+            "if [ \"$darwin\" = \"yes\" ] && [ \"$interpreter\" = \"no\" ] ; then  # OHOS_TCI"
+            _cfg "${_cfg}")
+        # 后端 include 目录: 解释器模式优先 tcg/tci 而非 $ARCH
+        string(REPLACE
+            "if test \"$ARCH\" = \"sparc64\" ; then\n  QEMU_INCLUDES=\"-iquote \\$(SRC_PATH)/tcg/sparc $QEMU_INCLUDES\""
+            "if test \"$interpreter\" = \"yes\" ; then  # OHOS_TCI\n  QEMU_INCLUDES=\"-iquote \\$(SRC_PATH)/tcg/tci $QEMU_INCLUDES\"\nelif test \"$ARCH\" = \"sparc64\" ; then\n  QEMU_INCLUDES=\"-iquote \\$(SRC_PATH)/tcg/sparc $QEMU_INCLUDES\""
+            _cfg "${_cfg}")
+        file(WRITE "${_UC_CONFIGURE}" "${_cfg}")
+        message(STATUS "[OHOS] TCI: patched qemu/configure (--enable-interpreter + CONFIG_TCG_INTERPRETER)")
+    endif()
+endif()
+
+# (c) 补丁 unicorn CMakeLists.txt: 强制 TCI backend + 把 tci.c 编进每个 softmmu 目标
+set(_UC_CML "${_UC_ROOT}/CMakeLists.txt")
+if(EXISTS "${_UC_CML}")
+    file(READ "${_UC_CML}" _ucml)
+    if(NOT _ucml MATCHES "OHOS_TCI")
+        # UNICORN_TARGET_ARCH 检测完毕后,强制覆盖为 tci(让 -I.../tcg/tci 解析 tcg-target.h)
+        string(REPLACE
+            "    set(EXTRA_CFLAGS \"--extra-cflags=\")"
+            "    # OHOS_TCI: HarmonyOS 7.0 禁止 PROT_EXEC,强制 TCI 解释器后端。\n    set(UNICORN_TARGET_ARCH \"tci\")\n    set(EXTRA_CFLAGS \"--extra-cflags=\")"
+            _ucml "${_ucml}")
+        # configure 调用追加 --enable-interpreter
+        string(REPLACE
+            "        \${TARGET_LIST}\n        WORKING_DIRECTORY \${CMAKE_BINARY_DIR}"
+            "        \${TARGET_LIST}\n        --enable-interpreter  # OHOS_TCI\n        WORKING_DIRECTORY \${CMAKE_BINARY_DIR}"
+            _ucml "${_ucml}")
+        # 把解释器源文件加入 UNICORN_ARCH_COMMON(每个 softmmu 目标库都会编译)
+        string(REPLACE
+            "    qemu/softmmu/unicorn_vtlb.c\n)"
+            "    qemu/softmmu/unicorn_vtlb.c\n\n    qemu/tcg/tci.c  # OHOS_TCI: TCG 解释器主循环\n)"
+            _ucml "${_ucml}")
+        file(WRITE "${_UC_CML}" "${_ucml}")
+        message(STATUS "[OHOS] TCI: patched unicorn CMakeLists.txt (UNICORN_TARGET_ARCH=tci + tci.c)")
+    endif()
+endif()
+
+# (d0) 补丁 tcg.h + tcg.c: 添加 tcg_op_defs_max 字段(QEMU 5.1 新增, tci/tcg-target.inc.c 依赖)
+# FUTO 的 tci.c/tcg-target.inc.c 来自 QEMU 5.1, 引用了 TCGContext.tcg_op_defs_max,
+# 该字段在 5.0.1 不存在。这里把 5.1 的改动 backport 进来(仅 2 处小改)。
+set(_UC_TCG_H "${_UC_ROOT}/qemu/include/tcg/tcg.h")
+if(EXISTS "${_UC_TCG_H}")
+    file(READ "${_UC_TCG_H}" _tcgh)
+    if(NOT _tcgh MATCHES "OHOS_TCI")
+        string(REPLACE
+            "    TCGOpDef *tcg_op_defs;\n\n    // Unicorn engine variables"
+            "    TCGOpDef *tcg_op_defs;\n    size_t tcg_op_defs_max;  /* OHOS_TCI: QEMU 5.1 backport (tci 依赖) */\n\n    // Unicorn engine variables"
+            _tcgh "${_tcgh}")
+        file(WRITE "${_UC_TCG_H}" "${_tcgh}")
+        message(STATUS "[OHOS] TCI: patched tcg.h (added tcg_op_defs_max field)")
+    endif()
+endif()
+
+set(_UC_TCG_C "${_UC_ROOT}/qemu/tcg/tcg.c")
+if(EXISTS "${_UC_TCG_C}")
+    file(READ "${_UC_TCG_C}" _tcgc)
+    if(NOT _tcgc MATCHES "OHOS_TCI")
+        # 在 tcg_op_defs_org 数组定义后添加 tcg_op_defs_max_org
+        string(REPLACE
+            "#include \"tcg/tcg-opc.h\"\n#undef DEF\n};\n\nstatic void process_op_defs"
+            "#include \"tcg/tcg-opc.h\"\n#undef DEF\n};\nstatic const size_t tcg_op_defs_max_org = ARRAY_SIZE(tcg_op_defs_org);  /* OHOS_TCI */\n\nstatic void process_op_defs"
+            _tcgc "${_tcgc}")
+        # 在 tcg_context_init 中设置 s->tcg_op_defs_max
+        string(REPLACE
+            "    s->tcg_op_defs = g_malloc0(sizeof(tcg_op_defs_org));\n    memcpy(s->tcg_op_defs, tcg_op_defs_org, sizeof(tcg_op_defs_org));"
+            "    s->tcg_op_defs = g_malloc0(sizeof(tcg_op_defs_org));\n    memcpy(s->tcg_op_defs, tcg_op_defs_org, sizeof(tcg_op_defs_org));\n    s->tcg_op_defs_max = tcg_op_defs_max_org;  /* OHOS_TCI */"
+            _tcgc "${_tcgc}")
+        file(WRITE "${_UC_TCG_C}" "${_tcgc}")
+        message(STATUS "[OHOS] TCI: patched tcg.c (tcg_op_defs_max init)")
+    endif()
+endif()
+
+endif() # OHOS_TCI_DISABLE — TCI 后端注入(a/b/c/d0)结束
+
+# (d) 补丁 translate-all.c: 两轮都跑。buffer 优化(32MB) + PROT_EXEC 编译期分支
+# (CONFIG_TCG_INTERPRETER: JIT 轮=0 走 RWX, TCI 轮=1 走 RW)
+set(_VMRP_JIT "${_UC_ROOT}/qemu/accel/tcg/translate-all.c")
+if(EXISTS "${_VMRP_JIT}")
+    file(READ "${_VMRP_JIT}" _jit)
+    if(NOT _jit MATCHES "OHOS_TCI")
+        # 修复1: 64位默认 buffer 1GB→32MB
+        # 注意:JIT 轮(OHOS_TCI_DISABLE=ON)保留原始 1GB(TB 缓存不足会导致频繁
+        # flush,可能引发性能问题或行为异常)。仅 TCI 轮缩小到 32MB。
+        if(NOT OHOS_TCI_DISABLE)
+            string(REPLACE
+                "#define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (1 * GiB)"
+                "/* OHOS_TCI: 64位默认 1GB→32MB。 */\n#define DEFAULT_CODE_GEN_BUFFER_SIZE_1 (32 * MiB)"
+                _jit "${_jit}")
+        endif()
+        # 修复2: TCI 模式 prot 去掉 EXEC (核心修复); MAP_JIT 仅 JIT 模式需要
+        string(REPLACE
+            "    int prot = PROT_WRITE | PROT_READ | PROT_EXEC;\n    int flags = MAP_PRIVATE | MAP_ANONYMOUS;\n    size_t size = tcg_ctx->code_gen_buffer_size;\n    void *buf;\n#ifdef USE_MAP_JIT\n    flags |= MAP_JIT;\n#endif"
+            "    /* OHOS_TCI: 解释器模式 buffer 是普通数据内存,去掉 PROT_EXEC 绕过 HarmonyOS 7.0\n     * 匿名内存执行权限管控。JIT 模式(CONFIG_TCG_INTERPRETER=0)仍走 RWX。 */\n#if CONFIG_TCG_INTERPRETER\n    int prot = PROT_WRITE | PROT_READ;\n#else\n    int prot = PROT_WRITE | PROT_READ | PROT_EXEC;\n#endif\n    int flags = MAP_PRIVATE | MAP_ANONYMOUS;\n    size_t size = tcg_ctx->code_gen_buffer_size;\n    void *buf;\n#if !CONFIG_TCG_INTERPRETER\n#ifdef USE_MAP_JIT\n    flags |= MAP_JIT;\n#endif\n#endif"
+            _jit "${_jit}")
+        file(WRITE "${_VMRP_JIT}" "${_jit}")
+        message(STATUS "[OHOS] TCI: patched translate-all.c (RW buffer for interpreter, 32MB cap, JIT keeps 1GB)")
+    endif()
+endif()
+
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
-# --- Patch skyengine-shared OUTPUT_NAME: 保持输出 libvmrp.so 而非 libskyengine.so ---
-# 上游 5d3fd47 重命名输出为 libskyengine.so,但 OHOS 侧 dlopen/CMakeLists/打包
-# 路径全引用 libvmrp.so。保持旧名避免大面积改动。
+# --- Patch skyengine-shared OUTPUT_NAME: 双 so 方案 ---
+# 上游 5d3fd47 重命名输出为 libskyengine.so。OHOS 双 so 方案:
+#   OHOS_TCI_DISABLE=ON  → libvmrp.so     (JIT 版,需 ACL 权限)
+#   OHOS_TCI_DISABLE=OFF → libvmrp_tci.so  (TCI 版,保底)
+# 运行时 vmrp_engine.cpp 探测 PROT_EXEC 后 dlopen 对应的 so。
 if(TARGET skyengine-shared)
-    set_target_properties(skyengine-shared PROPERTIES OUTPUT_NAME "vmrp")
+    if(OHOS_TCI_DISABLE)
+        set_target_properties(skyengine-shared PROPERTIES OUTPUT_NAME "vmrp")
+        message(STATUS "[OHOS] Building JIT variant: libvmrp.so")
+    else()
+        set_target_properties(skyengine-shared PROPERTIES OUTPUT_NAME "vmrp_tci")
+        message(STATUS "[OHOS] Building TCI variant: libvmrp_tci.so")
+    endif()
 endif()
 
 # --- OHOS 图片解码：注入 ohos_image_decode.c 到 skyengine-shared ---

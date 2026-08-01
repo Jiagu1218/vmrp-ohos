@@ -48,6 +48,7 @@ interface GridRowBreakpoints {
 struct EmulatorPage {
   @Local statusText: string = '';
   @Local runningState: boolean = false;
+  @Local engineMode: string = '';  // "JIT" / "TCI" / ""
   @Local screenVisible: boolean = true;
   @Local editText: string = '';
   @Local currentBp: string = 'sm';
@@ -139,6 +140,7 @@ struct EmulatorPage {
         this.statusText = 'Load failed';
         return;
       }
+      this.engineMode = this.engine.getEngineMode();
       this.engine.setScreen(240, 320);
       try {
         const pref = await preferences.getPreferences(ctx, 'vmrp_settings');
@@ -232,7 +234,8 @@ struct EmulatorPage {
     try {
       const r = this.engine.start(this.mrpPath, 'start.mr', '_dsm');
       this.runningState = this.engine.isRunning();
-      this.statusText = `${r}, ${this.runningState ? 'Running' : 'Stopped'}`;
+      this.statusText = `${r}, ${this.runningState ? 'Running' : 'Stopped'}` +
+        (this.engineMode.length > 0 ? ` · ${this.engineMode}` : '');
     } catch (e) {
       const err = e as Error;
       this.statusText = `Failed: ${err?.message ?? String(e)}`;

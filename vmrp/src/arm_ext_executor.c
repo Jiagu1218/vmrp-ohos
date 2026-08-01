@@ -2227,14 +2227,47 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
      *  - 恢复模态前屏幕快照
      *  - 补启宿主定时器让 wrapper 完成 resume 队列 */
     if (modal_suspend_depth_pre > 0 && modal_suspend_depth_post == 0) {
+        /* 记录本次关闭的前台子模块 P：它的模块记录必须清除（gghjt 取消
+         * 下载后重进依赖此清除），其余仍加载中的模块记录保留。 */
+        uint32_t closed_child_p =
+            (m->active_p_addr != m->primary_p_addr &&
+             m->active_p_addr != m->p_addr) ? m->active_p_addr : 0;
         m->active_helper_addr = m->primary_helper_addr;
         m->active_p_addr = m->primary_p_addr;
         arm_ext_clear_foreground_screen_owner(m);
+        int wrapper_timer_live_at_close =
+            arm_ext_wrapper_has_timer_queue(m);
+        int primary_timer_live_at_close =
+            arm_ext_primary_has_compact_timer_queue(m);
+        m->primary_resume_without_timer_owner = 0;
+        if (arm_ext_timer_owner_diag_on()) {
+            printf("DIAG modal_close code=%d foreground=%d wrapperCompact=0x%X wrapperLive=%d primaryLive=%d hostTimer=%d mrTimer=%d timerP=0x%X timerH=0x%X\n",
+                   (int)code, foreground_child_active,
+                   m->wrapper_compact_timer_scheduler_off,
+                   wrapper_timer_live_at_close,
+                   primary_timer_live_at_close,
+                   m->host_timer_pending, mr_timer_state,
+                   m->timer_p_addr, m->timer_helper_addr);
+        }
+        if (code == 2 && foreground_child_active &&
+            wrapper_timer_live_at_close &&
+            primary_timer_live_at_close &&
+            m->timer_p_addr == m->p_addr &&
+            m->timer_helper_addr == m->helper_addr) {
+            /* timer 回调中的 wrapper resume 会在关闭 child 时重挂一个短周期
+             * 清理节点；只有 primary 同时已有可运行节点时，保留 wrapper
+             * owner 才会反复进入 code=2 并饿死 primary 帧 timer。若仅
+             * wrapper 队列存活，它可能是安装、resume 或 reopen 的合法后续工作，
+             * 必须保留 owner 继续消费。 */
+            m->timer_p_addr = 0;
+            m->timer_helper_addr = 0;
+            m->primary_resume_without_timer_owner = 1;
+        }
         /* 还原 wrapper 前台分发区，使事件路由回到下层页面（修复返回后
          * 无法二次进入子模块界面）。 */
         arm_ext_restore_modal_fg_snapshot(m);
         if (foreground_child_active) {
-            arm_ext_reset_child_modules(m);
+            arm_ext_reset_child_modules(m, closed_child_p);
             if (m->timer_p_addr &&
                 m->timer_p_addr != m->primary_p_addr &&
                 m->timer_p_addr != m->p_addr) {
@@ -2275,13 +2308,26 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
         mr_timerStart(100);
         mr_timer_state = 1;
         m->host_timer_pending = 1;
-        m->timer_p_addr = m->p_addr;
-        m->timer_helper_addr = m->helper_addr;
+        if (m->primary_resume_without_timer_owner &&
+            m->active_p_addr == m->primary_p_addr &&
+            m->active_helper_addr == m->primary_helper_addr) {
+            /* timer 回调已关闭 child 时，补启的第一拍应经 primary 的公开
+             * helper 完成恢复。显式标成 primary owner 会绕过 helper、直进
+             * compact walker；标成 wrapper 又会无限重放短周期 cleanup。 */
+            m->timer_p_addr = 0;
+            m->timer_helper_addr = 0;
+        } else {
+            /* primary 已加载新的前台 child 后，wrapper 负责推进其启动队列。 */
+            m->timer_p_addr = m->p_addr;
+            m->timer_helper_addr = m->helper_addr;
+        }
     }
     if (m->primary_child_reopen_timer_needed && !reopen_set_this_call) {
         /* 新模态进入：child 加载成功并进入前台层 */
-        if (modal_suspend_depth_post > 0 && modal_suspend_depth_pre == 0)
+        if (modal_suspend_depth_post > 0 && modal_suspend_depth_pre == 0) {
             m->primary_child_reopen_timer_needed = 0;
+            m->primary_resume_without_timer_owner = 0;
+        }
     }
 
     uint32_t arm_output = 0;
@@ -2509,19 +2555,29 @@ int arm_ext_consume_primary_host_init(ArmExtModule *m) {
     return 1;
 }
 
-void arm_ext_reset_child_modules(ArmExtModule *m) {
+void arm_ext_reset_child_modules(ArmExtModule *m, uint32_t closed_p_addr) {
     if (!m) return;
-    /* 保留 primary 模块，清除所有其他嵌套模块注册。
+    /* 保留 primary 模块，清除本次关闭的前台子模块与已卸载模块的注册。
      * child 流程关闭后 nested_modules 里残留的子插件条目会干扰
      * hook_restore_r9 的 R9 同步和 arm_ext_p_for_code_addr 的
-     * 代码归属判定，导致 wrapper 内部分发走错路径。 */
+     * 代码归属判定，导致 wrapper 内部分发走错路径（gghjt 取消下载后
+     * 重进下载界面依赖清除刚关闭的下载 UI 子模块记录）。
+     * 其余仍在加载中的模块（heap 上存在描述同一映像的 extChunk，且映像
+     * 头 8 字节仍是 loader 补丁的 record/P）必须保留：optwar 的广告流程
+     * 在模态框关闭后 advbar.ext 继续运行，若其记录被清掉，R9 同步不再
+     * 覆盖其代码段，跨模块调用泄漏进来的错误 R9 得不到纠正，最终按
+     * wrapper RW 读导入槽得到垃圾指针，blx 崩在 FETCH_UNMAPPED。 */
     int out = 0;
     for (int i = 0; i < m->nested_module_count; ++i) {
         ArmExtNestedModule *mod = &m->nested_modules[i];
         int is_primary = m->primary_file_addr &&
                          mod->file_addr == m->primary_file_addr &&
                          mod->file_len == m->primary_file_len;
-        if (is_primary) {
+        int is_closed_child = closed_p_addr && mod->p_addr == closed_p_addr;
+        if (is_primary ||
+            (!is_closed_child &&
+             arm_ext_has_internal_loader_chunk(m, mod->file_addr,
+                                               mod->file_len))) {
             m->nested_modules[out++] = *mod;
         }
     }
@@ -2807,12 +2863,17 @@ int arm_ext_call_dispatch(ArmExtModule *m, int is_stop, uint32_t timer_interval)
         }
         /* 通用模态框关闭：与 arm_ext_call 中相同的通用清理 */
         if (suspend_depth_pre > 0 && suspend_depth_post == 0) {
+            /* 与 arm_ext_call 一致：本次关闭的前台子模块记录必须清除，
+             * 其余仍加载中的模块记录保留。 */
+            uint32_t closed_child_p =
+                (m->active_p_addr != m->primary_p_addr &&
+                 m->active_p_addr != m->p_addr) ? m->active_p_addr : 0;
             m->active_helper_addr = m->primary_helper_addr;
             m->active_p_addr = m->primary_p_addr;
             arm_ext_clear_foreground_screen_owner(m);
             /* 还原 wrapper 前台分发区，使事件路由回到下层页面。 */
             arm_ext_restore_modal_fg_snapshot(m);
-            arm_ext_reset_child_modules(m);
+            arm_ext_reset_child_modules(m, closed_child_p);
             if (m->saved_game_timer_head) {
                 /* 与 arm_ext_call 的模态关闭路径保持一致：只填补仍为空的
                  * game timer head，不覆盖关闭回调中新挂上的 timer。 */
@@ -2822,6 +2883,7 @@ int arm_ext_call_dispatch(ArmExtModule *m, int is_stop, uint32_t timer_interval)
             }
             arm_ext_restore_modal_screen_snapshot(m);
             m->primary_child_reopen_timer_needed = 1;
+            m->primary_resume_without_timer_owner = 0;
         }
     }
 

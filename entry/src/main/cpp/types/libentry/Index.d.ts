@@ -23,6 +23,7 @@ export const startDsmEx: (path: string, entry?: string) => number;
 export const submitEdit: (text: string) => number;
 export const cancelEdit: () => number;
 export const isRunning: () => boolean;
+export const getEngineMode: () => string;
 interface ScreenInfo {
   width: number;
   height: number;

@@ -49,7 +49,6 @@
 #define LOGE(...) OH_LOG_ERROR(LOG_APP, __VA_ARGS__)
 
 namespace {
-extern "C" void skyengine_set_speed_multiplier(int mult);
 
 // 全局状态：渲染器与音频在 XComponent 回调线程上创建/销毁。
 VmrpRenderer g_renderer;
@@ -283,7 +282,7 @@ static napi_value SetMemory(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     int32_t memMb = 1;
     napi_get_value_int32(env, args[0], &memMb);
-    int r = skyengine_api_set_memory(memMb);
+    int r = VmrpEngine::Instance().Api()->set_memory(memMb);
     napi_value result;
     napi_create_int32(env, r, &result);
     return result;
@@ -510,6 +509,15 @@ static napi_value IsRunning(napi_env env, napi_callback_info info) {
     return result;
 }
 
+// getEngineMode(): 返回 "JIT" / "TCI" / ""(未加载)
+static napi_value GetEngineMode(napi_env env, napi_callback_info info) {
+    (void)info;
+    napi_value result;
+    const char *mode = VmrpEngine::Instance().EngineMode();
+    napi_create_string_utf8(env, mode, NAPI_AUTO_LENGTH, &result);
+    return result;
+}
+
 // getScreenInfo(): 返回 {width, height, rotation}
 static napi_value GetScreenInfo(napi_env env, napi_callback_info info) {
     (void)info;
@@ -606,7 +614,7 @@ static napi_value SetSpeedMultiplier(napi_env env, napi_callback_info info) {
     napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
     int32_t mult = 1;
     napi_get_value_int32(env, args[0], &mult);
-    skyengine_set_speed_multiplier(mult);
+    VmrpEngine::Instance().Api()->set_speed_multiplier(mult);
     return nullptr;
 }
 
@@ -755,6 +763,7 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"submitEdit", nullptr, SubmitEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"cancelEdit", nullptr, CancelEdit, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"isRunning", nullptr, IsRunning, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"getEngineMode", nullptr, GetEngineMode, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"getScreenInfo", nullptr, GetScreenInfo, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mediaPause", nullptr, MediaPause, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mediaResume", nullptr, MediaResume, nullptr, nullptr, nullptr, napi_default, nullptr},

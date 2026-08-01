@@ -769,6 +769,17 @@ void loop(void) {
             }
             if (ev.type == timerEventType) {
                 uint32_t generation = (uint32_t)(uintptr_t)ev.user.data1;
+                /* 真机 mr_timer 是单实例：timerStop/timerStart 之后，旧一代
+                 * 定时器已不存在，它先前入队的到期事件不代表任何活动定时器，
+                 * 不能再触发 guest tick。若照常分发，guest 在单次 tick 内多次
+                 * stop/start（如 optwar 广告页 10ms 动画节拍）会让入队速度超过
+                 * 分发速度，SDL 事件队列积压成百上千个陈旧 timer 事件，注入的
+                 * 按键事件排在其后被拖延十几秒。仅当该事件仍是当前 pending 的
+                 * 一代时才分发。 */
+                if ((uint32_t)SDL_AtomicGet(&timerPendingGeneration) !=
+                    generation) {
+                    continue;
+                }
                 /* The SDL timer is one-shot and timer() rearms the guest's
                  * next tick.  Process it even while the platform editor owns
                  * keyboard input; dropping it there stops the guest scheduler

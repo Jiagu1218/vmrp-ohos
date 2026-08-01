@@ -24,9 +24,10 @@ int arm_ext_invoke0(ArmExtModule *m, uint32 func, int32 *ret_out);
 int arm_ext_invoke3(ArmExtModule *m, uint32 func, uint32 arg0, uint32 arg1,
                     uint32 arg2, int32 *ret_out);
 uint32 arm_ext_read_timer_queue(ArmExtModule *m);
-/* 清除 primary 以外的所有嵌套模块注册，并重置 active/timer 到 primary。
- * 用于 child 流程完整关闭后恢复到 game-only 状态。 */
-void arm_ext_reset_child_modules(ArmExtModule *m);
+/* 模态关闭后的模块记录清理：无条件清除 closed_p_addr 对应的刚关闭前台
+ * 子模块记录与已卸载（extChunk 失效）的模块记录，保留 primary 与其余仍
+ * 在加载中的模块；同时重置 active 到 primary。 */
+void arm_ext_reset_child_modules(ArmExtModule *m, uint32_t closed_p_addr);
 void arm_ext_unload(ArmExtModule *m);
 void arm_ext_host_cache_sync(ArmExtModule *m, const void *host_data, uint32 len);
 /* 写入并返回动感芯片 T_MOTION_ACC{x,y,z} 的 guest 持久槽位地址

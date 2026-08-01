@@ -1,6 +1,6 @@
 # Wiki Index
 
-> 47 pages | Last updated: 2026-07-26T09:58:21.885Z
+> 49 pages | Last updated: 2026-07-31T11:49:57.595Z
 
 ## debugging
 
@@ -33,6 +33,7 @@
 - [opglqa font download repeat investigation](opglqa-font-download-repeat-investigation.md) — # opglqa font download repeat investigation
 - [Optwar exit plugin component update stall](optwar-exit-plugin-component-update-stall.md) — # Optwar exit plugin component update stall
 - [Optwar exit plugin no-network investigation](optwar-exit-plugin-no-network-investigation.md) — # Optwar exit plugin no-network investigation
+- [Optwar modal resume stale wrapper timer owner](optwar-modal-resume-stale-wrapper-timer-owner.md) — # Optwar modal resume stale wrapper timer owner
 - [Wrapper RW foreign-write journal (staging R9 divergence containment)](private-loader-wrapper-package-context-repair.md) — # Wrapper RW foreign-write journal (staging R9 divergence containment)
 - [RX4.5 ARM EXT 0x80000000 Platform IO Mapping](rx4-5-arm-ext-0x80000000-platform-io-mapping.md) — # RX4.5 ARM EXT 0x80000000 Platform IO Mapping
 - [rzsgqd background music silent debugging](rzsgqd-background-music-silent-debugging.md) — # RZSGQD background music silent debugging
@@ -47,6 +48,7 @@
 
 ## session-log
 
+- [DOTA legacy proxy page loading progress 2026-07-29](dota-legacy-proxy-page-loading-progress-2026-07-29.md) — # DOTA legacy proxy page loading progress 2026-07-29
 - [WBRW Go html2sky rendering final verification 2026-07-12](wbrw-go-html2sky-rendering-final-verification-2026-07-12.md) — # WBRW Go html2sky rendering final verification 2026-07-12
 - [WBRW Go html2sky rendering progress 2026-07-12](wbrw-go-html2sky-rendering-progress-2026-07-12.md) — # WBRW Go html2sky rendering progress 2026-07-12
 - [WBRW html2sky completion audit 2026-07-12 latest](wbrw-html2sky-completion-audit-2026-07-12-latest.md) — # WBRW html2sky completion audit 2026-07-12 latest

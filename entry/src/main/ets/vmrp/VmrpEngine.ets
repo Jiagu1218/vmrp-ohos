@@ -24,6 +24,7 @@ import {
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
   setExitCallback as nativeSetExitCallback,
+  getEngineMode as nativeGetEngineMode,
   setSpeedMultiplier as nativeSetSpeedMultiplier,
   createSurfaceNode as nativeCreateSurfaceNode,
   mediaPause as nativeMediaPause, mediaResume as nativeMediaResume,
@@ -149,6 +150,12 @@ export class VmrpEngineTs {
 
   isRunning(): boolean {
     return nativeIsRunning();
+  }
+
+  // 当前引擎模式:"JIT"(全速) 或 "TCI"(保底) 或 ""(未加载)。
+  // 双 so 方案运行时探测 PROT_EXEC 的结果。
+  getEngineMode(): string {
+    return nativeGetEngineMode();
   }
 
   getScreenInfo(): ScreenInfo {

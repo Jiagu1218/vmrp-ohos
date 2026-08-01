@@ -25,9 +25,11 @@ CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 *.so
-# 例外：以下路径的 libvmrp.so 需要入库
+# 例外：以下路径的 libvmrp.so / libvmrp_tci.so 需要入库（双 so 方案）
 !/entry/libs/**/libvmrp.so
+!/entry/libs/**/libvmrp_tci.so
 !/entry/src/main/cpp/prebuilt/**/libvmrp.so
+!/entry/src/main/cpp/prebuilt/**/libvmrp_tci.so
 
 # qemu/configure 临时目录
 /scripts/config-temp/

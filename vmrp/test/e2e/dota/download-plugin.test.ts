@@ -193,13 +193,19 @@ describe("dota pixel flow", () => {
     }
     {
       const before = await engine.drawCount();
-      await engine.delay(20_000);
-      const after = await engine.drawCount();
-      const screen = await engine.screen("browser-running");
-      expect(after).toBeGreaterThan(before);
-      expect(screen.uniqueColorCount()).toBeGreaterThan(4);
-      // rgb(27, 34, 27)
-      expect(screen.pixel(95, 88)).toEqual([240, 244, 240]);
+      await vi.waitFor(async () => {
+        const after = await engine!.drawCount();
+        const screen = await engine!.screen("browser-running");
+        expect(after).toBeGreaterThan(before);
+        expect(screen.uniqueColorCount()).toBeGreaterThan(4);
+        // rgb(248, 252, 248)
+        expect(screen.pixel(120, 232)).toEqual([248, 252, 248]);
+        // rgb(80, 148, 216)
+        expect(screen.pixel(58, 309)).toEqual([80, 148, 216]);
+      }, {
+        timeout: 30_000,
+        interval: 1_000
+      })
     }
   });
 });
