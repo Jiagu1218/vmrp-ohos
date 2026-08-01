@@ -52,9 +52,6 @@ VmrpEngine &VmrpEngine::Instance() {
 
 VmrpEngine::~VmrpEngine() {
     Destroy();
-    if (so_handle_ && so_handle_ != RTLD_DEFAULT) {
-        dlclose(so_handle_);
-    }
     so_handle_ = nullptr;
     loaded_ = false;
 }

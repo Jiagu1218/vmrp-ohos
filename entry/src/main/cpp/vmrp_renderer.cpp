@@ -1023,6 +1023,14 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display
 
 int VmrpRenderer::RenderRgb565Xengine(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
     if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
+
+    if (!xengine_handle_ || !fp_XEG_RenderNeuralUpscale || !fp_XEG_RenderSpatialUpscale) {
+        if (!TryLoadXengine()) {
+            xengine_mode_ = 0;
+            return RenderRgb565(src, display_w, display_h, rotation);
+        }
+    }
+
     current_rotation_ = rotation & 3;
 
     // ── Dirty skip ──
