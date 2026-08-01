@@ -276,19 +276,31 @@ int VmrpEngine::Start(const std::string &mrp, const std::string &ext, const std:
 int VmrpEngine::StartDsmB(const std::string &entry) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     if (!api_.start_dsmB) return -1;
-    return api_.start_dsmB(entry.empty() ? "*A" : entry.c_str());
+    auto t0 = std::chrono::steady_clock::now();
+    int r = api_.start_dsmB(entry.empty() ? "*A" : entry.c_str());
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    LOGI("StartDsmB(\"%s\") = %d (%lldms)", entry.c_str(), r, (long long)ms);
+    return r;
 }
 
 int VmrpEngine::StartDsmC(const std::string &entry) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     if (!api_.start_dsmC) return -1;
-    return api_.start_dsmC(entry.empty() ? "*A" : entry.c_str());
+    auto t0 = std::chrono::steady_clock::now();
+    int r = api_.start_dsmC(entry.empty() ? "*A" : entry.c_str());
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    LOGI("StartDsmC(\"%s\") = %d (%lldms)", entry.c_str(), r, (long long)ms);
+    return r;
 }
 
 int VmrpEngine::StartDsmEx(const std::string &path, const std::string &entry) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     if (!api_.start_dsm_ex) return -1;
-    return api_.start_dsm_ex(path.c_str(), entry.empty() ? nullptr : entry.c_str());
+    auto t0 = std::chrono::steady_clock::now();
+    int r = api_.start_dsm_ex(path.c_str(), entry.empty() ? nullptr : entry.c_str());
+    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+    LOGI("StartDsmEx(\"%s\",\"%s\") = %d (%lldms)", path.c_str(), entry.c_str(), r, (long long)ms);
+    return r;
 }
 
 void VmrpEngine::Destroy() {

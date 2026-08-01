@@ -446,7 +446,7 @@ endif()
 set(_VMRP_ARMEXT2 "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
 if(EXISTS "${_VMRP_ARMEXT2}")
     file(READ "${_VMRP_ARMEXT2}" _aet2)
-    if(NOT _aet2 MATCHES "arm_ext_host_ptr")
+    if(NOT _aet2 MATCHES "OHOS_EXT_STOP_HOOK")
         string(PREPEND _aet2
 "/* OHOS: ARM 地址转 host 指针（供 case 800 修复）。arm_ext_internal.h 有完整定义。 */\n"
 "#include \"./include/arm_ext_internal.h\"\n"
@@ -454,15 +454,61 @@ if(EXISTS "${_VMRP_ARMEXT2}")
 "    if (!m || !m->mem) return NULL;\n"
 "    if (addr < 0x10000u || addr >= 0x1010000u) return NULL;\n"
 "    return (void*)((uint8_t*)m->mem + (addr - 0x10000u));\n"
+"}\n"
+"/* OHOS_EXT_STOP_HOOK: EXT_STOP_ADDR 的 code hook。\n"
+" * 上游 81aae96 的 timer owner 修改在 OHOS 下会导致插件退出后 ARM 代码\n"
+" * 跳到 EXT_STOP_ADDR(自跳转死循环)。Unicorn 的 exit-addr 快速路径在\n"
+" * 某些情况下未能正确终止,导致主线程阻塞被杀。此 hook 在执行到\n"
+" * EXT_STOP_ADDR 时立即 uc_emu_stop,JIT/TCI 均有效。 */\n"
+"static void hook_ext_stop(uc_engine *uc, uint64_t address, uint32_t size, void *user_data) {\n"
+"    (void)address; (void)size; (void)user_data;\n"
+"    uc_emu_stop(uc);\n"
 "}\n")
+        # 在 hook_table 注册后追加 EXT_STOP_ADDR hook 注册
+        string(REPLACE
+            "    err = uc_hook_add(m->uc, &m->hook, UC_HOOK_CODE, hook_table, m, EXT_TABLE_ADDR, EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4);"
+            "    err = uc_hook_add(m->uc, &m->hook, UC_HOOK_CODE, hook_table, m, EXT_TABLE_ADDR, EXT_TABLE_ADDR + EXT_TABLE_COUNT * 4);\n    /* OHOS_EXT_STOP_HOOK */\n    {\n        uc_hook ext_stop_hook;\n        uc_hook_add(m->uc, &ext_stop_hook, UC_HOOK_CODE, hook_ext_stop, m, EXT_STOP_ADDR, EXT_STOP_ADDR + 1);\n    }"
+            _aet2 "${_aet2}")
         file(WRITE "${_VMRP_ARMEXT2}" "${_aet2}")
-        message(STATUS "[OHOS] Patched arm_ext_host_ptr")
+        message(STATUS "[OHOS] Patched arm_ext_host_ptr + EXT_STOP_ADDR hook")
     endif()
 endif()
 
 # --- Patch arm_ext_executor.c: T_MOTION_ACC 缓冲区 ---
 # 上游 651e421 已实现 arm_ext_host_motion_acc_slot() + motion_acc_addr 字段,
 # OHOS 不再注入 motion acc 分配/写入代码。
+
+# --- Patch arm_ext_executor.c: 禁用上游 81aae96 的 primary_resume_without_timer_owner ---
+# 上游 81aae96 为修 optwar modal close 卡顿,新增 primary_resume_without_timer_owner:
+# 在特定条件下清空 timer owner(timer_p_addr=0),让 primary 走"无 owner 恢复"路径。
+# 但在 OHOS async runner 模型下,清空 owner 会导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
+# OHOS 补丁:短路该条件,保持 v0.2.1 的无条件设 timer owner 行为。
+# 影响范围:仅 optwar 的特定 modal close 场景(timer 回调中关闭前台子模块),
+# 对其他应用无影响。
+set(_VMRP_TIMER_OWNER "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
+if(EXISTS "${_VMRP_TIMER_OWNER}")
+    file(READ "${_VMRP_TIMER_OWNER}" _timer_owner)
+    if(NOT _timer_owner MATCHES "OHOS_TIMER_OWNER_FIX")
+        string(FIND "${_timer_owner}" "primary_resume_without_timer_owner" _anchor_test)
+        message(STATUS "[OHOS] timer_owner patch: anchor find pos=${_anchor_test} (>=0=found)")
+        # 修复1: modal close 时,条件分支改为永假(不清空 owner)
+        string(REPLACE
+            "        if (code == 2 && foreground_child_active &&\n            wrapper_timer_live_at_close &&\n            primary_timer_live_at_close &&\n            m->timer_p_addr == m->p_addr &&\n            m->timer_helper_addr == m->helper_addr) {"
+            "        if (0 /* OHOS_TIMER_OWNER_FIX: 禁用上游 81aae96 的 owner 清空,OHOS 下导致 EXT_STOP_ADDR 死循环 */) {"
+            _timer_owner "${_timer_owner}")
+        # 修复2: timer 恢复时,条件分支改为永假(保持无条件设 wrapper owner)
+        string(REPLACE
+            "        if (m->primary_resume_without_timer_owner &&\n            m->active_p_addr == m->primary_p_addr &&\n            m->active_helper_addr == m->primary_helper_addr) {"
+            "        if (0 /* OHOS_TIMER_OWNER_FIX */) {"
+            _timer_owner "${_timer_owner}")
+        string(FIND "${_timer_owner}" "OHOS_TIMER_OWNER_FIX" _fix_test)
+        message(STATUS "[OHOS] timer_owner patch: fix injected count via find=${_fix_test}")
+        file(WRITE "${_VMRP_TIMER_OWNER}" "${_timer_owner}")
+        message(STATUS "[OHOS] Patched arm_ext timer owner fix (OHOS_TIMER_OWNER_FIX)")
+    else()
+        message(STATUS "[OHOS] timer_owner patch: SKIPPED (already has OHOS_TIMER_OWNER_FIX)")
+    endif()
+endif()
 
 # --- Patch mythroad.c: dsm_write_motion_acc_to_arm ---
 # 上游 651e421 已实现 mr_motion_input()(内部调 arm_ext_host_motion_acc_slot),
