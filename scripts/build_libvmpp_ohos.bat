@@ -178,6 +178,13 @@ REM ===========================================================================
 pushd "%VMRP_SRC%" >nul 2>&1
 if errorlevel 1 exit /b 0
 git checkout -- third_party\unicorn\CMakeLists.txt >nul 2>&1
+git checkout -- third_party\unicorn\qemu\accel\tcg\translate-all.c >nul 2>&1
+REM OHOS_TCI: restore tracked patched files (configure, tcg.h, tcg.c) + delete untracked TCI sources
+git checkout -- third_party\unicorn\qemu\configure >nul 2>&1
+git checkout -- third_party\unicorn\qemu\include\tcg\tcg.h >nul 2>&1
+git checkout -- third_party\unicorn\qemu\tcg\tcg.c >nul 2>&1
+if exist "third_party\unicorn\qemu\tcg\tci.c" del /q "third_party\unicorn\qemu\tcg\tci.c" >nul 2>&1
+if exist "third_party\unicorn\qemu\tcg\tci\" rmdir /s /q "third_party\unicorn\qemu\tcg\tci" >nul 2>&1
 git checkout -- src\include\arm_ext_internal.h          >nul 2>&1
 git checkout -- src\native_dsm_funcs.c            >nul 2>&1
 git checkout -- src\mythroad\mythroad.c           >nul 2>&1

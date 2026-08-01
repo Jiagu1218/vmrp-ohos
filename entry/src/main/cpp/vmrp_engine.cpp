@@ -12,6 +12,8 @@
  *     （vmrp 音频状态在无 SDL 时其内部锁为 no-op，且 PCM 数据是预解码好的。）
  */
 #include "vmrp_engine.h"
+#include <sys/mman.h>
+#include <errno.h>
 
 #include <dlfcn.h>
 #include <hilog/log.h>
@@ -118,6 +120,25 @@ bool VmrpEngine::Load(const std::string &so_path) {
         return false;
     }
     LOGI("dlopen(libvmrp.so) OK (by name, no namespace check)");
+
+    // 诊断 OHOS 7.0 execmem 限制：测试不同 mmap/mprotect PROT 组合
+    {
+        size_t sz = 4096;
+        void *p1 = mmap(nullptr, sz, 7 /*RWX*/, 0x22 /*PRIVATE|ANON*/, -1, 0);
+        OH_LOG_INFO(LOG_APP, "EXECMMAP RWX anon: %{public}s (err=%d)", p1 == MAP_FAILED ? "FAIL" : "OK", p1 == MAP_FAILED ? errno : 0);
+        if (p1 != MAP_FAILED) munmap(p1, sz);
+        void *p2 = mmap(nullptr, sz, 3 /*RW*/, 0x22, -1, 0);
+        int mp = -999;
+        if (p2 != MAP_FAILED) { mp = mprotect(p2, sz, 7 /*RWX*/); munmap(p2, sz); }
+        OH_LOG_INFO(LOG_APP, "EXECMMAP RW+mprotect RWX: %{public}s (mprotect=%d err=%d)", mp == 0 ? "OK" : "FAIL", mp, mp != 0 ? errno : 0);
+        void *p3 = mmap(nullptr, sz, 3 /*RW*/, 0x22, -1, 0);
+        int mp2 = -999;
+        if (p3 != MAP_FAILED) { mp2 = mprotect(p3, sz, 5 /*RX*/); munmap(p3, sz); }
+        OH_LOG_INFO(LOG_APP, "EXECMMAP RW+mprotect RX: %{public}s (mprotect=%d err=%d)", mp2 == 0 ? "OK" : "FAIL", mp2, mp2 != 0 ? errno : 0);
+        void *p4 = mmap(nullptr, sz, 4 /*EXEC only*/, 0x22, -1, 0);
+        OH_LOG_INFO(LOG_APP, "EXECMMAP EXEC-only anon: %{public}s (err=%d)", p4 == MAP_FAILED ? "FAIL" : "OK", p4 == MAP_FAILED ? errno : 0);
+        if (p4 != MAP_FAILED) munmap(p4, sz);
+    }
 
     RESOLVE_SYM(so_handle_, "skyengine_api_init", init, int (*)(int, int));
     RESOLVE_SYM(so_handle_, "skyengine_api_set_work_dir", set_work_dir, int (*)(const char *));
