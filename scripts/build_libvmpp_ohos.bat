@@ -175,16 +175,9 @@ REM  committed. Files NOT patched by the script (e.g. mythroad_mini.c) are
 REM  untouched.
 REM ===========================================================================
 :restore_patched
+REM vmrp 自有源码:在 vmrp git 上下文还原
 pushd "%VMRP_SRC%" >nul 2>&1
 if errorlevel 1 exit /b 0
-git checkout -- third_party\unicorn\CMakeLists.txt >nul 2>&1
-git checkout -- third_party\unicorn\qemu\accel\tcg\translate-all.c >nul 2>&1
-REM OHOS_TCI: restore tracked patched files (configure, tcg.h, tcg.c) + delete untracked TCI sources
-git checkout -- third_party\unicorn\qemu\configure >nul 2>&1
-git checkout -- third_party\unicorn\qemu\include\tcg\tcg.h >nul 2>&1
-git checkout -- third_party\unicorn\qemu\tcg\tcg.c >nul 2>&1
-if exist "third_party\unicorn\qemu\tcg\tci.c" del /q "third_party\unicorn\qemu\tcg\tci.c" >nul 2>&1
-if exist "third_party\unicorn\qemu\tcg\tci\" rmdir /s /q "third_party\unicorn\qemu\tcg\tci" >nul 2>&1
 git checkout -- src\include\arm_ext_internal.h          >nul 2>&1
 git checkout -- src\native_dsm_funcs.c            >nul 2>&1
 git checkout -- src\mythroad\mythroad.c           >nul 2>&1
@@ -199,5 +192,18 @@ git checkout -- src\arm_ext\aex_table.c           >nul 2>&1
 git checkout -- src\arm_ext\aex_mem.c             >nul 2>&1
 git checkout -- src\arm_ext\aex_module.c          >nul 2>&1
 git checkout -- src\mythroad\src\lib\mr_strlib.c  >nul 2>&1
+popd
+
+REM unicorn 子模块文件:vmrp-ohos 直接跟踪(unicorn 是嵌套 git,vmrp 的 git
+REM 不识别其内部路径,必须从 vmrp-ohos 仓库根还原)。
+pushd "%~dp0.." >nul 2>&1
+git checkout -- vmrp\third_party\unicorn\CMakeLists.txt >nul 2>&1
+git checkout -- vmrp\third_party\unicorn\qemu\accel\tcg\translate-all.c >nul 2>&1
+REM OHOS_TCI: restore tracked patched files (configure, tcg.h, tcg.c) + delete untracked TCI sources
+git checkout -- vmrp\third_party\unicorn\qemu\configure >nul 2>&1
+git checkout -- vmrp\third_party\unicorn\qemu\include\tcg\tcg.h >nul 2>&1
+git checkout -- vmrp\third_party\unicorn\qemu\tcg\tcg.c >nul 2>&1
+if exist "vmrp\third_party\unicorn\qemu\tcg\tci.c" del /q "vmrp\third_party\unicorn\qemu\tcg\tci.c" >nul 2>&1
+if exist "vmrp\third_party\unicorn\qemu\tcg\tci\" rmdir /s /q "vmrp\third_party\unicorn\qemu\tcg\tci" >nul 2>&1
 popd
 exit /b 0
