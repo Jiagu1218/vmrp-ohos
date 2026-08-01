@@ -69,6 +69,11 @@ struct VmrpApi {
     int (*start_dsmB)(const char *entry);
     int (*start_dsmC)(const char *entry);
     int (*start_dsm_ex)(const char *path, const char *entry);
+
+    // 以下两个原先在 vmrp_napi.cpp 直接链接期调用(导致 libentry.so NEEDED
+    // libvmrp.so),双 so 方案改为 dlsym 与其他符号一致:
+    int (*set_memory)(int memory_mb);
+    void (*set_speed_multiplier)(int mult);
 };
 
 // 单例引擎。所有方法都应在引擎线程（EngineThread）上调用；
@@ -164,6 +169,10 @@ public:
 
     const VmrpApi *Api() const { return &api_; }
 
+    // 当前引擎模式:"JIT" 或 "TCI"(双 so 方案运行时探测结果)。
+    // Load() 后有效;Load 前返回空串。
+    const char *EngineMode() const { return engine_mode_; }
+
 private:
     VmrpEngine() = default;
     ~VmrpEngine();
@@ -186,6 +195,7 @@ private:
     VolumeFn volume_fn_ = nullptr;
     int panel_w_ = 0;
     int panel_h_ = 0;
+    const char *engine_mode_ = "";  // "JIT" / "TCI" / ""(未加载)
 };
 
 #endif // VMRP_ENGINE_H

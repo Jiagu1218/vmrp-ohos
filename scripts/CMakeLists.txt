@@ -835,6 +835,11 @@ set(_UC_ROOT "${VMRP_SRC_DIR}/third_party/unicorn")
 set(_UC_TCI_DIR "${_UC_ROOT}/qemu/tcg/tci")
 set(_UC_TCI_C "${_UC_ROOT}/qemu/tcg/tci.c")
 
+# OHOS_TCI_DISABLE: 双 so 方案。OFF(默认)=构建 TCI 版(libvmrp_tci.so);
+# ON=跳过 TCI 后端注入,构建纯 JIT 版(libvmrp.so,需 ACL 权限才能运行)。
+# translate-all.c 的 buffer/PROT 补丁两轮都跑(编译期 CONFIG_TCG_INTERPRETER 决定分支)。
+if(NOT OHOS_TCI_DISABLE)
+
 # (a) 拷贝 3 个 TCI 源文件到 unicorn 子模块树(幂等)
 if(EXISTS "${_OHOS_TCI_SRC}/tci.c")
     file(MAKE_DIRECTORY "${_UC_TCI_DIR}")
@@ -950,7 +955,10 @@ if(EXISTS "${_UC_TCG_C}")
     endif()
 endif()
 
-# (d) 补丁 translate-all.c: TCI 模式用普通 RW 内存(无 EXEC), 保留 32MB buffer 优化
+endif() # OHOS_TCI_DISABLE — TCI 后端注入(a/b/c/d0)结束
+
+# (d) 补丁 translate-all.c: 两轮都跑。buffer 优化(32MB) + PROT_EXEC 编译期分支
+# (CONFIG_TCG_INTERPRETER: JIT 轮=0 走 RWX, TCI 轮=1 走 RW)
 set(_VMRP_JIT "${_UC_ROOT}/qemu/accel/tcg/translate-all.c")
 if(EXISTS "${_VMRP_JIT}")
     file(READ "${_VMRP_JIT}" _jit)
@@ -972,11 +980,19 @@ endif()
 
 add_subdirectory("${VMRP_SRC_DIR}" "${CMAKE_BINARY_DIR}/vmrp")
 
-# --- Patch skyengine-shared OUTPUT_NAME: 保持输出 libvmrp.so 而非 libskyengine.so ---
-# 上游 5d3fd47 重命名输出为 libskyengine.so,但 OHOS 侧 dlopen/CMakeLists/打包
-# 路径全引用 libvmrp.so。保持旧名避免大面积改动。
+# --- Patch skyengine-shared OUTPUT_NAME: 双 so 方案 ---
+# 上游 5d3fd47 重命名输出为 libskyengine.so。OHOS 双 so 方案:
+#   OHOS_TCI_DISABLE=ON  → libvmrp.so     (JIT 版,需 ACL 权限)
+#   OHOS_TCI_DISABLE=OFF → libvmrp_tci.so  (TCI 版,保底)
+# 运行时 vmrp_engine.cpp 探测 PROT_EXEC 后 dlopen 对应的 so。
 if(TARGET skyengine-shared)
-    set_target_properties(skyengine-shared PROPERTIES OUTPUT_NAME "vmrp")
+    if(OHOS_TCI_DISABLE)
+        set_target_properties(skyengine-shared PROPERTIES OUTPUT_NAME "vmrp")
+        message(STATUS "[OHOS] Building JIT variant: libvmrp.so")
+    else()
+        set_target_properties(skyengine-shared PROPERTIES OUTPUT_NAME "vmrp_tci")
+        message(STATUS "[OHOS] Building TCI variant: libvmrp_tci.so")
+    endif()
 endif()
 
 # --- OHOS 图片解码：注入 ohos_image_decode.c 到 skyengine-shared ---

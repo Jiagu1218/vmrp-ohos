@@ -46,13 +46,10 @@ add_library(vmrp_entry SHARED
 # nm_modname 也必须是 "entry"（见 vmrp_napi.cpp 的 napi_module），二者一致。
 set_target_properties(vmrp_entry PROPERTIES OUTPUT_NAME "entry")
 
-# 预构建的 libvmrp.so（含 Unicorn arm-softmmu 软件模拟 ARM32）。
-# 按 ohos.toolchain.cmake 设置的 OHOS_ARCH 选择对应 ABI 的预构建产物。
-# 鸿蒙真机用 arm64-v8a，模拟器用 x86_64，两者都已由预构建脚本生成。
-add_library(vmrp_prebuilt SHARED IMPORTED)
-set_target_properties(vmrp_prebuilt PROPERTIES
-    IMPORTED_LOCATION ${CMAKE_CURRENT_SOURCE_DIR}/prebuilt/${OHOS_ARCH}/libvmrp.so
-)
+# 双 so 方案:libvmrp.so(JIT) 和 libvmrp_tci.so(TCI) 都打包进 HAP,
+# 由 vmrp_engine.cpp 运行时探测 PROT_EXEC 后 dlopen 其一。
+# libentry.so 不再链接期依赖任一引擎 so(无 NEEDED),所有符号靠 dlsym 解析。
+# 两个 so 通过 entry/libs/<abi>/ 自动收录进 HAP(无需此处 IMPORTED 链接)。
 
 # 鸿蒙系统库：
 #   libace_napi.z.so      - NAPI 运行时
@@ -64,7 +61,6 @@ set_target_properties(vmrp_prebuilt PROPERTIES
 #   libohvibrator.z.so    - OH_Vibrator（振动马达原生 C API）
 #   libxengine.so         - XEngine Kit（马良GPU超分/VRS等）
 target_link_libraries(vmrp_entry PUBLIC
-    vmrp_prebuilt
     libace_napi.z.so
     libace_ndk.z.so
     libhilog_ndk.z.so
