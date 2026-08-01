@@ -76,7 +76,6 @@ describe("opglqa 进入主菜单", () => {
     engine = await SkyEngineE2e.start("test/fixtures/opglqa_v4450.mrp", { workDir: ws.dir });
     {
       // 直接进入主界面。
-      await engine.key('LEFT_SOFT', 1_000)
       await expectMainScreen("main-screen2");
     }
   });

@@ -404,6 +404,12 @@ struct ArmExtModule {
     uint32_t pending_internal_file_addr;
     uint32_t pending_internal_file_len;
     int primary_child_reopen_timer_needed;
+    /* A timer-driven modal close released a live stale wrapper timer owner.
+     * This intentionally survives guest timer start/stop while
+     * primary_child_reopen_timer_needed is set: table[32] stopping the timer
+     * is what can require another ownerless recovery tick.  The next close or
+     * modal entry resets it. */
+    int primary_resume_without_timer_owner;
     int host_timer_pending;
     int in_dispatch;
     int pending_sms_result;

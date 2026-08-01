@@ -197,12 +197,15 @@ static uint32 native_get_uptime_ms(void) {
     return (uint32)((uint64_t)get_uptime_ms() - native_uptime_base);
 }
 
+/*
+ * mr_sleep 在真机上阻塞整个 Mythroad VM 线程：sleep 期间 guest 收不到任何
+ * 事件/定时器，唯一可观察的效果是返回后 mr_getTime 前进了 ms。宿主若用
+ * usleep 陪睡，会把 SDL 主循环冻结同样时长（如 optwar 在支付结果回调里
+ * mr_sleep(10000)，取消支付会卡死 10 秒）。因此以“虚拟时钟快进”实现同一
+ * guest 语义：把 uptime 基准回拨 ms，guest 立即观察到时间已流逝。
+ */
 static int32 native_sleep(uint32 ms) {
-#ifdef _MSC_VER
-    Sleep(ms);
-#else
-    usleep(ms * 1000);
-#endif
+    native_uptime_base -= ms;
     return MR_SUCCESS;
 }
 

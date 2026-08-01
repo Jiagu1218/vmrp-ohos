@@ -428,16 +428,24 @@ describe("gghjt pixel flow", () => {
   
     // 点击确定进入付费界面
     await engine.click(15, 308, 1_000);
+
+    // 替换netpay.mrp
+    cpSync('test/fixtures/plugins/netpay.mrp', ws.path('mythroad/plugins/netpay.mrp'), { force: true });
     await engine.delay(2_000);
     const pay = await engine.screen("pay-start");
     expect(pay.pixel(104, 147)).toEqual([104, 104, 224]);
 
     {
-      await engine.delay(60_000); // 等待付费超时
-      const pay = await engine.screen("pay-timeout");
-      // 确定按钮消失
-      // rgb(0, 104, 208)
-      expect(pay.pixel(12, 302)).toEqual([0, 104, 208]);
+      // 等待付费超时
+      await vi.waitFor(async () => {
+        const pay = await engine!.screen("pay-timeout");
+        // 确定按钮消失
+        // rgb(0, 104, 208)
+        expect(pay.pixel(12, 302)).toEqual([0, 104, 208]);
+      }, {
+        timeout: 60_000,
+        interval: 1_000
+      })
     }
     {
       // 取消下载返回主菜单
