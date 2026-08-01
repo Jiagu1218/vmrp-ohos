@@ -291,9 +291,39 @@ if(EXISTS "${_VMRP_DSM}")
         set(_dsm_patched TRUE)
     endif()
 
+    # 子补丁2: OHOS_MEM_MMAPED — 用标志位跟踪 native_mem_base 分配方式(mmap/malloc),
+    # 避免 native_dsm_funcs_destroy 中地址范围判断与实际分配方式不匹配。
+    # 原因: OHOS musl 无 MAP_32BIT(子补丁1已去掉),mmap 返回高地址(>0x80000000),
+    # destroy 的 p<0x80000000 检查误判为 malloc 分配 → free(mmap'd ptr) → SIGSEGV。
+    # 修复: 加 static int native_mem_mmaped 标志,mmap 成功置1,destroy 用标志选
+    # munmap 或 free,不再依赖地址范围猜测。
+    if(NOT _dsm_text MATCHES "OHOS_MEM_MMAPED")
+        # 2a) 声明 native_mem_mmaped 标志(紧接 native_mem_len 之后)
+        string(REPLACE
+            "static uint32 native_mem_len;"
+            "static uint32 native_mem_len;\nstatic int native_mem_mmaped = 0;  /* OHOS_MEM_MMAPED: 1=mmap, 0=malloc */"
+            _dsm_text "${_dsm_text}")
+        # 2b) mmap 成功时设 native_mem_mmaped=1
+        string(REPLACE
+            "        if (native_mem_base == MAP_FAILED) native_mem_base = NULL;"
+            "        if (native_mem_base == MAP_FAILED) native_mem_base = NULL; else native_mem_mmaped = 1;  /* OHOS_MEM_MMAPED */"
+            _dsm_text "${_dsm_text}")
+        # 2c) malloc fallback 时确保 native_mem_mmaped=0(防御性)
+        string(REPLACE
+            "        if (native_mem_base == NULL) {\n            native_mem_base = malloc(mem_size);\n        }"
+            "        if (native_mem_base == NULL) {\n            native_mem_base = malloc(mem_size);\n            if (native_mem_base) native_mem_mmaped = 0;  /* OHOS_MEM_MMAPED: malloc path */\n        }"
+            _dsm_text "${_dsm_text}")
+        # 2d) 替换 destroy 中的地址范围判断为标志位判断
+        string(REPLACE
+            "#ifdef __linux__\n#ifdef __x86_64__\n    if (native_mem_base != NULL) {\n        uintptr_t p = (uintptr_t)native_mem_base;\n        if (p < 0x80000000ULL) {\n            munmap(native_mem_base, native_mem_len);\n            native_mem_base = NULL;\n            native_mem_len = 0;\n            return;\n        }\n    }\n#endif\n#endif"
+            "/* OHOS_MEM_MMAPED: 用标志位而非地址范围判断分配方式。\n     * 原实现用 p<0x80000000 区分 mmap/malloc,但 OHOS musl 无 MAP_32BIT,\n     * mmap 返回高地址,free(mmap'd ptr) 导致 SIGSEGV。 */\n    if (native_mem_mmaped && native_mem_base != NULL) {\n        munmap(native_mem_base, native_mem_len);\n        native_mem_base = NULL;\n        native_mem_len = 0;\n        native_mem_mmaped = 0;\n        return;\n    }"
+            _dsm_text "${_dsm_text}")
+        set(_dsm_patched TRUE)
+    endif()
+
     if(_dsm_patched)
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
-        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT)")
+        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_MEM_MMAPED)")
     endif()
     if(NOT _dsm_text MATCHES "OHOS_MEDIA_CTRL")
         # 3a) NativeAudioState 加 pcm_total_len/paused/midi_total_samples/midi_rendered_samples
