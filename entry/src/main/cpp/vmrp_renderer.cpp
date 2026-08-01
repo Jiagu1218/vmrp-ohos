@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstring>
 #include <malloc.h>
+#include <dlfcn.h>
 #include <native_window/external_window.h>
 #include <native_buffer/native_buffer.h>
 #include <EGL/egl.h>
@@ -465,10 +466,9 @@ int VmrpRenderer::InitGL() {
 
 void VmrpRenderer::DestroyGL() {
     DestroyFBOs();
-#ifdef HAS_XENGINE
     DestroyFboXeg();
     DestroyAiInputBuffer();
-#endif
+    if (xengine_handle_) { dlclose(xengine_handle_); xengine_handle_ = nullptr; }
     if (texture_) { glDeleteTextures(1, &texture_); texture_ = 0; }
     if (vao_) { glDeleteVertexArrays(1, &vao_); vao_ = 0; }
     if (pbo_[0] || pbo_[1]) { glDeleteBuffers(2, pbo_); pbo_[0] = pbo_[1] = 0; }
@@ -729,14 +729,48 @@ void VmrpRenderer::ApplyOutputUniforms() {
     glUniform1i(ul_out_u_tex_, 0);
 }
 
+bool VmrpRenderer::TryLoadXengine() {
+    if (xengine_loaded_) return xengine_handle_ != nullptr;
+    xengine_loaded_ = true;
+#ifndef HAS_XENGINE
+    LOGI("XEngine: not available (built without HMS SDK headers)");
+    return false;
+#else
+    xengine_handle_ = dlopen("libxengine.so", RTLD_NOW);
+    if (!xengine_handle_) {
+        LOGI("XEngine: dlopen libxengine.so failed: %s", dlerror());
+        return false;
+    }
+    fp_XEG_GetString = reinterpret_cast<Fn_XEG_GetString>(dlsym(xengine_handle_, "HMS_XEG_GetString"));
+    fp_XEG_NeuralUpscaleParameter = reinterpret_cast<Fn_XEG_NeuralUpscaleParameter>(
+        dlsym(xengine_handle_, "HMS_XEG_NeuralUpscaleParameter"));
+    fp_XEG_SpatialUpscaleParameter = reinterpret_cast<Fn_XEG_SpatialUpscaleParameter>(
+        dlsym(xengine_handle_, "HMS_XEG_SpatialUpscaleParameter"));
+    fp_XEG_RenderNeuralUpscale = reinterpret_cast<Fn_XEG_RenderNeuralUpscale>(
+        dlsym(xengine_handle_, "HMS_XEG_RenderNeuralUpscale"));
+    fp_XEG_RenderSpatialUpscale = reinterpret_cast<Fn_XEG_RenderSpatialUpscale>(
+        dlsym(xengine_handle_, "HMS_XEG_RenderSpatialUpscale"));
+    if (!fp_XEG_GetString || !fp_XEG_NeuralUpscaleParameter || !fp_XEG_SpatialUpscaleParameter
+        || !fp_XEG_RenderNeuralUpscale || !fp_XEG_RenderSpatialUpscale) {
+        LOGE("XEngine: dlsym failed, some symbols missing");
+        dlclose(xengine_handle_);
+        xengine_handle_ = nullptr;
+        return false;
+    }
+    LOGI("XEngine: loaded successfully via dlopen");
+    return true;
+#endif
+}
+
 void VmrpRenderer::ProbeXengine() {
     if (xengine_probed_) return;
     xengine_probed_ = true;
-#ifdef HAS_XENGINE
+    if (!TryLoadXengine()) return;
+
     EGLBoolean mc = eglMakeCurrent(egl_display_, egl_surface_, egl_surface_, egl_context_);
     if (!mc) return;
 
-    const char *extensions = reinterpret_cast<const char *>(HMS_XEG_GetString(XEG_EXTENSIONS));
+    const char *extensions = reinterpret_cast<const char *>(fp_XEG_GetString(XEG_EXTENSIONS));
     if (!extensions) {
         LOGI("XEngine: no extensions (device may not support XEngine)");
         return;
@@ -752,12 +786,8 @@ void VmrpRenderer::ProbeXengine() {
     } else {
         LOGI("XEngine: no upscale extension found");
     }
-#else
-    LOGI("XEngine: not available (built without HMS SDK)");
-#endif
 }
 
-#ifdef HAS_XENGINE
 void VmrpRenderer::EnsureFboXeg(int32_t w, int32_t h) {
     if (fbo_xeg_w_ == w && fbo_xeg_h_ == h && fbo_xeg_ != 0) return;
     DestroyFboXeg();
@@ -859,7 +889,6 @@ void VmrpRenderer::DestroyAiInputBuffer() {
     if (ai_native_buf_) { OH_NativeBuffer_Unreference(ai_native_buf_); ai_native_buf_ = nullptr; }
     ai_w_ = ai_h_ = 0;
 }
-#endif // HAS_XENGINE
 
 bool VmrpRenderer::CanBypass() const {
     return filter_type_ == 0
@@ -992,7 +1021,6 @@ int VmrpRenderer::Render(const uint16_t *src, int32_t display_w, int32_t display
     return 0;
 }
 
-#ifdef HAS_XENGINE
 int VmrpRenderer::RenderRgb565Xengine(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
     if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
     current_rotation_ = rotation & 3;
@@ -1094,16 +1122,16 @@ int VmrpRenderer::RenderRgb565Xengine(const uint16_t *src, int32_t display_w, in
 
         // 设置AI超分参数
         unsigned int scissor[4] = {0, 0, static_cast<unsigned int>(ai_w), static_cast<unsigned int>(ai_h)};
-        HMS_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_SCISSOR, scissor);
+        fp_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_SCISSOR, scissor);
         float sharpness = 0.2f;
-        HMS_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_SHARPNESS, &sharpness);
-        HMS_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_INPUT_HANDLE, ai_native_buf_);
+        fp_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_SHARPNESS, &sharpness);
+        fp_XEG_NeuralUpscaleParameter(XEG_NEURAL_UPSCALE_INPUT_HANDLE, ai_native_buf_);
 
         xeg_input_tex = ai_tex_;
     } else if (xengine_mode_ == 1) {
         // GPU spatial upscale: 直接用源纹理，无需OH_NativeBuffer
         float sharpness = 0.5f;
-        HMS_XEG_SpatialUpscaleParameter(XEG_SPATIAL_UPSCALE_SHARPNESS, &sharpness);
+        fp_XEG_SpatialUpscaleParameter(XEG_SPATIAL_UPSCALE_SHARPNESS, &sharpness);
     }
 
     // ── XEngine 超分渲染到 FBO_XEG ──
@@ -1123,9 +1151,9 @@ int VmrpRenderer::RenderRgb565Xengine(const uint16_t *src, int32_t display_w, in
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
     if (xengine_mode_ == 2) {
-        HMS_XEG_RenderNeuralUpscale(xeg_input_tex);
+        fp_XEG_RenderNeuralUpscale(xeg_input_tex);
     } else {
-        HMS_XEG_RenderSpatialUpscale(xeg_input_tex);
+        fp_XEG_RenderSpatialUpscale(xeg_input_tex);
     }
 
     GLenum xeg_err = glGetError();
@@ -1191,12 +1219,9 @@ int VmrpRenderer::RenderRgb565Xengine(const uint16_t *src, int32_t display_w, in
     eglSwapBuffers(egl_display_, egl_surface_);
     return 0;
 }
-#endif // HAS_XENGINE
 
 int VmrpRenderer::RenderRgb565(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation) {
-#ifdef HAS_XENGINE
     if (xengine_mode_ > 0 && filter_type_ == 4) return RenderRgb565Xengine(src, display_w, display_h, rotation);
-#endif
     if (!Ready() || !src || display_w <= 0 || display_h <= 0) return -1;
     current_rotation_ = rotation & 3;
 

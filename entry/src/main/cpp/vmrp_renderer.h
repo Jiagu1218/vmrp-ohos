@@ -15,9 +15,7 @@
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <cstdint>
-#ifdef HAS_XENGINE
 #include <native_buffer/native_buffer.h>
-#endif
 
 class VmrpRenderer {
 public:
@@ -56,6 +54,7 @@ public:
     // XEngine 超分模式：0=自研shader, 1=GPU超分, 2=AI超分
     int XengineUpscaleMode() const { return xengine_mode_; }
     void ProbeXengine();
+    bool TryLoadXengine();
 
 private:
     int InitGL();
@@ -68,13 +67,11 @@ private:
     void UpdateTextureFilter();
     bool CanBypass() const;
     void RenderBypass(int32_t display_w, int32_t display_h);
-#ifdef HAS_XENGINE
     void EnsureFboXeg(int32_t w, int32_t h);
     void DestroyFboXeg();
     void CreateAiInputBuffer(int32_t w, int32_t h);
     void DestroyAiInputBuffer();
     int RenderRgb565Xengine(const uint16_t *src, int32_t display_w, int32_t display_h, int rotation);
-#endif
 
     // RGB565→RGBA CPU 转换（含可选 Bayer 抖动）
     void ConvertRgb565ToRgba(const uint16_t *src, uint32_t *dst, int32_t pixels);
@@ -123,8 +120,22 @@ private:
     // XEngine 超分
     int xengine_mode_ = 0;  // 0=无, 1=GPU超分, 2=AI超分
     bool xengine_probed_ = false;
+    bool xengine_loaded_ = false;
+    void *xengine_handle_ = nullptr;
 
-#ifdef HAS_XENGINE
+    // XEngine dlsym 函数指针
+    using Fn_XEG_GetString = const char *(*)(int);
+    using Fn_XEG_NeuralUpscaleParameter = void (*)(int, void *);
+    using Fn_XEG_SpatialUpscaleParameter = void (*)(int, void *);
+    using Fn_XEG_RenderNeuralUpscale = void (*)(unsigned int);
+    using Fn_XEG_RenderSpatialUpscale = void (*)(unsigned int);
+
+    Fn_XEG_GetString             fp_XEG_GetString = nullptr;
+    Fn_XEG_NeuralUpscaleParameter fp_XEG_NeuralUpscaleParameter = nullptr;
+    Fn_XEG_SpatialUpscaleParameter fp_XEG_SpatialUpscaleParameter = nullptr;
+    Fn_XEG_RenderNeuralUpscale   fp_XEG_RenderNeuralUpscale = nullptr;
+    Fn_XEG_RenderSpatialUpscale  fp_XEG_RenderSpatialUpscale = nullptr;
+
     // XEngine 超分输出FBO（surface分辨率）
     GLuint fbo_xeg_ = 0, fbo_tex_xeg_ = 0;
     int32_t fbo_xeg_w_ = 0, fbo_xeg_h_ = 0;
@@ -136,7 +147,6 @@ private:
     GLuint           ai_fbo_ = 0;
     int32_t          ai_w_ = 0;
     int32_t          ai_h_ = 0;
-#endif
 
     // 滤镜参数
     int   filter_type_             = 0;
