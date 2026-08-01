@@ -33,7 +33,7 @@ if(NOT DEFINED HMS_SDK_ROOT)
 endif()
 if(EXISTS "${HMS_SDK_ROOT}/native/sysroot/usr/lib/${HMS_LIB_ARCH}/libxengine.so")
     set(HAS_XENGINE TRUE)
-    link_directories("${HMS_SDK_ROOT}/native/sysroot/usr/lib/${HMS_LIB_ARCH}")
+    include_directories("${HMS_SDK_ROOT}/native/sysroot/usr/include")
 endif()
 
 add_library(vmrp_entry SHARED
@@ -71,8 +71,8 @@ target_link_libraries(vmrp_entry PUBLIC
     libnative_buffer.so
     libohsensor.so
     libohvibrator.z.so
+    dl
 )
 if(HAS_XENGINE)
-    target_link_libraries(vmrp_entry PUBLIC xengine)
     target_compile_definitions(vmrp_entry PRIVATE HAS_XENGINE=1)
 endif()
