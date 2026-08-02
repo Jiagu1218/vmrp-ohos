@@ -177,6 +177,11 @@ bool VmrpEngine::Load(const std::string &so_path) {
     RESOLVE_SYM(so_handle_, "skyengine_api_get_edit_text", get_edit_text, const char *(*)(void));
     RESOLVE_SYM(so_handle_, "skyengine_api_set_edit_text", set_edit_text, int (*)(const char *));
     RESOLVE_SYM(so_handle_, "skyengine_api_cancel_edit", cancel_edit, int (*)(void));
+    // 平台菜单(menu):vmrp 存菜单数据,前端 ArkTS 渲染。
+    RESOLVE_SYM(so_handle_, "skyengine_api_is_menu_active", is_menu_active, int (*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_get_menu_data", get_menu_data, const char *(*)(void));
+    RESOLVE_SYM(so_handle_, "skyengine_api_submit_menu", submit_menu, int (*)(int));
+    RESOLVE_SYM(so_handle_, "skyengine_api_cancel_menu", cancel_menu, int (*)(void));
     // 上游轮询式 motion/shake API（651e421/4fbb0b4）
     RESOLVE_SYM(so_handle_, "skyengine_api_motion_active", motion_active, int (*)(void));
     RESOLVE_SYM(so_handle_, "skyengine_api_take_shake", take_shake, int (*)(void));
@@ -373,6 +378,23 @@ int VmrpEngine::SetEditText(const std::string &text) {
 int VmrpEngine::CancelEdit() {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     return api_.cancel_edit();
+}
+
+// 平台菜单(menu):vmrp 侧存菜单数据,前端弹出原生菜单 Dialog 渲染。
+// GetMenuData 返回 NUL 分隔的标题+项列表(标题在前)。
+bool VmrpEngine::MenuActive() { return api_.is_menu_active && api_.is_menu_active() != 0; }
+std::string VmrpEngine::GetMenuData() {
+    if (!api_.get_menu_data) return "";
+    const char *data = api_.get_menu_data();
+    return data ? std::string(data) : std::string();
+}
+int VmrpEngine::SubmitMenu(int index) {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    return api_.submit_menu(index);
+}
+int VmrpEngine::CancelMenu() {
+    std::lock_guard<std::mutex> lk(engine_mtx_);
+    return api_.cancel_menu();
 }
 
 // ---- 加速度传感器（OH_Sensor C 原生 API）----

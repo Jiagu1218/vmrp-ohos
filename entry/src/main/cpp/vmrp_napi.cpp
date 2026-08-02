@@ -67,6 +67,10 @@ std::atomic<bool> g_engine_running{false};
 // 编辑回调：把编辑状态通知到 ArkTS（通过 napi_threadsafe_function）。
 napi_threadsafe_function g_edit_tsfn = nullptr;
 
+// 菜单回调：menuShow 后把菜单数据通知到 ArkTS（通过 napi_threadsafe_function）。
+napi_threadsafe_function g_menu_tsfn = nullptr;
+std::atomic<bool> g_menu_notified{false};
+
 // 退出回调：引擎停止时通知 ArkTS（通过 napi_threadsafe_function）。
 napi_threadsafe_function g_exit_tsfn = nullptr;
 
@@ -79,6 +83,7 @@ napi_threadsafe_function g_exit_tsfn = nullptr;
 void TryRender();
 void TryRenderForce(); // 不管 dirty 都渲染一帧（确保持续上屏）
 void NotifyEditIfNeeded();
+void NotifyMenuIfNeeded();
 void RequestRender();
 
 // NDK 节点 API（@since 12）+ SurfaceHolder（@since 19）。
@@ -198,6 +203,7 @@ static void TimerLoop() {
         }
         RequestRender();
         NotifyEditIfNeeded();
+        NotifyMenuIfNeeded();
         // 轮询上游 motion/shake：take_shake 驱动振动器，motion_active 启停传感器
         VmrpEngine::Instance().PollMotionShake();
         if (!VmrpEngine::Instance().IsRunning()) {
@@ -228,6 +234,22 @@ void NotifyEditIfNeeded() {
         }
     } else if (!active) {
         g_edit_notified.store(false);
+    }
+}
+
+// 菜单通知:menuShow 后检测到 menu_active → 通过 threadsafe function 把菜单数据
+// (NUL 分隔的标题+项列表)发给 ArkTS,前端弹出原生菜单 Dialog。
+void NotifyMenuIfNeeded() {
+    bool active = VmrpEngine::Instance().MenuActive();
+    if (active && !g_menu_notified.exchange(true)) {
+        if (g_menu_tsfn) {
+            std::string *data = new std::string(VmrpEngine::Instance().GetMenuData());
+            napi_acquire_threadsafe_function(g_menu_tsfn);
+            napi_call_threadsafe_function(g_menu_tsfn, data, napi_tsfn_nonblocking);
+            napi_release_threadsafe_function(g_menu_tsfn, napi_tsfn_release);
+        }
+    } else if (!active) {
+        g_menu_notified.store(false);
     }
 }
 
@@ -584,6 +606,64 @@ static napi_value SetEditCallback(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// ---- 菜单回调 threadsafe function ----
+static void CallJsMenu(napi_env env, napi_value js_cb, void * /*context*/, void *data) {
+    if (env && js_cb) {
+        std::unique_ptr<std::string> menu_data(static_cast<std::string *>(data));
+        // ArkTS 回调签名: (menuData: string) => void
+        // menuData 由 skyengine_api_get_menu_data 用 \n 分隔标题+项列表(无 NUL),
+        // 前端 MenuDialogContent 按 \n split 解析。
+        napi_value undefined, arg;
+        napi_get_undefined(env, &undefined);
+        napi_create_string_utf8(env, menu_data->c_str(), menu_data->size(), &arg);
+        napi_call_function(env, undefined, js_cb, 1, &arg, nullptr);
+    } else if (data) {
+        delete static_cast<std::string *>(data);
+    }
+}
+
+// setMenuCallback(cb): 注册菜单状态回调(menuShow 时触发,参数为菜单数据)。
+static napi_value SetMenuCallback(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    if (g_menu_tsfn) {
+        napi_release_threadsafe_function(g_menu_tsfn, napi_tsfn_release);
+        g_menu_tsfn = nullptr;
+    }
+    napi_value name;
+    napi_create_string_utf8(env, "vmrp_menu_cb", NAPI_AUTO_LENGTH, &name);
+    napi_create_threadsafe_function(env, args[0], nullptr, name, 0, 1, nullptr,
+                                    nullptr, nullptr, CallJsMenu, &g_menu_tsfn);
+    return nullptr;
+}
+
+// submitMenu(index): 用户选中第 index 项菜单。
+static napi_value SubmitMenu(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    int32_t index = 0;
+    napi_get_value_int32(env, args[0], &index);
+    int r = VmrpEngine::Instance().SubmitMenu(index);
+    // 重置通知标记:submitMenu 会触发 native_menu_reset(active=0),
+    // 下一级菜单 menuShow 时 active 变 1,需要能重新通知前端。
+    g_menu_notified.store(false);
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
+// cancelMenu(): 用户取消菜单。
+static napi_value CancelMenu(napi_env env, napi_callback_info info) {
+    (void)env; (void)info;
+    int r = VmrpEngine::Instance().CancelMenu();
+    g_menu_notified.store(false);
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
 // ---- 退出回调 threadsafe function ----
 static void CallJsExit(napi_env env, napi_value js_cb, void * /*context*/, void *data) {
     if (env && js_cb) {
@@ -768,6 +848,9 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"mediaPause", nullptr, MediaPause, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"mediaResume", nullptr, MediaResume, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setEditCallback", nullptr, SetEditCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setMenuCallback", nullptr, SetMenuCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"submitMenu", nullptr, SubmitMenu, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"cancelMenu", nullptr, CancelMenu, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setExitCallback", nullptr, SetExitCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setSpeedMultiplier", nullptr, SetSpeedMultiplier, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"createSurfaceNode", nullptr, CreateSurfaceNode, nullptr, nullptr, nullptr, napi_default, nullptr},

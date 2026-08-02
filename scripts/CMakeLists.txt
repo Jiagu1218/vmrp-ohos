@@ -413,6 +413,153 @@ if(EXISTS "${_VMRP_NDF_H}")
     endif()
 endif()
 
+# --- OHOS 平台菜单(menu)实现:注入 table[62-68] handler + menu 状态导出 API ---
+# 参考架构同 editCreate:vmrp 侧只存菜单数据+active 标记,前端 ArkTS 渲染原生菜单 Dialog。
+# 真正的菜单 UI 由前端 List 组件渲染,用户选择后回调 submitMenu/cancelMenu,
+# 由 skyengine_api 投递 MR_MENU_SELECT(4)/MR_MENU_RETURN(5) 事件给应用。
+# 状态管理实现放在 vmrp 树外 ohos_src/native_menu_state.c,通过 target_sources 注入。
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/skyengine_api.c")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/include/skyengine_api.h")
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/include/arm_ext_host.h")
+
+# --- Patch arm_ext_host.h: 追加 native_menu extern 声明 ---
+# 锚点:mr_dialogRefresh 声明行之后。
+set(_VMRP_AEH "${VMRP_SRC_DIR}/src/include/arm_ext_host.h")
+if(EXISTS "${_VMRP_AEH}")
+    file(READ "${_VMRP_AEH}" _aeh_text)
+    if(NOT _aeh_text MATCHES "OHOS_MENU_DECL")
+        string(REPLACE
+            "extern int32 mr_dialogRefresh(int32 dialog, const char *title, const char *text, int32 type);"
+            "extern int32 mr_dialogRefresh(int32 dialog, const char *title, const char *text, int32 type);\n/* OHOS_MENU_DECL: 平台菜单状态管理(实现于 ohos_src/native_menu_state.c)。title/text 为 UCS2-BE。 */\nextern int32_t native_menu_create(const char *title_ucs2be, int16_t num);\nextern int32_t native_menu_set_item(int32_t menu, const char *text_ucs2be, int32_t index);\nextern int32_t native_menu_show(int32_t menu);\nextern int32_t native_menu_release(int32_t menu);\nextern int32_t native_menu_refresh(int32_t menu);\nextern void native_menu_reset(void);\nextern int native_menu_in_event;\nextern void native_menu_flush_pending(void);"
+            _aeh_text "${_aeh_text}")
+        file(WRITE "${_VMRP_AEH}" "${_aeh_text}")
+        message(STATUS "[OHOS] Patched arm_ext_host.h (OHOS_MENU_DECL)")
+    endif()
+endif()
+
+# --- Patch aex_table.c: 注入 aex_t062~t068 handler + 注册到 aex_table_handlers[62..68] ---
+# handler 定义注入:在 aex_t069 定义之前插入 t062-t068(aex_t069 = mr_dialogCreate,稳定锚点)。
+set(_VMRP_AEX "${VMRP_SRC_DIR}/src/arm_ext/aex_table.c")
+if(EXISTS "${_VMRP_AEX}")
+    file(READ "${_VMRP_AEX}" _aex_text)
+    if(NOT _aex_text MATCHES "OHOS_MENU_TABLE_HANDLERS")
+        set(_OHOS_MENU_HANDLERS "/* OHOS_MENU_TABLE_HANDLERS: table[62-68] 平台菜单/WAP API。\n * menu 参考 editCreate 架构:vmrp 侧存状态,前端 ArkTS 渲染。connectWAP 保持日志 stub。 */\nstatic void aex_t062(ArmExtModule *m, AexTableCtx *c) {\n    uint32_t r0 = c->r0;\n    (void)m;\n    (void)r0;\n    /* table[62] mr_connectWAP(wap):void,仅记日志。arm_str 取 guest UCS2 串但 connectWAP 不解析。 */\n    c->ret = MR_SUCCESS;\n}\nstatic void aex_t063(ArmExtModule *m, AexTableCtx *c) {\n    uint32_t r0 = c->r0;\n    uint32_t r1 = c->r1;\n    c->ret = (uint32_t)native_menu_create(arm_str(m, r0), (int16_t)r1);\n}\nstatic void aex_t064(ArmExtModule *m, AexTableCtx *c) {\n    uint32_t r0 = c->r0;\n    uint32_t r1 = c->r1;\n    uint32_t r2 = c->r2;\n    c->ret = (uint32_t)native_menu_set_item((int32_t)r0, arm_str(m, r1), (int32_t)r2);\n}\nstatic void aex_t065(ArmExtModule *m, AexTableCtx *c) {\n    uint32_t r0 = c->r0;\n    c->ret = (uint32_t)native_menu_show((int32_t)r0);\n}\nstatic void aex_t066(ArmExtModule *m, AexTableCtx *c) {\n    (void)m;\n    /* table[66] mr_menuSetFocus: 真机固件本身未导出(_mr_c_function_table[66]=NULL)。 */\n    c->ret = MR_IGNORE;\n}\nstatic void aex_t067(ArmExtModule *m, AexTableCtx *c) {\n    uint32_t r0 = c->r0;\n    (void)m;\n    c->ret = (uint32_t)native_menu_release((int32_t)r0);\n}\nstatic void aex_t068(ArmExtModule *m, AexTableCtx *c) {\n    uint32_t r0 = c->r0;\n    (void)m;\n    c->ret = (uint32_t)native_menu_refresh((int32_t)r0);\n}\n\n")
+        string(REPLACE
+            "static void aex_t069(ArmExtModule *m, AexTableCtx *c) {"
+            "${_OHOS_MENU_HANDLERS}static void aex_t069(ArmExtModule *m, AexTableCtx *c) {"
+            _aex_text "${_aex_text}")
+        # 注册表:在 [61] 和 [69] 之间补 [62]..[68]
+        string(REPLACE
+            "    [61] = aex_t061,\n    [69] = aex_t069,"
+            "    [61] = aex_t061,\n    [62] = aex_t062,\n    [63] = aex_t063,\n    [64] = aex_t064,\n    [65] = aex_t065,\n    [66] = aex_t066,\n    [67] = aex_t067,\n    [68] = aex_t068,\n    [69] = aex_t069,"
+            _aex_text "${_aex_text}")
+        file(WRITE "${_VMRP_AEX}" "${_aex_text}")
+        message(STATUS "[OHOS] Patched aex_table.c (OHOS_MENU_TABLE_HANDLERS)")
+    endif()
+endif()
+
+# --- Patch skyengine_api.h: 追加 menu 导出声明 ---
+# 锚点:edit API 声明(skyengine_api_cancel_edit)之后。
+set(_VMRP_API_H2 "${VMRP_SRC_DIR}/src/include/skyengine_api.h")
+if(EXISTS "${_VMRP_API_H2}")
+    file(READ "${_VMRP_API_H2}" _api_h2_text)
+    if(NOT _api_h2_text MATCHES "OHOS_MENU_API_DECL")
+        string(REPLACE
+            "VMRP_EXPORT int skyengine_api_cancel_edit(void);"
+            "VMRP_EXPORT int skyengine_api_cancel_edit(void);\n\n/* OHOS_MENU_API_DECL: 平台菜单(menu)。vmrp 侧存菜单数据,前端读取后渲染原生菜单 Dialog。\n * skyengine_api_is_menu_active: menuShow 后返回 1,前端轮询此标记弹出菜单。\n * skyengine_api_get_menu_data: 返回标题+项列表(NUL 分隔,标题在前),前端解析后渲染。\n * skyengine_api_submit_menu: 用户选中第 index 项,投 MR_MENU_SELECT(4) 事件。\n * skyengine_api_cancel_menu: 用户取消,投 MR_MENU_RETURN(5) 事件。 */\nVMRP_EXPORT int skyengine_api_is_menu_active(void);\nVMRP_EXPORT const char *skyengine_api_get_menu_data(void);\nVMRP_EXPORT int skyengine_api_submit_menu(int index);\nVMRP_EXPORT int skyengine_api_cancel_menu(void);"
+            _api_h2_text "${_api_h2_text}")
+        file(WRITE "${_VMRP_API_H2}" "${_api_h2_text}")
+        message(STATUS "[OHOS] Patched skyengine_api.h (OHOS_MENU_API_DECL)")
+    endif()
+endif()
+
+# --- Patch skyengine_api.c: menu 状态变量 + 导出函数 + ApiCommand + apply 命令 + start 清理 ---
+set(_VMRP_API2 "${VMRP_SRC_DIR}/src/skyengine_api.c")
+if(EXISTS "${_VMRP_API2}")
+    file(READ "${_VMRP_API2}" _api2_text)
+    if(NOT _api2_text MATCHES "OHOS_MENU_API_IMPL")
+        # 0) include native_menu_state.h(menu 状态查询函数声明)
+        string(REPLACE
+            "#include \"./include/native_text_widget.h\""
+            "#include \"./include/native_text_widget.h\"\n#include \"native_menu_state.h\" /* OHOS_MENU_API_IMPL: menu 状态查询 */"
+            _api2_text "${_api2_text}")
+        # 1) ApiCommandType 枚举:加 MENU_SELECT/MENU_RETURN
+        string(REPLACE
+            "    API_CMD_SET_EDIT_TEXT,\n    API_CMD_CANCEL_EDIT"
+            "    API_CMD_SET_EDIT_TEXT,\n    API_CMD_CANCEL_EDIT,\n    API_CMD_MENU_SELECT, /* OHOS_MENU_API_IMPL: 用户选中菜单第 index 项 */\n    API_CMD_MENU_RETURN  /* 用户取消菜单 */"
+            _api2_text "${_api2_text}")
+        # 2) menu 状态变量 + menu_data 缓冲(注入到 edit_active 变量声明后)
+        string(REPLACE
+            "static int edit_active = 0;"
+            "static int edit_active = 0;\n/* OHOS_MENU_API_IMPL: menu 数据缓冲,供 skyengine_api_get_menu_data 返回给前端。\n * 格式:标题(NUL)项0(NUL)项1...(NUL),前端按 NUL 分隔解析。 */\nstatic char *menu_data_buf = NULL;\nstatic size_t menu_data_buf_len = 0;"
+            _api2_text "${_api2_text}")
+        # 3) apply 命令(worker switch):在 API_CMD_CANCEL_EDIT case 后加 MENU case
+        string(REPLACE
+            "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;"
+            "                case API_CMD_CANCEL_EDIT:\n                    api_apply_cancel_edit_command();\n                    break;\n                case API_CMD_MENU_SELECT:\n                    api_apply_menu_select_command(cmd.p0);\n                    break;\n                case API_CMD_MENU_RETURN:\n                    api_apply_menu_return_command();\n                    break;"
+            _api2_text "${_api2_text}")
+        # 4) 实现:apply 函数 + 导出函数(注入到 api_apply_cancel_edit_command 之后)
+        #    注意:get_menu_data 用 \n 分隔(非 NUL),因为 std::string 构造遇到 NUL 会截断。
+        #    前端 MenuDialogContent 按 \n split 解析。
+        string(REPLACE
+            "static void api_apply_cancel_edit_command(void) {\n    api_lock();\n    if (!edit_active) {\n        api_unlock();\n        return;\n    }\n    edit_active = 0;\n    api_unlock();\n    event(6, 1, 0);\n}"
+            "static void api_apply_cancel_edit_command(void) {\n    api_lock();\n    if (!edit_active) {\n        api_unlock();\n        return;\n    }\n    edit_active = 0;\n    api_unlock();\n    event(6, 1, 0);\n}\n\n/* OHOS_MENU_API_IMPL: 菜单选择/取消处理(worker 线程)。MR_MENU_SELECT=4, MR_MENU_RETURN=5。 */\nstatic void api_apply_menu_select_command(int index) {\n    native_menu_reset();\n    native_menu_in_event = 1;\n    event(4, index, 0);\n    native_menu_in_event = 0;\n    native_menu_flush_pending();\n    if (!api_timer_active) {\n        api_lock();\n        api_timer_active = 1;\n        api_timer_due_ms = api_now_ms() + 30;\n        api_signal();\n        api_unlock();\n    }\n}\nstatic void api_apply_menu_return_command(void) {\n    native_menu_reset();\n    native_menu_in_event = 1;\n    event(5, 0, 0);\n    native_menu_in_event = 0;\n    native_menu_flush_pending();\n    if (!api_timer_active) {\n        api_lock();\n        api_timer_active = 1;\n        api_timer_due_ms = api_now_ms() + 30;\n        api_signal();\n        api_unlock();\n    }\n}\n\n/* OHOS_MENU_API_IMPL: 导出给前端。menu_active 由 native_menu_state 管理。\n * get_menu_data 用 \\n 分隔标题+项列表(标题在前),前端按 \\n split 解析。 */\nVMRP_EXPORT int skyengine_api_is_menu_active(void) {\n    return native_menu_is_active();\n}\nVMRP_EXPORT const char *skyengine_api_get_menu_data(void) {\n    int count = native_menu_get_item_count();\n    const char *title = native_menu_get_title();\n    size_t title_len = strlen(title);\n    size_t total = title_len + 1;\n    for (int i = 0; i < count; i++) total += strlen(native_menu_get_item(i)) + 1;\n    if (menu_data_buf_len < total) {\n        char *nb = (char *)realloc(menu_data_buf, total);\n        if (!nb) return \"\";\n        menu_data_buf = nb;\n        menu_data_buf_len = total;\n    }\n    char *cur = menu_data_buf;\n    memcpy(cur, title, title_len);\n    cur += title_len;\n    *cur++ = '\\n';\n    for (int i = 0; i < count; i++) {\n        const char *item = native_menu_get_item(i);\n        size_t il = strlen(item);\n        memcpy(cur, item, il);\n        cur += il;\n        *cur++ = '\\n';\n    }\n    *cur = '\\0';\n    return menu_data_buf;\n}\nVMRP_EXPORT int skyengine_api_submit_menu(int index) {\n    if (!api_running || skyengine_is_exited()) { api_running = 0; return -1; }\n    ApiCommand cmd;\n    memset(&cmd, 0, sizeof(cmd));\n    cmd.type = API_CMD_MENU_SELECT;\n    cmd.p0 = index;\n    return api_queue_command(cmd);\n}\nVMRP_EXPORT int skyengine_api_cancel_menu(void) {\n    if (!api_running || skyengine_is_exited()) { api_running = 0; return -1; }\n    ApiCommand cmd;\n    memset(&cmd, 0, sizeof(cmd));\n    cmd.type = API_CMD_MENU_RETURN;\n    return api_queue_command(cmd);\n}"
+            _api2_text "${_api2_text}")
+        # 5) skyengine_api_start 清理:在 edit_active = 0 后加 menu reset
+        string(REPLACE
+            "    edit_active = 0;\n}\n\nVMRP_EXPORT int skyengine_api_set_dns_map"
+            "    edit_active = 0;\n    native_menu_reset();\n}\n\nVMRP_EXPORT int skyengine_api_set_dns_map"
+            _api2_text "${_api2_text}")
+        file(WRITE "${_VMRP_API2}" "${_api2_text}")
+        message(STATUS "[OHOS] Patched skyengine_api.c (OHOS_MENU_API_IMPL)")
+    endif()
+endif()
+
+# --- 注入 native_menu_state.c 到 skyengine-shared 编译 + 链接 ---
+# 仿 ohos_image_decode 模式,源文件在 vmrp 树外 ohos_src/,不污染子模块。
+# 注意:必须在 add_subdirectory(VMRP_SRC_DIR) 之后,此处 scripts/CMakeLists.txt 尚未
+# 到 add_subdirectory,实际 target_sources 在下方第 1082 行的 OHOS 块里追加。
+
+# --- textCreate 美化:改进 native_text_widget.c 布局(标题分隔线 + 软键栏加粗 + 行距) ---
+# 美化项:1)标题下方加分隔线(单像素绿色横线);2)正文起点下移让位;
+#         3)软键栏分隔线 1px→2px;4)左右内边距加大。
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/native_text_widget.c")
+set(_VMRP_NTW "${VMRP_SRC_DIR}/src/native_text_widget.c")
+if(EXISTS "${_VMRP_NTW}")
+    file(READ "${_VMRP_NTW}" _ntw_text)
+    if(NOT _ntw_text MATCHES "OHOS_TEXTWIDGET_BEAUTIFY")
+        # 1) 正文起点下移 4px(给标题分隔线让位):TW_BODY_Y 从 +8 改为 +12
+        string(REPLACE
+            "#define TW_BODY_Y (TW_TITLE_Y + TW_CHAR_H + 8)"
+            "#define TW_BODY_Y (TW_TITLE_Y + TW_CHAR_H + 12) /* OHOS_TEXTWIDGET_BEAUTIFY */"
+            _ntw_text "${_ntw_text}")
+        # 2) 左右内边距加大:TW_MARGIN_X 从 8 改为 12
+        string(REPLACE
+            "#define TW_MARGIN_X 8"
+            "#define TW_MARGIN_X 12 /* OHOS_TEXTWIDGET_BEAUTIFY: 加大左右内边距 */"
+            _ntw_text "${_ntw_text}")
+        # 3) 软键栏标签左边距同步加大
+        string(REPLACE
+            "#define TW_LABEL_MARGIN_X 4"
+            "#define TW_LABEL_MARGIN_X 8 /* OHOS_TEXTWIDGET_BEAUTIFY */"
+            _ntw_text "${_ntw_text}")
+        # 4) 标题渲染后加分隔线:在 tw_draw_string(page, pw, ph, tw.title, ...) 之后
+        #    加一行分隔线(标题下 2px 处画满宽绿色线),需精确匹配现有标题绘制行。
+        string(REPLACE
+            "    /* 标题 */\n    tw_draw_string(page, pw, ph, tw.title, TW_MARGIN_X, TW_TITLE_Y);\n\n    /* 正文(带滚动窗口) */"
+            "    /* 标题 */\n    tw_draw_string(page, pw, ph, tw.title, TW_MARGIN_X, TW_TITLE_Y);\n    /* OHOS_TEXTWIDGET_BEAUTIFY: 标题下方分隔线 */\n    {\n        int sep_y = TW_TITLE_Y + TW_CHAR_H + 2;\n        if (sep_y >= 0 && sep_y < ph) {\n            for (int x = 0; x < pw; x++) page[(size_t)sep_y * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;\n        }\n    }\n\n    /* 正文(带滚动窗口) */"
+            _ntw_text "${_ntw_text}")
+        # 5) 软键栏分隔线加粗:在 bar_y 横线后再加一行(bar_y+1)
+        string(REPLACE
+            "        for (int x = 0; x < pw; x++) page[(size_t)bar_y * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;"
+            "        for (int x = 0; x < pw; x++) page[(size_t)bar_y * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;\n        /* OHOS_TEXTWIDGET_BEAUTIFY: 软键栏分隔线加粗为 2px */\n        if (bar_y + 1 < ph) {\n            for (int x = 0; x < pw; x++) page[(size_t)(bar_y + 1) * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;\n        }"
+            _ntw_text "${_ntw_text}")
+        file(WRITE "${_VMRP_NTW}" "${_ntw_text}")
+        message(STATUS "[OHOS] Patched native_text_widget.c (OHOS_TEXTWIDGET_BEAUTIFY)")
+    endif()
+endif()
+
 # --- Patch dsm.c: OHOS_DSM_MEDIA — 修复 PAUSE/STOP/RESUME + 实现 SETPOS/GET_TOTAL_TIME/GET_CURTIME ---
 # 上游 PAUSE 和 STOP 实现相同(都调 mr_stopSound 清空 PCM),导致 PAUSE 后无法 RESUME。
 # 修复:
@@ -1092,6 +1239,18 @@ if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND TARGET skyengine-shared)
         message(STATUS "[OHOS] Injected ohos_image_decode.c + libimage_source/libpixelmap")
     else()
         message(WARNING "[OHOS] ohos_image_decode.c not found at ${_OHOS_IMG_SRC}")
+    endif()
+
+    # OHOS 平台菜单状态管理(参考 editCreate 架构,前端 ArkTS 渲染菜单 Dialog)。
+    # native_menu_state.h 通过 skyengine_api.c/aex_table.c 的 OHOS_MENU patch 引用,
+    # 需把 ohos_src 加入 include 路径。
+    set(_OHOS_MENU_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_menu_state.c")
+    if(EXISTS "${_OHOS_MENU_SRC}")
+        target_sources(skyengine-shared PRIVATE "${_OHOS_MENU_SRC}")
+        target_include_directories(skyengine-shared PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src")
+        message(STATUS "[OHOS] Injected native_menu_state.c (menu widget)")
+    else()
+        message(WARNING "[OHOS] native_menu_state.c not found at ${_OHOS_MENU_SRC}")
     endif()
 endif()
 

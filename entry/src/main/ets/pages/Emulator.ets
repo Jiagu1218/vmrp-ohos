@@ -19,6 +19,8 @@ import {
   DPadWithFunc, NumPad, TopScreen, StatusBarChip,
   PhoneControls, EditDialogContent, EditDialogContentBuilder,
   EditDialogContentBuilderParams, EditDialogOptions,
+  MenuDialogContent, MenuDialogContentBuilder,
+  MenuDialogContentBuilderParams, MenuDialogOptions,
   SCREEN_BG, DPAD_ARROW, NUMKEY_TEXT, RUN_DOT, SHELL_BORDER, STATUS_TEXT
 } from '../components/EmulatorControls';
 
@@ -29,6 +31,7 @@ struct EmulatorPage {
   @Local engineMode: string = '';  // "JIT" / "TCI" / ""
   @Local screenVisible: boolean = true;
   @Local editText: string = '';
+  @Local menuData: string = '';
   @Local currentBp: string = 'sm';
   @Local showControls: boolean = true;
   @Local showNumPadVal: boolean = true;
@@ -165,6 +168,10 @@ struct EmulatorPage {
         this.editText = editText;
         this.openEditDialog();
       });
+      this.engine.setMenuCallback((menuData: string) => {
+        this.menuData = menuData;
+        this.openMenuDialog();
+      });
       this.engine.setExitCallback(() => {
         this.runningState = false;
         this.screenVisible = false;
@@ -197,6 +204,29 @@ struct EmulatorPage {
     };
     const contentNode = new ComponentContent(uiCtx, wrapBuilder(EditDialogContentBuilder), params);
     const opts: EditDialogOptions = {
+      alignment: DialogAlignment.Center,
+      autoCancel: false
+    };
+    prompt.openCustomDialog(contentNode, opts);
+  }
+
+  // 平台菜单(menu)弹窗:menuShow 后由 native 通知触发,弹出原生菜单 Dialog。
+  private openMenuDialog(): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: MenuDialogContentBuilderParams = {
+      menuData: this.menuData,
+      onSelect: (index: number) => {
+        this.engine.submitMenu(index);
+        prompt.closeCustomDialog(contentNode);
+      },
+      onCancel: () => {
+        this.engine.cancelMenu();
+        prompt.closeCustomDialog(contentNode);
+      }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(MenuDialogContentBuilder), params);
+    const opts: MenuDialogOptions = {
       alignment: DialogAlignment.Center,
       autoCancel: false
     };
