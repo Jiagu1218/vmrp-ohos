@@ -1,6 +1,6 @@
 {
   "modelVersion": "6.1.0",
-  "description": "Please describe the basic information.",
+  "description": "旧梦曲奇 - MRP模拟器 for HarmonyOS",
   "dependencies": {
   },
   "devDependencies": {

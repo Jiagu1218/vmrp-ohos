@@ -18,7 +18,7 @@ export default class EntryAbility extends UIAbility {
     gIsDarkMode = this.context.config.colorMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK;
     this.applyColorModeFromPref();
     this.handleFileWant(want);
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onCreate');
+    hilog.info(DOMAIN, 'VmrpApp', '%{public}s', 'Ability onCreate');
   }
 
   onConfigurationUpdate(newConfig: Configuration): void {
@@ -57,7 +57,7 @@ export default class EntryAbility extends UIAbility {
 
   onNewWant(want: Want, launchParam: AbilityConstant.LaunchParam): void {
     this.handleFileWant(want);
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onNewWant');
+    hilog.info(DOMAIN, 'VmrpApp', '%{public}s', 'Ability onNewWant');
   }
 
   private handleFileWant(want: Want): void {
@@ -65,23 +65,23 @@ export default class EntryAbility extends UIAbility {
     if (uri !== undefined && uri !== null && uri.length > 0) {
       const pending = AppStorageV2.connect(PendingMrpUri, 'pendingMrpUri', () => new PendingMrpUri())!;
       pending.uri = uri;
-      hilog.info(DOMAIN, 'testTag', 'handleFileWant uri: %{public}s', uri);
+      hilog.info(DOMAIN, 'VmrpApp', 'handleFileWant uri: %{public}s', uri);
     }
   }
 
   onDestroy(): void {
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onDestroy');
+    hilog.info(DOMAIN, 'VmrpApp', '%{public}s', 'Ability onDestroy');
   }
 
   onWindowStageCreate(windowStage: window.WindowStage): void {
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageCreate');
+    hilog.info(DOMAIN, 'VmrpApp', '%{public}s', 'Ability onWindowStageCreate');
 
     windowStage.loadContent('pages/Index', (err) => {
       if (err.code) {
-        hilog.error(DOMAIN, 'testTag', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
+        hilog.error(DOMAIN, 'VmrpApp', 'Failed to load the content. Cause: %{public}s', JSON.stringify(err));
         return;
       }
-      hilog.info(DOMAIN, 'testTag', 'Succeeded in loading the content.');
+      hilog.info(DOMAIN, 'VmrpApp', 'Succeeded in loading the content.');
       try {
         const win = windowStage.getMainWindowSync();
         win.setWindowLayoutFullScreen(true);
@@ -100,17 +100,17 @@ export default class EntryAbility extends UIAbility {
           }
         });
       } catch (e) {
-        hilog.error(DOMAIN, 'testTag', 'Failed to set immersive. Cause: %{public}s', JSON.stringify(e));
+        hilog.error(DOMAIN, 'VmrpApp', 'Failed to set immersive. Cause: %{public}s', JSON.stringify(e));
       }
     });
   }
 
   onWindowStageDestroy(): void {
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onWindowStageDestroy');
+    hilog.info(DOMAIN, 'VmrpApp', '%{public}s', 'Ability onWindowStageDestroy');
   }
 
   onForeground(): void {
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onForeground');
+    hilog.info(DOMAIN, 'VmrpApp', '%{public}s', 'Ability onForeground');
     const engine = new VmrpEngineTs();
     if (engine.isRunning()) {
       engine.mediaResume();
@@ -118,7 +118,7 @@ export default class EntryAbility extends UIAbility {
   }
 
   onBackground(): void {
-    hilog.info(DOMAIN, 'testTag', '%{public}s', 'Ability onBackground');
+    hilog.info(DOMAIN, 'VmrpApp', '%{public}s', 'Ability onBackground');
     const engine = new VmrpEngineTs();
     if (engine.isRunning()) {
       engine.mediaPause();

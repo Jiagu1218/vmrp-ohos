@@ -32,10 +32,10 @@ echo "============================================"
 
 # --- 重启 ---
 echo ">>> 重启应用"
-$HDC shell "aa force-stop com.example.vmrpohos" 2>/dev/null || true
+$HDC shell "aa force-stop com.xjg.skyengine" 2>/dev/null || true
 $HDC shell "hilog -r" 2>/dev/null || true
 wait_s 1
-$HDC shell "aa start -a EntryAbility -b com.example.vmrpohos"
+$HDC shell "aa start -a EntryAbility -b com.xjg.skyengine"
 wait_s 4
 echo "    dsm_gm 已加载"
 

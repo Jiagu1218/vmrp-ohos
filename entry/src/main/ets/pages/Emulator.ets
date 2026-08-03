@@ -26,7 +26,7 @@ import {
 
 @ComponentV2
 struct EmulatorPage {
-  @Local statusText: string = '';
+  @Local statusText: ResourceStr = '';
   @Local runningState: boolean = false;
   @Local engineMode: string = '';  // "JIT" / "TCI" / ""
   @Local screenVisible: boolean = true;
@@ -103,21 +103,21 @@ struct EmulatorPage {
 
   async bootstrap(): Promise<void> {
     try {
-      this.statusText = 'Loading...';
+      this.statusText = $r('app.string.emulator_status_loading');
       await this.engine.init();
       const ctx = gAbilityContext ?? this.getUIContext().getHostContext();
       if (!ctx) {
-        this.statusText = 'Init failed';
+        this.statusText = $r('app.string.emulator_status_init_failed');
         return;
       }
-      this.statusText = 'Preparing...';
+      this.statusText = $r('app.string.emulator_status_preparing');
       const workDir = await VmrpAssets.ensureRuntime(ctx);
       let ok = this.engine.loadLib('libvmrp.so');
       if (!ok) {
         ok = this.engine.loadLib(`${ctx.bundleCodeDir}/lib/arm64/libvmrp.so`);
       }
       if (!ok) {
-        this.statusText = 'Load failed';
+        this.statusText = $r('app.string.emulator_status_load_failed');
         return;
       }
       this.engineMode = this.engine.getEngineMode();
@@ -179,11 +179,11 @@ struct EmulatorPage {
         this.navPathStack.pop();
       });
       this.engine.createSurfaceNode(this.nodeContent);
-      this.statusText = 'Starting...';
+      this.statusText = $r('app.string.emulator_status_starting');
        await this.startMrp();
      } catch (e) {
        const err = e as Error;
-        this.statusText = `Failed: ${err?.message ?? String(e)}`;
+         this.statusText = `Failed: ${err?.message ?? String(e)}`;
      }
   }
 
@@ -235,7 +235,7 @@ struct EmulatorPage {
 
   async startMrp(): Promise<void> {
     if (this.mrpPath.length === 0) {
-      this.statusText = 'No MRP';
+      this.statusText = $r('app.string.emulator_status_no_mrp');
       return;
     }
     try {

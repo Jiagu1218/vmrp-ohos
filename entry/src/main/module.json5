@@ -41,7 +41,7 @@
             "uris": [
               {
                 "scheme": "file",
-                "utd": "com.example.vmrpohos.mrp",
+                "utd": "com.xjg.skyengine.mrp",
                 "linkFeature": "FileOpen"
               }
             ]

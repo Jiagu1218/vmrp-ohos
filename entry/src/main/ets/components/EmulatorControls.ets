@@ -215,7 +215,7 @@ export struct NumPad {
 @ComponentV2
 export struct TopScreen {
   @Param nodeContent: NodeContent = new NodeContent();
-  @Param statusText: string = '';
+  @Param statusText: ResourceStr = '';
   @Param runningState: boolean = false;
   @Param scaleVal: number = 1;
   @Param bufW: number = 240;

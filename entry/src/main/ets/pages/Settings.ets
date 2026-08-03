@@ -1,9 +1,10 @@
 import { AppStorageV2, ComponentContent, LengthMetrics } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
-import { common, ConfigurationConstant } from '@kit.AbilityKit';
+import { common, ConfigurationConstant, Want } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
 import { HdsNavDestination, HdsNavDestinationAttribute, ScrollEffectType, hdsMaterial } from '@kit.UIDesignKit';
 import { AvoidData } from '../common/AvoidData';
+import { gAbilityContext } from '../entryability/EntryAbility';
 import { HapticManager, HapticState, HapticStrength } from '../common/HapticManager';
 import { VmrpEngineTs } from '../vmrp/VmrpEngine';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
@@ -108,6 +109,17 @@ export struct SettingsPage {
     if (this.strengthIndex < 0) this.strengthIndex = 1;
     this.loadPrefsSync();
     try { this.xengineMode = this.engine.getXengineUpscaleMode(); } catch (_e) {}
+  }
+
+  private showPrivacyPolicy(): void {
+    const ctx = gAbilityContext;
+    if (!ctx) return;
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      entities: ['entity.system.browsable'],
+      uri: 'https://agreement-drcn.hispace.dbankcloud.cn/index.html?lang=zh&agreementId=2008959737680402752'
+    };
+    ctx.startAbility(want).catch((_err: Error) => {});
   }
 
   loadPrefsSync(): void {
@@ -823,7 +835,18 @@ export struct SettingsPage {
                   .fontColor($r('app.color.settings_desc_color'))
                   .lineHeight(22)
                   .width('100%')
-                  .padding({ left: PAD_H, right: PAD_H, bottom: 16 })
+                  .padding({ left: PAD_H, right: PAD_H, bottom: 8 })
+                Row() {
+                  Text($r('app.string.privacy_policy_link'))
+                    .fontSize(14)
+                    .fontColor($r('app.color.accent_color'))
+                    .decoration({ type: TextDecorationType.Underline, color: $r('app.color.accent_color') })
+                }
+                .width('100%')
+                .padding({ left: PAD_H, right: PAD_H, bottom: 16 })
+                .onClick(() => {
+                  this.showPrivacyPolicy();
+                })
               }
             }
           }

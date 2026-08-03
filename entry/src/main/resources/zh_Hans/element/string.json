@@ -5,7 +5,14 @@
     { "name": "EntryAbility_label", "value": "旧梦曲奇" },
     { "name": "permission_internet_reason", "value": "运行支持网络通信的 MRP 程序需要访问网络" },
     { "name": "permission_vibrate_reason", "value": "按钮触控震动反馈需要使用振动马达" },
-    { "name": "permission_accelerometer_reason", "value": "运行体感游戏需要" },
+    { "name": "permission_accelerometer_reason", "value": "运行体感类游戏时需要读取加速度传感器数据" },
+
+    { "name": "privacy_dialog_title", "value": "隐私政策" },
+    { "name": "privacy_dialog_content", "value": "在使用旧梦曲奇之前，请阅读并同意我们的隐私政策。\n\n1. 网络访问：应用使用网络访问运行需要网络通信的 MRP 程序（如联网游戏），不收集或传输您的个人数据。\n\n2. 振动：应用使用振动马达提供按键触觉反馈和游戏震动效果，不收集个人数据。\n\n3. 加速度传感器：应用在您游玩体感游戏时读取加速度传感器数据，传感器数据仅用于游戏内交互，不存储或传输。\n\n4. 本地存储：游戏文件、存档和设置存储在您的设备本地，我们不访问、上传或分享您的任何本地数据。\n\n5. 第三方：本应用未集成任何第三方分析、广告或追踪 SDK。\n\n您可以在 设置 > 关于 中查看完整隐私政策。" },
+    { "name": "privacy_btn_agree", "value": "同意" },
+    { "name": "privacy_btn_disagree", "value": "不同意并退出" },
+    { "name": "privacy_policy_title", "value": "隐私政策" },
+    { "name": "privacy_policy_link", "value": "查看隐私政策" },
 
     { "name": "btn_cancel", "value": "取消" },
     { "name": "btn_confirm", "value": "确定" },

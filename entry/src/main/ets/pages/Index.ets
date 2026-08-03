@@ -14,6 +14,7 @@ import { HapticManager } from '../common/HapticManager';
 import { FlatItem, MrpGroup, CARD_RADIUS, DELETE_TRANSITION, emptyMrpInfoData, groupByLetter, buildIndexArray } from '../model/MrpListModel';
 import { FavoriteStore } from '../model/FavoriteStore';
 import { PendingMrpUri } from '../common/PendingMrpUri';
+import { PrivacyDialog, isPrivacyAgreedSync, setPrivacyAgreed } from '../components/PrivacyDialog';
 
 @Entry
 @ComponentV2
@@ -30,6 +31,8 @@ struct Index {
   @Local flatItems: FlatItem[] = [];
   @Local currentTab: number = 0;
   @Local titleBarOffset: number = 96;
+  @Local privacyAgreed: boolean = isPrivacyAgreedSync();
+  @Local showPrivacyDialog: boolean = !isPrivacyAgreedSync();
   private navPathStack: NavPathStack = new NavPathStack();
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private listScroller: ListScroller = new ListScroller();
@@ -41,7 +44,6 @@ struct Index {
   aboutToAppear(): void {
     const ctx = gAbilityContext;
     if (ctx) {
-      this.favStore = FavoriteStore.loadSync(ctx);
       try {
         const win: window.Window = ctx.windowStage.getMainWindowSync();
         const topPx: number = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height;
@@ -49,10 +51,39 @@ struct Index {
         this.titleBarOffset = topPx / density + 48;
       } catch (_e) {}
     }
+    if (!this.privacyAgreed) return;
+    this.initAfterPrivacy();
+  }
+
+  private initAfterPrivacy(): void {
+    const ctx = gAbilityContext;
+    if (ctx) {
+      this.favStore = FavoriteStore.loadSync(ctx);
+    }
     this.scanMrpFiles();
   }
 
+  private async onPrivacyAgree(): Promise<void> {
+    await setPrivacyAgreed();
+    this.privacyAgreed = true;
+    this.showPrivacyDialog = false;
+    const ctx = gAbilityContext;
+    if (ctx) {
+      this.favStore = FavoriteStore.loadSync(ctx);
+    }
+    await this.ensureAndScan();
+    this.checkPendingMrpUri();
+  }
+
+  private onPrivacyDisagree(): void {
+    const ctx = gAbilityContext;
+    if (ctx) {
+      ctx.terminateSelf();
+    }
+  }
+
   onPageShow(): void {
+    if (!this.privacyAgreed) return;
     this.ensureAndScan();
     this.checkPendingMrpUri();
   }
@@ -704,7 +735,20 @@ struct Index {
   }
 
   build() {
-    HdsNavigation(this.navPathStack) {
+    if (this.showPrivacyDialog) {
+      Column() {
+        PrivacyDialog({
+          onAgree: () => { this.onPrivacyAgree(); },
+          onDisagree: () => { this.onPrivacyDisagree(); }
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ top: this.titleBarOffset })
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.immersive_bg'))
+    } else {
+      HdsNavigation(this.navPathStack) {
       HdsTabs({ controller: this.hdsTabsController }) {
         TabContent() {
           this.gameLibraryContent()
@@ -809,5 +853,6 @@ struct Index {
     .backgroundColor($r('app.color.immersive_bg'))
     .bindToScrollable([this.listScroller, this.favScroller])
     .mode(NavigationMode.Stack)
+    }
   }
 }

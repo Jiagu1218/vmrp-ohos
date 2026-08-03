@@ -7,7 +7,7 @@
 | **工单类型** | 系统兼容性 / 开发者能力受限 |
 | **项目名称** | vmrp-ohos（基于 Mythroad 平台的 MRP 应用模拟器） |
 | **项目地址** | https://github.com/Jiagu1218/vmrp-ohos |
-| **应用包名** | com.example.vmrpohos |
+| **应用包名** | com.xjg.skyengine |
 | **签名类型** | Debug 自动签名（AGC 注册） |
 
 ## 设备信息
