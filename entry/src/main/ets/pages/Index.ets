@@ -249,8 +249,8 @@ struct Index {
       title: $r('app.string.index_dialog_delete_title'),
       message: $r('app.string.index_dialog_delete_message', item.appname),
       buttons: [
-        { text: $r('app.string.btn_cancel'), color: '#007DFF' },
-        { text: $r('app.string.btn_delete'), color: '#E84026' }
+        { text: $r('app.string.btn_cancel'), color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: $r('app.string.btn_delete'), color: $r('sys.color.ohos_id_color_warning') }
       ]
     }).then((data: ShowDialogSuccessResponse) => {
       if (data.index === 1) {
@@ -282,6 +282,21 @@ struct Index {
   private getBaseName(path: string): string {
     const slash = path.lastIndexOf('/');
     return slash >= 0 ? path.substring(slash + 1) : path;
+  }
+
+  private getMenuItems(item: MrpInfoData): MenuElement[] {
+    const isFav = this.favStore.isFavorite(item.filePath);
+    const items: MenuElement[] = [
+      {
+        value: isFav ? $r('app.string.a11y_btn_unfavorite') : $r('app.string.a11y_btn_favorite'),
+        action: () => { this.toggleFavorite(item); }
+      },
+      {
+        value: $r('app.string.a11y_btn_delete'),
+        action: () => { this.deleteMrp(item); }
+      }
+    ];
+    return items;
   }
 
   @Builder
@@ -364,7 +379,7 @@ struct Index {
             Stack() {
               Text($r('app.string.index_btn_go_settings'))
                 .fontSize(14)
-                .fontColor('#FFFFFF')
+                .fontColor($r('app.color.btn_text_on_accent'))
                 .fontWeight(FontWeight.Medium)
             }
             .width(140)
@@ -476,6 +491,7 @@ struct Index {
     }
     .padding({ left: 16, right: 16 })
     .swipeAction({ end: { builder: (): void => { this.swipeEndBuilder(ri.item.data, this.favStore.isFavorite(ri.item.data.filePath)); }, actionAreaDistance: 120 } })
+    .bindMenu(this.getMenuItems(ri.item.data))
     .transition(DELETE_TRANSITION)
   }
 

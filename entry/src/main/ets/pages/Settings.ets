@@ -1,4 +1,4 @@
-import { AppStorageV2, ComponentContent, LengthMetrics } from '@kit.ArkUI';
+import { AppStorageV2, ComponentContent, LengthMetrics, display } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import { common, ConfigurationConstant, Want } from '@kit.AbilityKit';
 import { picker } from '@kit.CoreFileKit';
@@ -97,6 +97,7 @@ export struct SettingsPage {
   @Local xengineMode: number = 0;
   @Local darkMode: boolean = true;
   @Local followSystem: boolean = true;
+  @Local currentBp: string = 'sm';
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -109,6 +110,11 @@ export struct SettingsPage {
     if (this.strengthIndex < 0) this.strengthIndex = 1;
     this.loadPrefsSync();
     try { this.xengineMode = this.engine.getXengineUpscaleMode(); } catch (_e) {}
+    try {
+      const d = display.getDefaultDisplaySync();
+      const w = d.width / d.densityPixels;
+      if (w >= 520) { this.currentBp = 'md'; } else { this.currentBp = 'sm'; }
+    } catch (_e) { this.currentBp = 'sm'; }
   }
 
   private showPrivacyPolicy(): void {
@@ -514,14 +520,13 @@ export struct SettingsPage {
 
   build() {
     HdsNavDestination() {
-      List({ space: 8, scroller: this.listScroller }) {
-
-        // ── 模拟器 ──
-        ListItem() {
+      WaterFlow({ scroller: this.listScroller }) {
+        FlowItem() {
           Column() {
             SectionHeader({ title: $r('app.string.settings_section_emulator') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
                Column() {
+              
                  SRow({ label: $r('app.string.settings_label_resolution') }) {
                    SSelect({
                      opts: SCREEN_SIZE_OPTIONS,
@@ -555,17 +560,16 @@ export struct SettingsPage {
                      }
                    })
                  }
-                 SDesc({ text: $r('app.string.settings_desc_speed') })
-               }
+                  SDesc({ text: $r('app.string.settings_desc_speed') })
+                }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 画面 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: $r('app.string.settings_section_display') })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: $r('app.string.settings_section_display') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SRow({ label: $r('app.string.settings_label_filter') }) {
@@ -662,6 +666,7 @@ export struct SettingsPage {
                     .backgroundColor(Color.Transparent)
                     .borderRadius(8)
                     .border({ width: 1, color: $r('app.color.settings_reset_btn_border') })
+                    .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
                     .onClick(() => {
                        this.displayFilterIndex = 0;
                        this.screenEffectIndex = 0;
@@ -671,23 +676,22 @@ export struct SettingsPage {
                        this.saturationVal = SATURATION_DEFAULT;
                        this.subpixelRender = SUBPIXEL_RENDER_DEFAULT;
                        this.gammaCorrect = GAMMA_CORRECT_DEFAULT;
-    this.ditherEnabled = DITHER_DEFAULT;
-    this.screenSizeIndex = SCREEN_SIZE_DEFAULT_INDEX;
-    this.speedMultIndex = 0;
+   this.ditherEnabled = DITHER_DEFAULT;
+   this.screenSizeIndex = SCREEN_SIZE_DEFAULT_INDEX;
+   this.speedMultIndex = 0;
                        this.saveDisplayFilter();
                     })
                 }
-                .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 12 })
-              }
+                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 12 })
+               }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 外观 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: $r('app.string.settings_section_appearance') })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: $r('app.string.settings_section_appearance') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SRow({ label: $r('app.string.settings_label_follow_system') }) {
@@ -713,18 +717,17 @@ export struct SettingsPage {
                 .height(ROW_H)
                 .alignItems(VerticalAlign.Center)
                 .padding({ left: PAD_H, right: PAD_H })
-                .opacity(this.followSystem ? 0.35 : 1)
-                SDesc({ text: $r('app.string.settings_desc_dark_mode') })
-              }
+                .opacity(this.followSystem ? 0.55 : 1)
+                 SDesc({ text: $r('app.string.settings_desc_dark_mode') })
+               }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 交互 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: $r('app.string.settings_section_interaction') })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: $r('app.string.settings_section_interaction') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                  SRow({ label: $r('app.string.settings_label_key_haptic') }) {
@@ -751,31 +754,31 @@ export struct SettingsPage {
                 .alignItems(VerticalAlign.Center)
                 .padding({ left: PAD_H, right: PAD_H })
                 .enabled(this.hapticEnabled)
-                .opacity(this.hapticEnabled ? 1 : 0.35)
+                .opacity(this.hapticEnabled ? 1 : 0.55)
                 SDesc({ text: $r('app.string.settings_desc_haptic_strength') })
                 SDivider()
                  SRow({ label: $r('app.string.settings_label_gamepad') }) {
-                    Button($r('app.string.settings_btn_gamepad_map'))
-                     .height(36)
-                     .fontSize(13)
-                     .fontColor('#FFFFFF')
-                     .fontWeight(FontWeight.Medium)
-                     .backgroundColor($r('app.color.accent_color'))
-                     .borderRadius(8)
-                     .onClick(() => { this.openGamepadDialog(); })
-                     .accessibilityLevel('yes')
+                     Button($r('app.string.settings_btn_gamepad_map'))
+                      .height(36)
+                      .fontSize(13)
+                      .fontColor($r('app.color.btn_text_on_accent'))
+                      .fontWeight(FontWeight.Medium)
+                      .backgroundColor($r('app.color.accent_color'))
+                      .borderRadius(8)
+                      .onClick(() => { this.openGamepadDialog(); })
+                      .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                      .accessibilityLevel('yes')
                 }
-                SDesc({ text: $r('app.string.settings_desc_gamepad') })
-              }
+                 SDesc({ text: $r('app.string.settings_desc_gamepad') })
+               }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 游戏震动 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: $r('app.string.settings_section_game_shake') })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: $r('app.string.settings_section_game_shake') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                  SRow({ label: $r('app.string.settings_label_shake_intensity') }) {
@@ -786,17 +789,16 @@ export struct SettingsPage {
                     onSelect: (index: number) => { this.saveShakeIntensity(index); }
                   })
                 }
-                SDesc({ text: $r('app.string.settings_desc_shake_intensity') })
-              }
+                 SDesc({ text: $r('app.string.settings_desc_shake_intensity') })
+               }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 动感 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: $r('app.string.settings_section_motion') })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: $r('app.string.settings_section_motion') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 SSliderLabel({ label: $r('app.string.settings_label_sensitivity'), valueText: `${this.sensitivity.toFixed(1)}x` })
@@ -804,17 +806,16 @@ export struct SettingsPage {
                   value: this.sensitivity, min: 0.2, max: 3.0, step: 0.1,
                   onChange: (v: number) => { this.saveSensitivity(v); }
                 })
-                SDesc({ text: $r('app.string.settings_desc_sensitivity') })
-              }
+                 SDesc({ text: $r('app.string.settings_desc_sensitivity') })
+               }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 关于 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: $r('app.string.settings_section_about') })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: $r('app.string.settings_section_about') })
             GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {
@@ -844,27 +845,27 @@ export struct SettingsPage {
                 }
                 .width('100%')
                 .padding({ left: PAD_H, right: PAD_H, bottom: 16 })
-                .onClick(() => {
-                  this.showPrivacyPolicy();
-                })
-              }
+                 .onClick(() => {
+                   this.showPrivacyPolicy();
+                 })
+               }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 数据管理 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: $r('app.string.settings_section_data') })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: $r('app.string.settings_section_data') })
             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
               Column() {
                 Column() {
                   Button($r('app.string.settings_btn_backup'))
-                     .width('100%').height(44).fontSize(16)
-                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
-                     .onClick(() => { this.doBackup(); })
-                     .accessibilityLevel('yes')
+                      .width('100%').height(44).fontSize(16)
+                      .fontColor($r('app.color.btn_text_on_accent')).backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
+                      .onClick(() => { this.doBackup(); })
+                      .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                      .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 10, bottom: 0 })
                 Text($r('app.string.settings_desc_backup'))
@@ -873,10 +874,11 @@ export struct SettingsPage {
                 SDivider()
                 Column() {
                   Button($r('app.string.settings_btn_restore'))
-                     .width('100%').height(44).fontSize(16)
-                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
-                     .onClick(() => { this.confirmRestore(); })
-                     .accessibilityLevel('yes')
+                      .width('100%').height(44).fontSize(16)
+                      .fontColor($r('app.color.btn_text_on_accent')).backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
+                      .onClick(() => { this.confirmRestore(); })
+                      .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                      .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
                 Text($r('app.string.settings_desc_restore'))
@@ -885,56 +887,60 @@ export struct SettingsPage {
                 SDivider()
                 Column() {
                   Button($r('app.string.settings_btn_import'))
-                     .width('100%').height(44).fontSize(16)
-                     .fontColor('#FFFFFF').backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
-                     .onClick(() => { this.doImportMrp(); })
-                     .accessibilityLevel('yes')
+                      .width('100%').height(44).fontSize(16)
+                      .fontColor($r('app.color.btn_text_on_accent')).backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
+                      .onClick(() => { this.doImportMrp(); })
+                      .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                      .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 0 })
                 Text($r('app.string.settings_desc_import'))
                   .fontSize(12).fontColor($r('app.color.settings_desc_color'))
-                  .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 10 })
-              }
+                 .margin({ left: PAD_H, right: PAD_H, top: 6, bottom: 10 })
+               }
+             }
             }
           }
-        }
-        .padding({ left: 16, right: 16 })
+          .width('100%')
 
-        // ── 危险操作 ──
-        ListItem() {
-          Column() {
-            SectionHeader({ title: '' })
+         FlowItem() {
+           Column() {
+             SectionHeader({ title: '' })
             GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {
                    Button($r('app.string.settings_btn_clear_files'))
-                     .width('100%').height(48).fontSize(16)
-                     .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
-                     .onClick(() => { this.confirmClearFiles(); })
-                     .accessibilityLevel('yes')
+                      .width('100%').height(48).fontSize(16)
+                      .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
+                      .onClick(() => { this.confirmClearFiles(); })
+                      .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                      .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 8, bottom: 4 })
                 SDivider()
                 Column() {
                    Button($r('app.string.settings_btn_reset_defaults'))
-                     .width('100%').height(48).fontSize(16)
-                     .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
-                     .onClick(() => { this.resetDefaults(); })
-                     .accessibilityLevel('yes')
+                      .width('100%').height(48).fontSize(16)
+                      .fontColor($r('app.color.accent_color')).backgroundColor($r('app.color.settings_danger_bg')).borderRadius(12)
+                      .onClick(() => { this.resetDefaults(); })
+                      .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                      .accessibilityLevel('yes')
                 }
                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 8 })
               }
             }
-          }
-        }
-        .padding({ left: 16, right: 16 })
+           }
+         }
+         .width('100%')
       }
+      .columnsTemplate(this.currentBp === 'sm' ? '1fr' : '1fr 1fr')
+      .columnsGap(12)
+      .rowsGap(8)
       .width('100%')
       .layoutWeight(1)
       .scrollBar(BarState.Off)
-      .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp })
+      .padding({ left: 16, right: 16, top: 4, bottom: this.avoidData.bottomVp })
       .clip(false)
-      .cachedCount(2, true)
       .expandSafeArea()
     }
     .titleBar({
@@ -1001,7 +1007,7 @@ function BackupNameDialogBuilder($$: BackupNameDialogParams) {
         .onClick(() => { $$.onCancel(); })
       Button($r('app.string.btn_backup'))
         .width(100).height(40)
-        .backgroundColor($r('app.color.accent_color')).fontColor('#FFFFFF')
+        .backgroundColor($r('app.color.accent_color')).fontColor($r('app.color.btn_text_on_accent'))
         .onClick(() => { $$.onConfirm($$.fileName); })
     }
     .width('100%')

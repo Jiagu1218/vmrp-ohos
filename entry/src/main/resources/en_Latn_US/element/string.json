@@ -143,6 +143,9 @@
     { "name": "emulator_chip_collapse", "value": "Hide" },
     { "name": "emulator_chip_controls", "value": "Keys" },
     { "name": "emulator_btn_collapse_numpad", "value": "Hide Numpad" },
+    { "name": "emulator_chip_exit", "value": "Exit" },
+    { "name": "emulator_exit_title", "value": "Exit Emulator" },
+    { "name": "emulator_exit_message", "value": "Are you sure you want to exit the current game? Progress will be saved automatically." },
 
     { "name": "soft_left", "value": "L-Sft" },
     { "name": "soft_right", "value": "R-Sft" },

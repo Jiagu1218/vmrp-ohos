@@ -1,5 +1,5 @@
 import { abilityAccessCtrl } from '@kit.AbilityKit';
-import { NodeContent, ComponentContent, AppStorageV2, display } from '@kit.ArkUI';
+import { NodeContent, ComponentContent, AppStorageV2, display, ShowDialogSuccessResponse } from '@kit.ArkUI';
 import { preferences } from '@kit.ArkData';
 import {
   HdsNavDestination
@@ -58,6 +58,26 @@ struct EmulatorPage {
   private stickPressedKeys: Set<number> = new Set();
   private nodeContent: NodeContent = new NodeContent();
   private mrpPath: string = '';
+
+  private confirmExit(): void {
+    HapticManager.performClick();
+    const prompt = this.getUIContext().getPromptAction();
+    prompt.showDialog({
+      title: $r('app.string.emulator_exit_title'),
+      message: $r('app.string.emulator_exit_message'),
+      buttons: [
+        { text: $r('app.string.btn_cancel'), color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: $r('app.string.btn_confirm'), color: $r('sys.color.ohos_id_color_text_primary') }
+      ]
+    }).then((result: ShowDialogSuccessResponse) => {
+      if (result.index === 1) {
+        try { this.engine.stop(); } catch (_e) {}
+        this.runningState = false;
+        this.screenVisible = false;
+        this.navPathStack.pop();
+      }
+    }).catch((_err: Error) => {});
+  }
 
 
   aboutToAppear(): void {
@@ -399,6 +419,11 @@ struct EmulatorPage {
             onChipClick: () => this.navPathStack.pushPathByName('Settings', null)
           }).margin(3)
           StatusBarChip({
+            chipLabel: $r('app.string.emulator_chip_exit'),
+            chipFontColor: $r('app.color.accent_color'),
+            onChipClick: () => this.confirmExit()
+          }).margin(3)
+          StatusBarChip({
             chipLabel: $r('app.string.emulator_chip_numpad'),
             chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
             onChipClick: () => { this.showNumPadVal = !this.showNumPadVal; }
@@ -520,6 +545,7 @@ struct EmulatorPage {
           StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT })
         }
         StatusBarChip({ chipLabel: $r('app.string.emulator_chip_settings'), onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
+        StatusBarChip({ chipLabel: $r('app.string.emulator_chip_exit'), chipFontColor: $r('app.color.accent_color'), onChipClick: () => this.confirmExit() })
         StatusBarChip({
           chipLabel: $r('app.string.emulator_chip_numpad'),
           chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
@@ -631,9 +657,10 @@ struct EmulatorPage {
          if (this.gamepadConnected) {
            StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT })
          }
-          StatusBarChip({ chipLabel: $r('app.string.emulator_chip_settings'), onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
-         StatusBarChip({
-           chipLabel: $r('app.string.emulator_chip_numpad'),
+           StatusBarChip({ chipLabel: $r('app.string.emulator_chip_settings'), onChipClick: () => this.navPathStack.pushPathByName('Settings', null) })
+           StatusBarChip({ chipLabel: $r('app.string.emulator_chip_exit'), chipFontColor: $r('app.color.accent_color'), onChipClick: () => this.confirmExit() })
+          StatusBarChip({
+            chipLabel: $r('app.string.emulator_chip_numpad'),
           chipFontColor: this.showNumPadVal ? DPAD_ARROW : NUMKEY_TEXT,
           onChipClick: () => { this.showNumPadVal = !this.showNumPadVal; }
         })

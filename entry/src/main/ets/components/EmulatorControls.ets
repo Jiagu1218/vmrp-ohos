@@ -74,6 +74,10 @@ export struct DPadBtn {
       }
     }
     .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
+    .stateStyles({
+      pressed: { .opacity(0.6) },
+      normal: { .opacity(1) }
+    })
     .accessibilityText(this.label)
     .accessibilityLevel('yes')
   }
@@ -101,6 +105,10 @@ export struct SoftKeyBtn {
       }
     }
     .onTouch((e: TouchEvent) => this.onKeyTouch(this.keyVal, e))
+    .stateStyles({
+      pressed: { .opacity(0.6) },
+      normal: { .opacity(1) }
+    })
     .accessibilityLevel('yes')
   }
 }
@@ -183,6 +191,10 @@ export struct NumPadItem {
       }
     }
     .onTouch((e: TouchEvent) => this.onKeyTouch(this.itemKey, e))
+    .stateStyles({
+      pressed: { .opacity(0.6) },
+      normal: { .opacity(1) }
+    })
     .accessibilityText(`${this.itemKey === MR_KEY_STAR ? '✱' : this.itemKey === MR_KEY_POUND ? '#' : this.itemKey}`)
     .accessibilityLevel('yes')
   }
@@ -300,6 +312,10 @@ export struct StatusBarChip {
     }
     .margin({ right: 4 })
     .onClick(() => { HapticManager.performClick(); this.onChipClick(); })
+    .stateStyles({
+      pressed: { .opacity(0.6) },
+      normal: { .opacity(1) }
+    })
     .accessibilityLevel('yes')
   }
 }

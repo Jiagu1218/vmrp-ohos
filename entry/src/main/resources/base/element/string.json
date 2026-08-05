@@ -144,6 +144,9 @@
     { "name": "emulator_chip_collapse", "value": "收起" },
     { "name": "emulator_chip_controls", "value": "按键" },
     { "name": "emulator_btn_collapse_numpad", "value": "收起数字" },
+    { "name": "emulator_chip_exit", "value": "退出" },
+    { "name": "emulator_exit_title", "value": "退出模拟器" },
+    { "name": "emulator_exit_message", "value": "确定退出当前游戏吗？游戏进度将自动保存。" },
 
     { "name": "soft_left", "value": "左软" },
     { "name": "soft_right", "value": "右软" },
