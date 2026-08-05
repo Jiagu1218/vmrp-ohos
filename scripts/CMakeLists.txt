@@ -655,36 +655,9 @@ endif()
 # 上游 651e421 已实现 arm_ext_host_motion_acc_slot() + motion_acc_addr 字段,
 # OHOS 不再注入 motion acc 分配/写入代码。
 
-# --- Patch arm_ext_executor.c: 禁用上游 81aae96 的 primary_resume_without_timer_owner ---
-# 上游 81aae96 为修 optwar modal close 卡顿,新增 primary_resume_without_timer_owner:
-# 在特定条件下清空 timer owner(timer_p_addr=0),让 primary 走"无 owner 恢复"路径。
-# 但在 OHOS async runner 模型下,清空 owner 会导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
-# OHOS 补丁:短路该条件,保持 v0.2.1 的无条件设 timer owner 行为。
-# 影响范围:仅 optwar 的特定 modal close 场景(timer 回调中关闭前台子模块),
-# 对其他应用无影响。
-set(_VMRP_TIMER_OWNER "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_TIMER_OWNER}")
-    file(READ "${_VMRP_TIMER_OWNER}" _timer_owner)
-    if(NOT _timer_owner MATCHES "OHOS_TIMER_OWNER_FIX")
-        string(FIND "${_timer_owner}" "primary_resume_without_timer_owner" _anchor_test)
-        message(STATUS "[OHOS] timer_owner patch: anchor find pos=${_anchor_test} (>=0=found)")
-        # OHOS_TIMER_OWNER_FIX: 上游 81aae96 的 primary_resume_without_timer_owner
-        # 在 OHOS 下清空 timer owner,导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
-        # 完全禁用该条件分支(if(0)),保持 v0.2.1 的无条件设 wrapper owner 行为。
-        string(REPLACE
-            "        if (code == 2 && foreground_child_active &&\n            wrapper_timer_live_at_close &&\n            primary_timer_live_at_close &&\n            m->timer_p_addr == m->p_addr &&\n            m->timer_helper_addr == m->helper_addr) {"
-            "        if (0 /* OHOS_TIMER_OWNER_FIX: 禁用上游 81aae96 的 owner 清空 */) {"
-            _timer_owner "${_timer_owner}")
-        string(REPLACE
-            "        if (m->primary_resume_without_timer_owner &&\n            m->active_p_addr == m->primary_p_addr &&\n            m->active_helper_addr == m->primary_helper_addr) {"
-            "        if (0 /* OHOS_TIMER_OWNER_FIX */) {"
-            _timer_owner "${_timer_owner}")
-        file(WRITE "${_VMRP_TIMER_OWNER}" "${_timer_owner}")
-        message(STATUS "[OHOS] Patched arm_ext timer owner fix (OHOS_TIMER_OWNER_FIX)")
-    else()
-        message(STATUS "[OHOS] timer_owner patch: SKIPPED (already has OHOS_TIMER_OWNER_FIX)")
-    endif()
-endif()
+# primary_resume_without_timer_owner 补丁已移除:上游 f619149(910b4c6)完全删除了
+# primary_resume_without_timer_owner 字段及相关条件分支(与我们的 OHOS_TIMER_OWNER_FIX
+# if(0) 等效),该补丁不再需要。
 
 # --- Patch mythroad.c: dsm_write_motion_acc_to_arm ---
 # 上游 651e421 已实现 mr_motion_input()(内部调 arm_ext_host_motion_acc_slot),

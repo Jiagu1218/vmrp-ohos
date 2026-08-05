@@ -2144,6 +2144,23 @@ void arm_ext_drop_overlapping_stale_nested_modules(ArmExtModule *m,
         int overlaps = mod.file_addr && mod.file_len &&
                        arm_ext_ranges_overlap(mod.file_addr, mod.file_len,
                                               file_addr, file_len);
+        /* 挂起快照(dump0/arena)整块恢复会把保存时刻已存在的子模块映像
+         * 逐字节复活(smsend/advbar 等), guest 恢复后立刻重进它们(重挂
+         * 定时器节点、事件前置钩子、code=2/5)。这些模块的记录不能因
+         * "读入范围重叠"而丢弃——丢弃后 R9 逐 block 纠正不再覆盖其代码
+         * 段, 事件重放对钩子的 blx 以 wrapper R9 执行, 读到垃圾指针
+         * FETCH_UNMAPPED, 恢复拍整体中止(optwar 浏览器返回卡死链的最后
+         * 一环)。判活是数据驱动的: 恢复字节已就位后, 若 heap 上仍存在
+         * 描述该映像的合法 extChunk 且映像头仍是 loader 的 record/P
+         * 补丁, 记录描述的就是当前可执行内容, 保留; 真被新数据覆盖的
+         * 映像(浏览器会话期间新建的 brwshell 等)头部校验必然失败,
+         * 仍按原语义清除。 */
+        if (!is_primary && overlaps &&
+            arm_ext_has_internal_loader_chunk(m, mod.file_addr,
+                                              mod.file_len)) {
+            m->nested_modules[out++] = mod;
+            continue;
+        }
         if (!is_primary && overlaps) {
             /*
              * Private loaders may stage a replacement child into the same
@@ -2245,7 +2262,12 @@ void arm_ext_restore_primary_mapping_after_dump0(ArmExtModule *m,
                          mod.file_len == m->primary_file_len &&
                          mod.helper_addr == m->primary_helper_addr;
         if (!is_primary &&
-            arm_ext_ranges_overlap(mod.file_addr, mod.file_len, read_addr, read_len)) {
+            arm_ext_ranges_overlap(mod.file_addr, mod.file_len, read_addr, read_len) &&
+            /* dump0 恢复会逐字节复活保存时已存在的子模块; 恢复后 extChunk
+             * + 映像头补丁仍验活的记录描述的就是当前可执行内容, 必须保留
+             * (丢弃即失去 R9 归属, guest 重进该模块时以 wrapper R9 执行,
+             * 见 arm_ext_drop_overlapping_stale_nested_modules 同款注释)。 */
+            !arm_ext_has_internal_loader_chunk(m, mod.file_addr, mod.file_len)) {
             continue;
         }
         m->nested_modules[out++] = mod;

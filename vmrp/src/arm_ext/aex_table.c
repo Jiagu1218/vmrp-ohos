@@ -1899,9 +1899,30 @@ static void aex_t131(ArmExtModule *m, AexTableCtx *c) {
                  * check is therefore the extChunk magic/file/length tuple.
                  */
                 arm_ext_drop_overlapping_stale_nested_modules(m, r2, r3);
-                m->pending_internal_file_addr = r2;
-                m->pending_internal_file_len = r3;
-                arm_ext_sync_internal_nested_module(m, r2, r3);
+                /* cmd=9 有两种调用方：私有 loader 的子模块 staging（小映像，
+                 * 随后会出现描述它的 extChunk 并完成登记），以及子应用返回时
+                 * wrapper 把挂起快照(dump0/arena)整块读回后的全区 cacheSync。
+                 * 后者的范围完整覆盖 primary 映像，永远不会有 extChunk 来
+                 * "完成"这次 staging——若照 staging 语义把整个恢复区设为
+                 * pending_internal_file，find_nested_module 会因 "pending
+                 * staging 窗口" 规则拒绝把恢复区内的 PC 归属给 primary 记录，
+                 * 逐 block 的 R9 纠正从此对 game 代码失效：game 每帧经
+                 * timerStart/Stop 桥进出 wrapper 后 R9 停留在 wrapper RW，
+                 * 帧回调以错误 R9 静默空转（optwar 浏览器返回后黑屏
+                 * "请稍等"卡死的根因）。整块恢复只需要 TB 缓存失效，
+                 * 不是子模块 staging。 */
+                int restores_primary_image =
+                    m->primary_file_addr && m->primary_file_len &&
+                    arm_ext_range_contains(r2, r3, m->primary_file_addr,
+                                           m->primary_file_len);
+                if (restores_primary_image) {
+                    m->pending_internal_file_addr = 0;
+                    m->pending_internal_file_len = 0;
+                } else {
+                    m->pending_internal_file_addr = r2;
+                    m->pending_internal_file_len = r3;
+                    arm_ext_sync_internal_nested_module(m, r2, r3);
+                }
                 uc_err cerr = uc_ctl_remove_cache(m->uc, r2, r2 + r3);
                 if (cerr != UC_ERR_OK && arm_ext_trace_on()) {
                     printf("arm_ext_executor: uc_ctl_remove_cache(0x%X, 0x%X) failed: %u\n",
