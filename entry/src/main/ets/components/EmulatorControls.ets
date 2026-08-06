@@ -24,18 +24,6 @@ export interface EditDialogOptions {
   autoCancel: boolean;
 }
 
-// 平台菜单(menu)弹窗:vmrp menuShow 后弹出,用原生 List 组件渲染菜单项。
-export interface MenuDialogContentBuilderParams {
-  menuData: string;  // \n 分隔,首行=标题,其余=菜单项
-  onSelect: (index: number) => void;
-  onCancel: () => void;
-}
-
-export interface MenuDialogOptions {
-  alignment: DialogAlignment;
-  autoCancel: boolean;
-}
-
 export const SHELL_COLOR: ResourceColor = $r('app.color.shell_color');
 export const SCREEN_BG: ResourceColor = $r('app.color.emulator_screen_bg');
 export const DPAD_BG: ResourceColor = $r('app.color.dpad_bg');
@@ -427,86 +415,6 @@ export function EditDialogContentBuilder($$: EditDialogContentBuilderParams) {
     editText: $$.editText,
     onTextChange: $$.onTextChange,
     onSubmit: $$.onSubmit,
-    onCancel: $$.onCancel
-  })
-}
-
-// 平台菜单内容:原生 List 组件渲染,支持触屏点选。
-@ComponentV2
-export struct MenuDialogContent {
-  @Param menuData: string = '';
-  @Event onSelect: (index: number) => void = () => {};
-  @Event onCancel: () => void = () => {};
-  @Local private items: string[] = [];
-  @Local private title: string = '';
-
-  aboutToAppear(): void {
-    // menuData 以 \n 分隔(首行标题),空行过滤。
-    const parts = this.menuData.split('\n').filter(s => s.length > 0);
-    this.title = parts.length > 0 ? parts[0] : '';
-    this.items = parts.length > 1 ? parts.slice(1) : [];
-  }
-
-  build() {
-    Column() {
-      // 标题栏
-      Text(this.title)
-        .fontSize(18)
-        .fontWeight(FontWeight.Bold)
-        .fontColor($r('app.color.emulator_status_text'))
-        .width('100%')
-        .textAlign(TextAlign.Center)
-        .padding({ top: 16, bottom: 12, left: 16, right: 16 })
-
-      // 菜单项列表
-      List({ space: 2 }) {
-        ForEach(this.items, (item: string, index: number) => {
-          ListItem() {
-            Text(item)
-              .fontSize(16)
-              .fontColor($r('app.color.emulator_status_text'))
-              .width('100%')
-              .height(48)
-              .padding({ left: 20, right: 20 })
-              .textAlign(TextAlign.Start)
-              .backgroundColor(index % 2 === 0 ? SHELL_COLOR : DPAD_BG)
-              .onClick(() => {
-                this.onSelect(index);
-              })
-          }
-        }, (item: string, index: number) => `${index}_${item}`)
-      }
-      .layoutWeight(1)
-      .width('100%')
-      .divider({ strokeWidth: 1, color: $r('app.color.emulator_shell_border'), startMargin: 12, endMargin: 12 })
-
-      // 底部取消按钮
-      Row() {
-        Button($r('app.string.btn_cancel'))
-          .width(120)
-          .height(40)
-          .backgroundColor($r('app.color.emulator_edit_cancel_bg'))
-          .fontColor($r('app.color.emulator_edit_cancel_fg'))
-          .onClick(() => {
-            this.onCancel();
-          })
-      }
-      .width('100%')
-      .justifyContent(FlexAlign.Center)
-      .padding({ top: 10, bottom: 16 })
-    }
-    .width('78%')
-    .height(440)
-    .backgroundColor(SHELL_COLOR)
-    .borderRadius(16)
-  }
-}
-
-@Builder
-export function MenuDialogContentBuilder($$: MenuDialogContentBuilderParams) {
-  MenuDialogContent({
-    menuData: $$.menuData,
-    onSelect: $$.onSelect,
     onCancel: $$.onCancel
   })
 }

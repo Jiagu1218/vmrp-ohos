@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "./include/native_dsm_funcs.h"
+#include "./include/native_modal_menu.h"
 #include "./include/native_text_widget.h"
 #include "./include/dsm.h"
 
@@ -30,6 +31,9 @@ int skyengine_runtime_start_dsm(VmrpRuntime *rt, const char *mrp, const char *ex
 
 int skyengine_runtime_event(VmrpRuntime *rt, int32_t code, int32_t p0, int32_t p1) {
     (void)rt;
+    /* 原生菜单和文本框一样属于平台 UI；在全部前端共享的事件入口接管
+     * 输入，选择/取消会由菜单模块另行投递 MR_MENU_SELECT/RETURN。 */
+    if (native_modal_menu_filter_event(code, p0)) return MR_SUCCESS;
     /* 平台文本框(mr_textCreate)显示期间按真机语义接管输入:软键翻译为
      * MR_DIALOG_EVENT 投递给应用,其余输入事件被平台窗口消费。这里是
      * 全部前端入口(SDL/wasm/flutter)进入 guest 的唯一漏斗,保证行为一致。
@@ -38,8 +42,14 @@ int skyengine_runtime_event(VmrpRuntime *rt, int32_t code, int32_t p0, int32_t p
     switch (native_text_widget_filter_event(code, p0, &dialog_param)) {
         case 1: /* 平台窗口消费(含滚动),不投递给应用 */
             return MR_SUCCESS;
-        case 2: /* 软键命中文本框按钮 → 对话框事件 */
-            return mr_event((int16)MR_DIALOG_EVENT, dialog_param, 0);
+        case 2: { /* 软键命中文本框按钮 → 对话框事件 */
+            /* 回调可能释放当前 dialog 并同步恢复父菜单；延迟 guest 镜像
+             * 恢复，避免两个平台层之间闪过底层应用画面。 */
+            native_text_widget_transition_begin();
+            int ret = mr_event((int16)MR_DIALOG_EVENT, dialog_param, 0);
+            native_text_widget_transition_end();
+            return ret;
+        }
         default:
             break;
     }
@@ -58,6 +68,10 @@ int skyengine_runtime_motion(VmrpRuntime *rt, int32_t x, int32_t y, int32_t z) {
 }
 
 void skyengine_runtime_destroy(VmrpRuntime *rt) {
+    native_modal_menu_destroy();
+    native_text_widget_destroy();
+    /* DSM 菜单标题/选项由 host malloc 按 handle 持有，runtime 销毁时统一释放。 */
+    dsm_menu_release_all();
     native_dsm_funcs_destroy();
     memset(rt, 0, sizeof(*rt));
 }

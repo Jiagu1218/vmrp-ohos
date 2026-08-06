@@ -1,6 +1,7 @@
 #include "./include/dsm.h"
 
 #include <stdio.h>
+#include <string.h>
 #include "./include/encode.h"
 #include "./include/fixR9.h"
 #include "./include/mem.h"
@@ -1487,28 +1488,137 @@ void mr_connectWAP(char *wap) {
     LOGI("mr_connectWAP(%s)", wap);
 }
 
+/* mr_menuCreate/SetItem/Show:ARM ext 通过 table[63]/[64]/[65] 调到宿主。
+ * 平台同一时刻只显示一个菜单，但 guest 可以保留多个菜单 handle：子菜单
+ * 关闭后会再次 show 父 handle，因此每个 handle 的 title/items 必须独立保存。 */
+#define MR_MENU_MAX_ITEMS 32
+typedef struct DsmMenu {
+    int32_t     handle;
+    char       *title_ucs2be;   /* UCS2-BE 字节流(以 0x0000 结尾) */
+    int32_t     item_count;
+    char       *items_ucs2be[MR_MENU_MAX_ITEMS];
+    struct DsmMenu *next;
+} DsmMenu;
+
+static DsmMenu *dsm_menus;
+static int32_t dsmNextMenuHandle = 1;
+
+static DsmMenu *dsm_menu_find(int32 handle) {
+    for (DsmMenu *menu = dsm_menus; menu != NULL; menu = menu->next) {
+        if (menu->handle == handle) return menu;
+    }
+    return NULL;
+}
+
+static char *dsm_menu_dup_ucs2be(const char *text) {
+    if (text == NULL) return NULL;
+    size_t n = 0;
+    /* DSM 菜单字符串沿用原 256 字节上限；先检查边界再读终止符。 */
+    while (n < 256 && (text[n] != 0 || text[n + 1] != 0)) n += 2;
+    if (n >= 256) return NULL;
+    n += 2;
+    char *copy = (char *)malloc(n);
+    if (copy != NULL) memcpy(copy, text, n);
+    return copy;
+}
+
+static void dsm_menu_free(DsmMenu *menu) {
+    if (menu == NULL) return;
+    free(menu->title_ucs2be);
+    for (int i = 0; i < MR_MENU_MAX_ITEMS; i++) free(menu->items_ucs2be[i]);
+    free(menu);
+}
+
 int32 mr_menuCreate(const char *title, int16 num) {
-    return MR_FAILED;
+    (void)num;            /* num 只用于预分配,这里用动态 items_ucs2be[] */
+    DsmMenu *menu = (DsmMenu *)calloc(1, sizeof(*menu));
+    if (menu == NULL) return MR_FAILED;
+    if (title != NULL) {
+        menu->title_ucs2be = dsm_menu_dup_ucs2be(title);
+        if (menu->title_ucs2be == NULL) {
+            dsm_menu_free(menu);
+            return MR_FAILED;
+        }
+    }
+    menu->handle = dsmNextMenuHandle++;
+    if (menu->handle <= 0) menu->handle = dsmNextMenuHandle = 1;
+    menu->next = dsm_menus;
+    dsm_menus = menu;
+    return menu->handle;
 }
 
 int32 mr_menuSetItem(int32 hd, const char *text, int32 index) {
-    return MR_FAILED;
+    DsmMenu *menu = dsm_menu_find(hd);
+    if (menu == NULL) return MR_FAILED;
+    if (index < 0 || index >= MR_MENU_MAX_ITEMS) return MR_FAILED;
+    char *copy = dsm_menu_dup_ucs2be(text);
+    if (copy == NULL) return MR_FAILED;
+    free(menu->items_ucs2be[index]);
+    menu->items_ucs2be[index] = copy;
+    if (index + 1 > menu->item_count) menu->item_count = index + 1;
+    return MR_SUCCESS;
 }
 
 int32 mr_menuShow(int32 menu) {
-    return MR_IGNORE;
+    DsmMenu *state = dsm_menu_find(menu);
+    if (state == NULL || state->item_count <= 0) return MR_FAILED;
+    /* 具体 handle 继续传给平台层，由平台层读取对应菜单的数据。 */
+    if (dsmInFuncs->mr_menuShow != NULL) {
+        return dsmInFuncs->mr_menuShow(menu);
+    }
+    return MR_FAILED;
 }
 
 int32 mr_menuSetFocus(int32 menu, int32 index) {
-    return MR_IGNORE;
+    if (dsm_menu_find(menu) == NULL) return MR_IGNORE;
+    (void)index;          /* 由宿主实现侧记录高亮 */
+    return MR_SUCCESS;
 }
 
 int32 mr_menuRelease(int32 menu) {
-    return MR_IGNORE;
+    DsmMenu **link = &dsm_menus;
+    while (*link != NULL && (*link)->handle != menu) link = &(*link)->next;
+    if (*link == NULL) return MR_IGNORE;
+    DsmMenu *released = *link;
+    /* 平台层只在该 handle 当前可见时关闭 overlay；隐藏父菜单不受影响。 */
+    if (dsmInFuncs->mr_menuRelease != NULL) {
+        (void)dsmInFuncs->mr_menuRelease(menu);
+    }
+    *link = released->next;
+    dsm_menu_free(released);
+    return MR_SUCCESS;
+}
+
+void dsm_menu_release_all(void) {
+    /* teardown 不借用任何 guest 可见 handle，逐个释放仍存活的平台副本。 */
+    while (dsm_menus != NULL) {
+        DsmMenu *next = dsm_menus->next;
+        dsm_menu_free(dsm_menus);
+        dsm_menus = next;
+    }
 }
 
 int32 mr_menuRefresh(int32 menu) {
-    return MR_IGNORE;
+    DsmMenu *state = dsm_menu_find(menu);
+    if (state == NULL || state->item_count <= 0) return MR_IGNORE;
+    /* wrapper 在子菜单析构后用 Refresh(action 2) 恢复父菜单；此时平台
+     * overlay 已关闭，需要用父 handle 的持久数据重新呈现。 */
+    if (dsmInFuncs->mr_menuShow != NULL) return dsmInFuncs->mr_menuShow(menu);
+    return MR_FAILED;
+}
+
+/* native_menuShow 按 handle 查询只读数据；对应 mr_menuRelease 前均有效。 */
+char *dsm_menu_title_ucs2be(int32 handle) {
+    DsmMenu *menu = dsm_menu_find(handle);
+    return menu != NULL ? menu->title_ucs2be : NULL;
+}
+char **dsm_menu_items_ucs2be(int32 handle) {
+    DsmMenu *menu = dsm_menu_find(handle);
+    return menu != NULL ? menu->items_ucs2be : NULL;
+}
+int32 dsm_menu_item_count(int32 handle) {
+    DsmMenu *menu = dsm_menu_find(handle);
+    return menu != NULL ? menu->item_count : 0;
 }
 
 int32 mr_dialogCreate(const char *title, const char *text, int32 type) {

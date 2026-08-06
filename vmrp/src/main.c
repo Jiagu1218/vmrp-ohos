@@ -751,6 +751,8 @@ void loop(void) {
 #if defined(__EMSCRIPTEN__)
         while (SDL_PollEvent(&ev))
 #else
+        /* mr_menuShow 只显示平台菜单并立即返回；主循环继续处理 SDL/E2E/
+         * timer，平台输入由 skyengine_runtime_event 的公共漏斗接管。 */
         while (SDL_WaitEvent(&ev))
 #endif
         {

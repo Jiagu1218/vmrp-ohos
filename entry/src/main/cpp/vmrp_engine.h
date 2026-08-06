@@ -56,13 +56,6 @@ struct VmrpApi {
     int (*set_edit_text)(const char *text);
     int (*cancel_edit)(void);
 
-    // 平台菜单(menu):vmrp 侧存菜单数据,前端 ArkTS 渲染原生菜单 Dialog。
-    // 参考架构同 edit。
-    int (*is_menu_active)(void);
-    const char *(*get_menu_data)(void);  // NUL 分隔:标题(NUL)项0(NUL)...
-    int (*submit_menu)(int index);
-    int (*cancel_menu)(void);
-
     // 上游轮询式 motion/shake API（651e421/4fbb0b4）
     int (*motion_active)(void);     // -1=未监听, 0=晃动, 1=倾斜
     int (*take_shake)(void);        // 0=无请求, >0=震动N毫秒, -1=停止
@@ -158,14 +151,6 @@ public:
     std::string GetEditText();
     int SetEditText(const std::string &text);
     int CancelEdit();
-
-    // 平台菜单(menu):menuShow 后 MenuActive() 返回 true,前端弹出菜单 Dialog。
-    // GetMenuData 返回 NUL 分隔的标题+项列表。用户选择调 SubmitMenu(index),
-    // 取消调 CancelMenu(),引擎投递 MR_MENU_SELECT/RETURN 事件给应用。
-    bool MenuActive();
-    std::string GetMenuData();
-    int SubmitMenu(int index);
-    int CancelMenu();
 
     // 加速度传感器：由 TimerLoop 轮询 motion_active() 驱动启停。
     void StartSensor();

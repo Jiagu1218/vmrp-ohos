@@ -6,11 +6,12 @@
 
 #include "./include/bridge.h"
 #include "./include/file_lib.h"
+#include "./include/native_modal_menu.h"
 #include "./include/types.h"
 #include "./include/skyengine.h"
 
 /*
- * 平台文本框(黑底绿字全屏文本页)的宿主实现,语义与布局说明:
+ * 平台文本框/对话框(黑底绿字全屏文本页)的宿主实现,语义与布局说明:
  *
  * - SKYENGINE 手册(mr_textCreate.md):title/text 为 UCS2 大端;type 取
  *   MR_DIALOG_OK(0)/MR_DIALOG_OK_CANCEL(1)/MR_DIALOG_CANCEL(2),决定底部
@@ -52,6 +53,9 @@ typedef struct {
 
 static TextWidget tw;
 static int32_t tw_handle_gen = 0;
+/* 平台窗口在 PRESS 上触发 MR_DIALOG_EVENT 后可能被 guest 立即释放；记录
+ * 该 PRESS，确保随后到达的配对 RELEASE 仍由原平台窗口消费。 */
+static int32_t tw_captured_key = -1;
 
 /* guest 显示镜像:累积每次上屏的矩形,始终保存"应用画面当前应有的样子" */
 static uint16_t *tw_mirror = NULL;
@@ -61,6 +65,9 @@ static int tw_mirror_valid = 0;
 
 /* 文本框自身上屏时置位,防止把文本页写进镜像/被自己截留 */
 static int tw_presenting = 0;
+/* 平台事件回调内关闭旧 overlay 时延迟恢复；回调可能同步显示下一层。 */
+static int tw_transition_depth = 0;
+static int tw_restore_pending = 0;
 
 /* ---------------- 字库 ---------------- */
 
@@ -73,6 +80,9 @@ static int32_t tw_font_fd = 0;
 static int tw_font_open(void) {
     if (tw_font_fd > 0) return 1;
     tw_font_fd = my_open("mythroad/system/gb16.uc2", MR_FILE_RDONLY);
+    if (getenv("SKYENGINE_DEBUG_FONT")) {
+        fprintf(stderr, "DBG font_open my_open returned %d\n", (int)tw_font_fd);
+    }
     return tw_font_fd > 0;
 }
 
@@ -140,6 +150,28 @@ static int tw_string_width(const uint16_t *s) {
     int w = 0;
     for (; *s != 0; s++) w += tw_char_width(*s);
     return w;
+}
+
+/* 公开给 native_modal_menu 复用(同一份 UCS2 → RGB565 字库解码)。
+ * 见 include/native_text_widget.h 的 native_text_widget_draw_string
+ * /_string_width/_char_width 注释。
+ *
+ * 字库是 lazy open:第一次绘制前如果 tw_font_fd==0 会自动打开
+ * (与 native_text_widget_create 同源)。同一进程内任意调用方
+ * (text widget / modal menu)都会复用同一份字库 fd。 */
+int native_text_widget_draw_string(uint16_t *page, int pw, int ph,
+                                    const uint16_t *s, int x, int y) {
+    if (!tw_font_open()) return -1;
+    return tw_draw_string(page, pw, ph, s, x, y);
+}
+
+int native_text_widget_string_width(const uint16_t *s) {
+    if (!tw_font_open()) return 0;
+    return tw_string_width(s);
+}
+
+int native_text_widget_char_width(uint16_t ch) {
+    return tw_char_width(ch);
 }
 
 /*
@@ -261,16 +293,46 @@ int native_text_widget_capture_frame(const uint16_t *bmp, int32_t x, int32_t y,
     }
     tw_mirror_valid = 1;
 
-    /* 显示期间截留 guest 帧:平台窗口在应用画面之上(真机语义) */
-    return tw.active;
+    /* 平台层显示或切换期间截留 guest 帧；切换回调内的背景重绘也只能
+     * 更新镜像，避免下一层 overlay 创建前短暂上屏。 */
+    return tw.active || native_modal_menu_active() || tw_transition_depth > 0;
 }
 
-/* 关闭时把镜像整帧重推上屏,露出被文本框遮住的应用画面 */
-static void tw_present_mirror(void) {
+static void tw_restore_guest_frame_now(void) {
     if (!tw_mirror_valid || tw_mirror == NULL) return;
     if (tw_mirror_w != skyengine_display_width() || tw_mirror_h != skyengine_display_height()) return;
     tw_presenting = 1;
     guiDrawBitmap(tw_mirror, 0, 0, tw_mirror_w, tw_mirror_h);
+    tw_presenting = 0;
+}
+
+/* 关闭时把镜像整帧重推上屏；平台层切换事务内只登记，避免中间帧。 */
+void native_text_widget_restore_guest_frame(void) {
+    if (tw_transition_depth > 0) {
+        tw_restore_pending = 1;
+        return;
+    }
+    tw_restore_guest_frame_now();
+}
+
+void native_text_widget_transition_begin(void) {
+    tw_transition_depth++;
+}
+
+void native_text_widget_transition_end(void) {
+    if (tw_transition_depth <= 0) return;
+    tw_transition_depth--;
+    if (tw_transition_depth != 0 || !tw_restore_pending) return;
+
+    tw_restore_pending = 0;
+    /* 回调已显示下一层平台 UI 时保留该层；否则现在才露出 guest 镜像。 */
+    if (!tw.active && !native_modal_menu_active()) tw_restore_guest_frame_now();
+}
+
+void native_text_widget_present_platform_frame(uint16_t *bmp, int32_t w, int32_t h) {
+    /* 复用同一 present 标志，保证菜单等平台 overlay 不污染 guest 镜像。 */
+    tw_presenting = 1;
+    guiDrawBitmap(bmp, 0, 0, w, h);
     tw_presenting = 0;
 }
 
@@ -283,8 +345,33 @@ static void tw_free_content(void) {
     tw.text = NULL;
 }
 
+void native_text_widget_destroy(void) {
+    tw.active = 0;
+    tw.handle = 0;
+    tw.scroll = 0;
+    tw.line_count = 0;
+    tw_captured_key = -1;
+    tw_presenting = 0;
+    tw_free_content();
+    free(tw_mirror);
+    tw_mirror = NULL;
+    tw_mirror_w = 0;
+    tw_mirror_h = 0;
+    tw_mirror_valid = 0;
+    tw_transition_depth = 0;
+    tw_restore_pending = 0;
+    if (tw_font_fd > 0) {
+        my_close(tw_font_fd);
+        tw_font_fd = 0;
+    }
+}
+
 int native_text_widget_active(void) {
     return tw.active;
+}
+
+int native_text_widget_font_ready(void) {
+    return tw_font_open();
 }
 
 int32_t native_text_widget_create(const char *title_ucs2be, const char *text_ucs2be, int32_t type) {
@@ -321,12 +408,17 @@ int32_t native_text_widget_release(int32_t handle) {
     tw.active = 0;
     tw_free_content();
     /* 恢复应用画面(镜像中保存的 guest 最后一帧) */
-    tw_present_mirror();
+    native_text_widget_restore_guest_frame();
     return MR_SUCCESS;
 }
 
-int32_t native_text_widget_refresh(int32_t handle, const char *title_ucs2be, const char *text_ucs2be) {
+int32_t native_text_widget_refresh(int32_t handle, const char *title_ucs2be,
+                                   const char *text_ucs2be, int32_t type) {
     if (!tw.active || handle != tw.handle) return MR_FAILED;
+    if (type != -1 && type != MR_DIALOG_OK && type != MR_DIALOG_OK_CANCEL &&
+        type != MR_DIALOG_CANCEL) {
+        return MR_FAILED;
+    }
     uint16_t *title = tw_ucs2be_dup(title_ucs2be);
     uint16_t *text = tw_ucs2be_dup(text_ucs2be);
     if (title == NULL || text == NULL) {
@@ -337,6 +429,8 @@ int32_t native_text_widget_refresh(int32_t handle, const char *title_ucs2be, con
     tw_free_content();
     tw.title = title;
     tw.text = text;
+    /* mr_dialogRefresh 约定 -1 表示沿用原按钮类型；mr_textRefresh 总是走此分支。 */
+    if (type != -1) tw.type = type;
     tw.scroll = 0;
     tw_render_and_present();
     return MR_SUCCESS;
@@ -345,12 +439,21 @@ int32_t native_text_widget_refresh(int32_t handle, const char *title_ucs2be, con
 /* ---------------- 事件 ---------------- */
 
 int native_text_widget_filter_event(int32_t code, int32_t p0, int32_t *dialog_param) {
+    /* 选择回调可能已释放窗口，但选择键的 RELEASE 仍归平台窗口所有。 */
+    if (code == MR_KEY_RELEASE && p0 == tw_captured_key) {
+        tw_captured_key = -1;
+        return 1;
+    }
     if (!tw.active) return 0;
     /* 显示期间平台窗口拥有全部输入:按键与触屏都不再到达应用 */
     switch (code) {
         case MR_KEY_PRESS:
+            tw_captured_key = p0;
             break;
         case MR_KEY_RELEASE:
+            /* 没有命中 tw_captured_key，说明 PRESS 在窗口创建前已交给 guest；
+             * 其配对 RELEASE 也必须继续交给 guest。 */
+            return 0;
         case MR_MOUSE_DOWN:
         case MR_MOUSE_UP:
         case MR_MOUSE_MOVE:

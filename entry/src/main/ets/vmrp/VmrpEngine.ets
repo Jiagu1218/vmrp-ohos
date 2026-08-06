@@ -23,8 +23,6 @@ import {
   startDsmEx as nativeStartDsmEx,
   submitEdit as nativeSubmitEdit, cancelEdit as nativeCancelEdit,
   isRunning as nativeIsRunning, setEditCallback as nativeSetEditCallback,
-  setMenuCallback as nativeSetMenuCallback,
-  submitMenu as nativeSubmitMenu, cancelMenu as nativeCancelMenu,
   setExitCallback as nativeSetExitCallback,
   getEngineMode as nativeGetEngineMode,
   setSpeedMultiplier as nativeSetSpeedMultiplier,
@@ -150,14 +148,6 @@ export class VmrpEngineTs {
     return nativeCancelEdit();
   }
 
-  submitMenu(index: number): number {
-    return nativeSubmitMenu(index);
-  }
-
-  cancelMenu(): number {
-    return nativeCancelMenu();
-  }
-
   isRunning(): boolean {
     return nativeIsRunning();
   }
@@ -185,11 +175,6 @@ export class VmrpEngineTs {
   // 注册编辑回调：native 检测到 MRP 请求编辑时回调此处，并携带待编辑的原文本用于回显。
   setEditCallback(cb: (editText: string) => void): void {
     nativeSetEditCallback(cb);
-  }
-
-  // 注册菜单回调:native 检测到 MRP menuShow 时回调此处,携带菜单数据(\n 分隔,首行标题)。
-  setMenuCallback(cb: (menuData: string) => void): void {
-    nativeSetMenuCallback(cb);
   }
 
   setExitCallback(cb: () => void): void {

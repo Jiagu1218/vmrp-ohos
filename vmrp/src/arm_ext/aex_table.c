@@ -1222,6 +1222,67 @@ aex_done:
     c->ret = ret;
 }
 
+/* table[63] mr_menuCreate(title, num):创建独立菜单 handle；DSM 保存该
+ * handle 对应的 title/items，供异步 mr_menuShow/Refresh 呈现。 */
+static void aex_t063(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t r1 = c->r1;
+    uint32_t ret = MR_SUCCESS;
+ {
+        ret = mr_menuCreate(arm_str(m, r0), (int16)r1);
+    } goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[64] mr_menuSetItem(menu, text, index):复制并保存第 index 项文本。 */
+static void aex_t064(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t r1 = c->r1;
+    uint32_t r2 = c->r2;
+    uint32_t ret = MR_SUCCESS;
+ {
+        ret = mr_menuSetItem((int32)r0, arm_str(m, r1), (int32)r2);
+    } goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[65] mr_menuShow(menu):异步显示原生菜单并返回状态，选择/取消
+ * 随后由平台事件入口投递 MR_MENU_SELECT/MR_MENU_RETURN。 */
+static void aex_t065(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t ret = MR_SUCCESS;
+ ret = mr_menuShow((int32)r0); goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[67] mr_menuRelease(menu):释放原生菜单。mr_helper.h 第 76 行。 */
+static void aex_t067(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t ret = MR_SUCCESS;
+    ret = mr_menuRelease((int32)r0);
+    goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[68] mr_menuRefresh(menu):刷新原生菜单显示。mr_helper.h 第 77 行。 */
+static void aex_t068(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t ret = MR_SUCCESS;
+    ret = mr_menuRefresh((int32)r0);
+    goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
 static void aex_t069(ArmExtModule *m, AexTableCtx *c) {
     (void)m;
     uint32_t r0 = c->r0;
@@ -2685,6 +2746,11 @@ const AexTableHandler aex_table_handlers[EXT_TABLE_COUNT] = {
     [59] = aex_t059,
     [60] = aex_t060,
     [61] = aex_t061,
+    [63] = aex_t063,
+    [64] = aex_t064,
+    [65] = aex_t065,
+    [67] = aex_t067,
+    [68] = aex_t068,
     [69] = aex_t069,
     [70] = aex_t070,
     [71] = aex_t071,

@@ -91,12 +91,24 @@ static bool alloc_code_gen_buffer_splitwx(uc, size, &buf_rw) {
 
 ### Split-WX 在 OHOS 上的可行性
 
-**几乎确定可行**，理由：
-1. 当前匿名 RWX 都能成功 → 文件后端 RX 更没问题
-2. `memfd_create` 在 OHOS 上已知可用（之前诊断时返回了有效 fd=51）
-3. chashaochang/unicorn-ohos 已在 HarmonyOS 上验证
+**已验证不可行**（2026-08-05，Mate 70 Pro / HarmonyOS 7.0）。
 
-**但有一个未验证点**：之前测试 `memfd_create + mprotect(PROT_EXEC)` 失败（EACCES）。Split-WX 的方式不同——它直接 `mmap(fd, PROT_EXEC)`（不是先 RW 再 mprotect），这个路径可能没被封。需要实际验证。
+实机 probe 结果：
+```
+[SWX-PROBE] memfd_create: fd=<有效>        ← 成功
+[SWX-PROBE] mmap RW: <有效>                 ← 成功
+[SWX-PROBE] mmap RX(file-backed PROT_EXEC): EACCES  ← 失败！
+[SWX-PROBE] ✗ Split-WX 不可行
+```
+
+`memfd_create` 和 RW 映射都成功，但 `mmap(fd, PROT_READ|PROT_EXEC, MAP_SHARED)` 返回
+EACCES——文件后端的 PROT_EXEC 也被内核拒绝。这与之前 `mprotect(PROT_EXEC)` 失败一致，
+说明 HarmonyOS 7.0 的 PROT_EXEC 限制是全面的，不区分匿名/文件后端、mmap/mprotect。
+
+**结论：Split-WX 方案在 HarmonyOS 7.0 上彻底排除。TCI 仍是唯一可靠的保底方案。**
+
+chashaochang/unicorn-ohos 能工作的原因可能是：不同的 OHOS 版本/设备/ACL 权限配置，
+或其测试环境有 `ohos.permission.kernel.ALLOW_EXECUTABLE_FORT_MEMORY` ACL 权限。
 
 ## 移植到 vmrp-ohos 的路径
 
@@ -110,25 +122,20 @@ static bool alloc_code_gen_buffer_splitwx(uc, size, &buf_rw) {
 
 ### 推荐时机
 
-- **当前不需要**：设备 RWX 可用，JIT 直接运行
-- **未来需要时**：当系统再次收紧 PROT_EXEC，且 TCI 性能不可接受时，优先尝试方案 B
+**已排除，不再考虑**。2026-08-05 实机验证 `mmap(fd, PROT_EXEC)` 返回 EACCES，
+Split-WX 在 HarmonyOS 7.0 上不可行。TCI 是唯一可靠的 PROT_EXEC-free 方案。
 
 ## 与当前架构的关系
 
 ```
 启动时探测 mmap(PROT_RWX)
 ├─ 成功 → libvmrp.so (JIT)          ← 当前设备走这条
-├─ 失败 → libvmrp_tci.so (TCI)      ← PROT_EXEC 被禁时走这条
-│
-└─ 未来：Split-WX 方案可替代 TCI
-    失败 → libvmrp_splitwx.so (JIT via 文件后端 RX)
-    性能远优于 TCI，但依赖文件后端 PROT_EXEC 允许
+└─ 失败 → libvmrp_tci.so (TCI)      ← PROT_EXEC 被禁时走这条
+
+Split-WX 已排除：mmap(fd, PROT_EXEC) 在 OHOS 7.0 上 EACCES
 ```
 
-Split-WX 可以作为第三个 so 加入双 so 方案，形成三级降级：
-1. **JIT（匿名 RWX）**：最快，需要匿名 PROT_EXEC
-2. **Split-WX JIT（文件后端 RX）**：接近原生，需要文件后端 PROT_EXEC
-3. **TCI（纯解释器）**：最慢但最兼容，不需要任何可执行内存
+当前二级降级（JIT → TCI）是最终架构，不再扩展三级降级。
 
 ## 参考资料
 

@@ -313,6 +313,7 @@ set(SKYENGINE_FIRST_PARTY_SOURCES
   ./src/native_platform_memory.c
   ./src/native_dsm_funcs.c
   ./src/native_text_widget.c
+  ./src/native_modal_menu.c
   ./src/runtime_native_mythroad.c
   ${SKYENGINE_ARM_EXT_SOURCES}
 )
@@ -333,6 +334,7 @@ add_executable(skyengine
   ./src/native_platform_memory.c
   ./src/native_dsm_funcs.c
   ./src/native_text_widget.c
+  ./src/native_modal_menu.c
   ./src/runtime_native_mythroad.c
   ${SKYENGINE_ARM_EXT_SOURCES}
   ${SKYENGINE_MYTHROAD_SOURCES}
@@ -439,6 +441,7 @@ if(EMCC)
     ./src/native_platform_memory.c
     ./src/native_dsm_funcs.c
     ./src/native_text_widget.c
+    ./src/native_modal_menu.c
     ./src/runtime_native_mythroad.c
     ${SKYENGINE_ARM_EXT_SOURCES}
     ${SKYENGINE_MYTHROAD_SOURCES}
@@ -487,6 +490,7 @@ if(SKYENGINE_BUILD_SHARED)
     ./src/native_platform_memory.c
     ./src/native_dsm_funcs.c
     ./src/native_text_widget.c
+    ./src/native_modal_menu.c
     ./src/runtime_native_mythroad.c
     ${SKYENGINE_ARM_EXT_SOURCES}
     ${SKYENGINE_MYTHROAD_SOURCES}

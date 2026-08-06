@@ -87,6 +87,13 @@ extern int32 mr_textRefresh(int32 handle, const char *title, const char *text);
 extern int32 mr_editCreate(const char *title, const char *text, int32 type, int32 max_size);
 extern int32 mr_editRelease(int32 edit);
 extern const char *mr_editGetText(int32 edit);
+/* table[63..65]/[67..68] 桥接真实平台菜单生命周期：DSM 按 handle
+ * 保存文本，宿主异步显示，并由后续 MR_MENU_SELECT/RETURN 完成选择。 */
+extern int32 mr_menuCreate(const char *title, int16 num);
+extern int32 mr_menuSetItem(int32 menu, const char *text, int32 index);
+extern int32 mr_menuShow(int32 menu);
+extern int32 mr_menuRelease(int32 menu);
+extern int32 mr_menuRefresh(int32 menu);
 extern void mr_drawBitmap(uint16 *bmp, int16 x, int16 y, uint16 w, uint16 h);
 extern const char *mr_getCharBitmap(uint16 ch, uint16 fontSize, int *width, int *height);
 extern int32 mr_getScreenInfo(void *s);
