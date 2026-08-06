@@ -414,43 +414,16 @@ if(EXISTS "${_VMRP_NDF_H}")
 endif()
 
 
-# --- textCreate 美化:改进 native_text_widget.c 布局(标题分隔线 + 软键栏加粗 + 行距) ---
-# 美化项:1)标题下方加分隔线(单像素绿色横线);2)正文起点下移让位;
-#         3)软键栏分隔线 1px→2px;4)左右内边距加大。
-ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/native_text_widget.c")
-set(_VMRP_NTW "${VMRP_SRC_DIR}/src/native_text_widget.c")
-if(EXISTS "${_VMRP_NTW}")
-    file(READ "${_VMRP_NTW}" _ntw_text)
-    if(NOT _ntw_text MATCHES "OHOS_TEXTWIDGET_BEAUTIFY")
-        # 1) 正文起点下移 4px(给标题分隔线让位):TW_BODY_Y 从 +8 改为 +12
-        string(REPLACE
-            "#define TW_BODY_Y (TW_TITLE_Y + TW_CHAR_H + 8)"
-            "#define TW_BODY_Y (TW_TITLE_Y + TW_CHAR_H + 12) /* OHOS_TEXTWIDGET_BEAUTIFY */"
-            _ntw_text "${_ntw_text}")
-        # 2) 左右内边距加大:TW_MARGIN_X 从 8 改为 12
-        string(REPLACE
-            "#define TW_MARGIN_X 8"
-            "#define TW_MARGIN_X 12 /* OHOS_TEXTWIDGET_BEAUTIFY: 加大左右内边距 */"
-            _ntw_text "${_ntw_text}")
-        # 3) 软键栏标签左边距同步加大
-        string(REPLACE
-            "#define TW_LABEL_MARGIN_X 4"
-            "#define TW_LABEL_MARGIN_X 8 /* OHOS_TEXTWIDGET_BEAUTIFY */"
-            _ntw_text "${_ntw_text}")
-        # 4) 标题渲染后加分隔线:在 tw_draw_string(page, pw, ph, tw.title, ...) 之后
-        #    加一行分隔线(标题下 2px 处画满宽绿色线),需精确匹配现有标题绘制行。
-        string(REPLACE
-            "    /* 标题 */\n    tw_draw_string(page, pw, ph, tw.title, TW_MARGIN_X, TW_TITLE_Y);\n\n    /* 正文(带滚动窗口) */"
-            "    /* 标题 */\n    tw_draw_string(page, pw, ph, tw.title, TW_MARGIN_X, TW_TITLE_Y);\n    /* OHOS_TEXTWIDGET_BEAUTIFY: 标题下方分隔线 */\n    {\n        int sep_y = TW_TITLE_Y + TW_CHAR_H + 2;\n        if (sep_y >= 0 && sep_y < ph) {\n            for (int x = 0; x < pw; x++) page[(size_t)sep_y * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;\n        }\n    }\n\n    /* 正文(带滚动窗口) */"
-            _ntw_text "${_ntw_text}")
-        # 5) 软键栏分隔线加粗:在 bar_y 横线后再加一行(bar_y+1)
-        string(REPLACE
-            "        for (int x = 0; x < pw; x++) page[(size_t)bar_y * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;"
-            "        for (int x = 0; x < pw; x++) page[(size_t)bar_y * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;\n        /* OHOS_TEXTWIDGET_BEAUTIFY: 软键栏分隔线加粗为 2px */\n        if (bar_y + 1 < ph) {\n            for (int x = 0; x < pw; x++) page[(size_t)(bar_y + 1) * (size_t)pw + (size_t)x] = TW_COLOR_TEXT;\n        }"
-            _ntw_text "${_ntw_text}")
-        file(WRITE "${_VMRP_NTW}" "${_ntw_text}")
-        message(STATUS "[OHOS] Patched native_text_widget.c (OHOS_TEXTWIDGET_BEAUTIFY)")
-    endif()
+
+# --- OHOS 平台 UI 替换: native_text_widget + native_modal_menu ---
+# 通用版(带触屏/滚动条/主题配置),直接覆盖上游原文件,构建后由 build 脚本 restore 还原。
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/CMakeLists.txt")
+set(_OHOS_TW_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_text_widget.c")
+set(_OHOS_MM_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_modal_menu.c")
+if(EXISTS "${_OHOS_TW_SRC}" AND EXISTS "${_OHOS_MM_SRC}")
+    file(COPY "${_OHOS_TW_SRC}" DESTINATION "${VMRP_SRC_DIR}/src/")
+    file(COPY "${_OHOS_MM_SRC}" DESTINATION "${VMRP_SRC_DIR}/src/")
+    message(STATUS "[OHOS] Copied ohos_src native_text_widget/modal_menu over upstream versions")
 endif()
 
 # --- Patch dsm.c: OHOS_DSM_MEDIA — 修复 PAUSE/STOP/RESUME + 实现 SETPOS/GET_TOTAL_TIME/GET_CURTIME ---

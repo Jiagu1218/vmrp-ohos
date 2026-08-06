@@ -25,9 +25,10 @@ int32_t native_modal_menu_show(int32_t handle, const char *title_ucs2be,
 /* 若 handle 正在显示则关闭对应平台层；未显示返回 MR_IGNORE。 */
 int32_t native_modal_menu_release(int32_t handle);
 
-/* guest 事件入口前置过滤。返回 1 表示输入已由平台菜单消费，调用方不得
- * 再投递给应用；返回 0 表示非菜单输入，应继续正常事件路径。 */
-int native_modal_menu_filter_event(int32_t code, int32_t p0);
+/* guest 事件入口前置过滤。p0/p1 对鼠标事件分别为 x/y 坐标。
+ * 返回 1 表示输入已由平台菜单消费，调用方不得再投递给应用；
+ * 返回 0 表示非菜单输入，应继续正常事件路径。 */
+int native_modal_menu_filter_event(int32_t code, int32_t p0, int32_t p1);
 
 /* 当前是否有菜单在显示(供主循环 / e2e 探测用)。 */
 int native_modal_menu_active(void);
