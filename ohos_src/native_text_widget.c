@@ -37,13 +37,13 @@
 /* ---- 主题 ---- */
 
 const NativeWidgetTheme TW_THEME_MODERN = {
-    .color_text         = 0xFFFF,
-    .color_title        = 0xFFFF,
-    .color_bar_bg       = 0x18C3,
-    .color_separator    = 0x294A,
+    .color_text         = 0xFFFF,  /* 白色正文 */
+    .color_title        = 0xFFFF,  /* 白色标题 */
+    .color_bar_bg       = 0x18C3,  /* 灰蓝(渐变起始色) */
+    .color_separator    = 0x39E7,  /* 浅灰分隔线 */
     .color_sb_track     = 0x0842,
     .color_sb_thumb     = 0xB5B6,
-    .color_highlight_bg = 0x1CAF,
+    .color_highlight_bg = 0x2A69,  /* 选中项蓝 */
     .title_centered     = 1,
     .title_bold         = 1,
     .show_scrollbar     = 1,
@@ -63,7 +63,7 @@ const NativeWidgetTheme TW_THEME_CLASSIC = {
 };
 
 static NativeWidgetTheme tw_theme = {
-    0xFFFF, 0xFFFF, 0x18C3, 0x294A, 0x0842, 0xB5B6, 0x1CAF, 1, 1, 1
+    0xFFFF, 0xFFFF, 0x18C3, 0x39E7, 0x0842, 0xB5B6, 0x2A69, 1, 1, 1
 };
 
 void native_text_widget_set_theme(const NativeWidgetTheme *theme) {
@@ -198,6 +198,43 @@ static void tw_fill_rect(uint16_t *page, int pw, int ph,
             page[(size_t)yy * (size_t)pw + (size_t)xx] = color;
 }
 
+/* RGB565 颜色暗化(k=0~7,0=原色,7=最暗),用于渐变结束色 */
+static uint16_t tw_darken(uint16_t c, int k) {
+    if (k <= 0) return c;
+    if (k > 7) k = 7;
+    int r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
+    r5 = (r5 * (8 - k)) >> 3;
+    g6 = (g6 * (8 - k)) >> 3;
+    b5 = (b5 * (8 - k)) >> 3;
+    return (uint16_t)((r5 << 11) | (g6 << 5) | b5);
+}
+
+/* RGB565 两色线性插值,t=0~256 */
+static uint16_t tw_lerp565(uint16_t c1, uint16_t c2, int t) {
+    if (t <= 0) return c1;
+    if (t >= 256) return c2;
+    int r = ((c1 >> 11) & 0x1F) * (256 - t) + ((c2 >> 11) & 0x1F) * t;
+    int g = ((c1 >> 5) & 0x3F) * (256 - t) + ((c2 >> 5) & 0x3F) * t;
+    int b = (c1 & 0x1F) * (256 - t) + (c2 & 0x1F) * t;
+    return (uint16_t)((r >> 8) << 11 | (g >> 8) << 5 | (b >> 8));
+}
+
+/* 垂直渐变填充矩形(从上到下 c1→c2) */
+static void tw_fill_rect_vgradient(uint16_t *page, int pw, int ph,
+                                   int x, int y, int w, int h,
+                                   uint16_t c1, uint16_t c2) {
+    int x_end = x + w; if (x_end > pw) x_end = pw;
+    int y_end = y + h; if (y_end > ph) y_end = ph;
+    if (x < 0) x = 0; if (y < 0) y = 0;
+    int real_h = y_end - y;
+    for (int yy = y; yy < y_end; yy++) {
+        int t = real_h > 1 ? ((yy - y) * 256) / (real_h - 1) : 0;
+        uint16_t c = tw_lerp565(c1, c2, t);
+        for (int xx = x; xx < x_end; xx++)
+            page[(size_t)yy * (size_t)pw + (size_t)xx] = c;
+    }
+}
+
 static void tw_fill_rounded_rect(uint16_t *page, int pw, int ph,
                                   int rx, int ry, int rw, int rh,
                                   int radius, uint16_t color) {
@@ -228,6 +265,13 @@ int native_text_widget_draw_string(uint16_t *page, int pw, int ph,
                                     const uint16_t *s, int x, int y) {
     if (!tw_font_open()) return -1;
     return tw_draw_string(page, pw, ph, s, x, y, tw_theme.color_text);
+}
+/* 带颜色的绘制版本(供选中项反白等场景) */
+int native_text_widget_draw_string_color(uint16_t *page, int pw, int ph,
+                                         const uint16_t *s, int x, int y,
+                                         uint16_t color) {
+    if (!tw_font_open()) return -1;
+    return tw_draw_string(page, pw, ph, s, x, y, color);
 }
 
 int native_text_widget_string_width(const uint16_t *s) {
@@ -293,9 +337,10 @@ static void tw_render_and_present(void) {
     uint16_t *page = (uint16_t *)calloc((size_t)pw * (size_t)ph, sizeof(uint16_t));
     if (page == NULL) return;
 
-    /* 标题栏背景 */
+    /* 标题栏背景(垂直渐变:bar_bg → darken(bar_bg,3)) */
     int title_bar_h = TW_TITLE_Y + TW_CHAR_H + 6;
-    tw_fill_rect(page, pw, ph, 0, 0, pw, title_bar_h, tw_theme.color_bar_bg);
+    tw_fill_rect_vgradient(page, pw, ph, 0, 0, pw, title_bar_h,
+                           tw_theme.color_bar_bg, tw_darken(tw_theme.color_bar_bg, 3));
 
     /* 标题:居中/左对齐 + 普通/粗体 */
     int title_x = TW_MARGIN_X;
@@ -339,9 +384,10 @@ static void tw_render_and_present(void) {
                              TW_SB_RADIUS, tw_theme.color_sb_thumb);
     }
 
-    /* 底部软键栏 + 标签 */
+    /* 底部软键栏(渐变:darken → bar_bg,底部更亮) */
     int bar_y = ph - TW_SOFTBAR_H;
-    tw_fill_rect(page, pw, ph, 0, bar_y, pw, TW_SOFTBAR_H, tw_theme.color_bar_bg);
+    tw_fill_rect_vgradient(page, pw, ph, 0, bar_y, pw, TW_SOFTBAR_H,
+                           tw_darken(tw_theme.color_bar_bg, 3), tw_theme.color_bar_bg);
     static const uint16_t label_ok[] = {0x786E, 0x5B9A, 0};
     static const uint16_t label_cancel[] = {0x53D6, 0x6D88, 0};
     int label_y = bar_y + (TW_SOFTBAR_H - TW_CHAR_H) / 2;

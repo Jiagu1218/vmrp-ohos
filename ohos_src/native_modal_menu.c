@@ -14,6 +14,11 @@
 #include "./include/skyengine.h"
 #include "./include/types.h"
 
+/* 带颜色版本的绘制(ohos_src 扩展,头文件未声明故 extern) */
+extern int native_text_widget_draw_string_color(uint16_t *page, int pw, int ph,
+                                                const uint16_t *s, int x, int y,
+                                                uint16_t color);
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +52,38 @@ static void menu_fill_rect(uint16_t *page, int pw, int ph,
     for (int yy = y; yy < y_end; yy++)
         for (int xx = x; xx < x_end; xx++)
             page[yy * pw + xx] = color;
+}
+
+/* RGB565 暗化 + 插值(与 text_widget 共享逻辑) */
+static uint16_t menu_darken(uint16_t c, int k) {
+    if (k <= 0) return c;
+    if (k > 7) k = 7;
+    int r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
+    return (uint16_t)(((r5 * (8 - k)) >> 3) << 11 |
+                      ((g6 * (8 - k)) >> 3) << 5 |
+                      ((b5 * (8 - k)) >> 3));
+}
+static uint16_t menu_lerp565(uint16_t c1, uint16_t c2, int t) {
+    if (t <= 0) return c1;
+    if (t >= 256) return c2;
+    int r = ((c1 >> 11) & 0x1F) * (256 - t) + ((c2 >> 11) & 0x1F) * t;
+    int g = ((c1 >> 5) & 0x3F) * (256 - t) + ((c2 >> 5) & 0x3F) * t;
+    int b = (c1 & 0x1F) * (256 - t) + (c2 & 0x1F) * t;
+    return (uint16_t)((r >> 8) << 11 | (g >> 8) << 5 | (b >> 8));
+}
+static void menu_fill_rect_vgradient(uint16_t *page, int pw, int ph,
+                                     int x, int y, int w, int h,
+                                     uint16_t c1, uint16_t c2) {
+    int x_end = x + w; if (x_end > pw) x_end = pw;
+    int y_end = y + h; if (y_end > ph) y_end = ph;
+    if (x < 0) x = 0; if (y < 0) y = 0;
+    int real_h = y_end - y;
+    for (int yy = y; yy < y_end; yy++) {
+        int t = real_h > 1 ? ((yy - y) * 256) / (real_h - 1) : 0;
+        uint16_t c = menu_lerp565(c1, c2, t);
+        for (int xx = x; xx < x_end; xx++)
+            page[yy * pw + xx] = c;
+    }
 }
 
 static void menu_fill_rounded_rect(uint16_t *page, int pw, int ph,
@@ -109,9 +146,10 @@ static int menu_render_and_present(void) {
 
     const NativeWidgetTheme *theme = native_text_widget_get_theme();
 
-    /* 标题栏:灰底 + 居中粗体/左对齐 */
+    /* 标题栏:渐变背景 + 居中粗体/左对齐 */
     int title_bar_h = MENU_TITLE_Y + 16 + 6;
-    menu_fill_rect(page, pw, ph, 0, 0, pw, title_bar_h, theme->color_bar_bg);
+    menu_fill_rect_vgradient(page, pw, ph, 0, 0, pw, title_bar_h,
+                             theme->color_bar_bg, menu_darken(theme->color_bar_bg, 3));
     if (g_menu.title != NULL && g_menu.title[0] != 0) {
         int title_x = MENU_ITEM_X;
         if (theme->title_bold) {
@@ -136,19 +174,26 @@ static int menu_render_and_present(void) {
                                    theme->color_highlight_bg);
         }
     }
-    /* 文字(使用主题文字色) */
+    /* 文字:选中项白色高亮,其余用主题文字色 */
     for (int i = 0; i < g_menu.item_count; i++) {
         int y = MENU_ITEM_Y + i * MENU_ITEM_DY;
         const uint16_t *s = g_menu.items[i];
-        if (s != NULL) native_text_widget_draw_string(page, pw, ph, s, MENU_ITEM_X, y);
+        if (s == NULL) continue;
+        if (i == g_menu.selected) {
+            /* 选中项反白(白色文字) */
+            native_text_widget_draw_string_color(page, pw, ph, s, MENU_ITEM_X, y, 0xFFFF);
+        } else {
+            native_text_widget_draw_string(page, pw, ph, s, MENU_ITEM_X, y);
+        }
     }
 
-    /* 软键栏:灰底 + 分隔线 + 标签 */
+    /* 软键栏:渐变 + 分隔线 + 标签 */
     int bar_y = ph - MENU_SOFTBAR_H;
     if (bar_y >= 0) {
         static const uint16_t label_ok[] = {0x786E, 0x5B9A, 0};
         static const uint16_t label_back[] = {0x8FD4, 0x56DE, 0};
-        menu_fill_rect(page, pw, ph, 0, bar_y, pw, MENU_SOFTBAR_H, theme->color_bar_bg);
+        menu_fill_rect_vgradient(page, pw, ph, 0, bar_y, pw, MENU_SOFTBAR_H,
+                                 menu_darken(theme->color_bar_bg, 3), theme->color_bar_bg);
         menu_hline(page, pw, ph, 0, bar_y, pw, theme->color_separator);
         int label_y = bar_y + 5;
         native_text_widget_draw_string(page, pw, ph, label_ok, MENU_LABEL_MARGIN_X, label_y);
