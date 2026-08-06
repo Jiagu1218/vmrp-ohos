@@ -51,37 +51,10 @@ void native_text_widget_transition_end(void);
 
 /*
  * 事件钩子:guest 事件入口(skyengine_runtime_event)前置过滤。
- * p0/p1 对鼠标事件分别为 x/y 坐标,对键盘事件为按键码/0。
  * 返回 0=未激活不拦截;1=事件已被平台消费(不再投递给应用);
  * 2=软键命中文本框按钮,调用方应改投 MR_DIALOG_EVENT,参数写入 *dialog_param。
  */
-int native_text_widget_filter_event(int32_t code, int32_t p0, int32_t p1,
-                                    int32_t *dialog_param);
-
-/* ---- 主题配置 ---- */
-
-typedef struct {
-    uint16_t color_text;         /* 正文文字颜色 */
-    uint16_t color_title;        /* 标题文字颜色 */
-    uint16_t color_bar_bg;       /* 标题栏/软键栏背景色 */
-    uint16_t color_separator;    /* 分隔线颜色 */
-    uint16_t color_sb_track;     /* 滚动条轨道颜色 */
-    uint16_t color_sb_thumb;     /* 滚动条滑块颜色 */
-    uint16_t color_highlight_bg; /* 菜单选中项背景色 */
-    int8_t   title_centered;     /* 1=标题居中, 0=左对齐 */
-    int8_t   title_bold;         /* 1=标题粗体, 0=普通 */
-    int8_t   show_scrollbar;     /* 1=溢出时显示滚动条, 0=不显示 */
-} NativeWidgetTheme;
-
-/* 现代主题:白字灰底(默认) */
-extern const NativeWidgetTheme TW_THEME_MODERN;
-/* 经典主题:绿字黑底(兼容旧平台风格) */
-extern const NativeWidgetTheme TW_THEME_CLASSIC;
-
-/* 设置主题,传入 NULL 恢复默认(TW_THEME_MODERN)。 */
-void native_text_widget_set_theme(const NativeWidgetTheme *theme);
-/* 获取当前主题(只读指针,用于 modal_menu 等同源 UI)。 */
-const NativeWidgetTheme *native_text_widget_get_theme(void);
+int native_text_widget_filter_event(int32_t code, int32_t p0, int32_t *dialog_param);
 
 /*
  * 字库/绘制工具:供 native_modal_menu 等同源 UI 复用。
@@ -92,13 +65,8 @@ struct TwRenderCtx;
 /* 把 UCS2 主机序码点数组写到 RGB565 page 上；字库不可用时返回 -1。 */
 int native_text_widget_draw_string(uint16_t *page, int pw, int ph,
                                     const uint16_t *s, int x, int y);
-/* 粗体版(双击偏移+1px),供标题栏使用 */
-int native_text_widget_draw_string_bold(uint16_t *page, int pw, int ph,
-                                         const uint16_t *s, int x, int y);
 /* UCS2 字符串总宽(像素) */
 int native_text_widget_string_width(const uint16_t *s);
-/* 粗体版字符串总宽(每个字符+1px) */
-int native_text_widget_string_width_bold(const uint16_t *s);
 /* 单字符宽(ASCII=8,CJK=16) */
 int native_text_widget_char_width(uint16_t ch);
 

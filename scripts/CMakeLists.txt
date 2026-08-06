@@ -416,14 +416,41 @@ endif()
 
 
 # --- OHOS 平台 UI 替换: native_text_widget + native_modal_menu ---
-# 通用版(带触屏/滚动条/主题配置),直接覆盖上游原文件,构建后由 build 脚本 restore 还原。
+# 通用版(带触屏/滚动条/主题配置/美化渐变),覆盖上游 .c 和 .h 文件。
+# 头文件改动(NativeWidgetTheme + filter_event p1 参数)也通过覆盖实现。
+# runtime_native_mythroad.c 的 filter 调用用补丁改传 p1。
+# 构建后由 build 脚本 :restore_patched 还原全部。
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/CMakeLists.txt")
 set(_OHOS_TW_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_text_widget.c")
 set(_OHOS_MM_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_modal_menu.c")
+set(_OHOS_TW_H "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_text_widget.h")
+set(_OHOS_MM_H "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_modal_menu.h")
 if(EXISTS "${_OHOS_TW_SRC}" AND EXISTS "${_OHOS_MM_SRC}")
     file(COPY "${_OHOS_TW_SRC}" DESTINATION "${VMRP_SRC_DIR}/src/")
     file(COPY "${_OHOS_MM_SRC}" DESTINATION "${VMRP_SRC_DIR}/src/")
-    message(STATUS "[OHOS] Copied ohos_src native_text_widget/modal_menu over upstream versions")
+    file(COPY "${_OHOS_TW_H}" DESTINATION "${VMRP_SRC_DIR}/src/include/")
+    file(COPY "${_OHOS_MM_H}" DESTINATION "${VMRP_SRC_DIR}/src/include/")
+    message(STATUS "[OHOS] Copied ohos_src native_text_widget/modal_menu (.c+.h) over upstream")
+endif()
+
+# --- Patch runtime_native_mythroad.c: filter_event 调用传 p1 ---
+# 树外版 filter_event 签名加了 p1(y 坐标),runtime 的调用需要同步改。
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/runtime_native_mythroad.c")
+set(_VMRP_RT "${VMRP_SRC_DIR}/src/runtime_native_mythroad.c")
+if(EXISTS "${_VMRP_RT}")
+    file(READ "${_VMRP_RT}" _rt_text)
+    if(NOT _rt_text MATCHES "OHOS_FILTER_P1")
+        string(REPLACE
+            "if (native_modal_menu_filter_event(code, p0)) return MR_SUCCESS;"
+            "if (native_modal_menu_filter_event(code, p0, p1)) return MR_SUCCESS; /* OHOS_FILTER_P1 */"
+            _rt_text "${_rt_text}")
+        string(REPLACE
+            "switch (native_text_widget_filter_event(code, p0, &dialog_param))"
+            "switch (native_text_widget_filter_event(code, p0, p1, &dialog_param)) /* OHOS_FILTER_P1 */"
+            _rt_text "${_rt_text}")
+        file(WRITE "${_VMRP_RT}" "${_rt_text}")
+        message(STATUS "[OHOS] Patched runtime_native_mythroad.c filter_event p1 (OHOS_FILTER_P1)")
+    endif()
 endif()
 
 # --- Patch dsm.c: OHOS_DSM_MEDIA — 修复 PAUSE/STOP/RESUME + 实现 SETPOS/GET_TOTAL_TIME/GET_CURTIME ---
