@@ -14,6 +14,7 @@ import { HapticManager } from '../common/HapticManager';
 import { FlatItem, MrpGroup, CARD_RADIUS, DELETE_TRANSITION, emptyMrpInfoData, groupByLetter, buildIndexArray } from '../model/MrpListModel';
 import { FavoriteStore } from '../model/FavoriteStore';
 import { PendingMrpUri } from '../common/PendingMrpUri';
+import { PrivacyDialog, isPrivacyAgreedSync, setPrivacyAgreed } from '../components/PrivacyDialog';
 
 @Entry
 @ComponentV2
@@ -30,10 +31,13 @@ struct Index {
   @Local flatItems: FlatItem[] = [];
   @Local currentTab: number = 0;
   @Local titleBarOffset: number = 96;
+  @Local privacyAgreed: boolean = isPrivacyAgreedSync();
+  @Local showPrivacyDialog: boolean = !isPrivacyAgreedSync();
   private navPathStack: NavPathStack = new NavPathStack();
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private listScroller: ListScroller = new ListScroller();
   private favScroller: ListScroller = new ListScroller();
+  private appScroller: ListScroller = new ListScroller();
   private hdsTabsController: HdsTabsController = new HdsTabsController();
   private rawList: MrpInfoData[] = [];
   private favStore: FavoriteStore = new FavoriteStore();
@@ -41,7 +45,6 @@ struct Index {
   aboutToAppear(): void {
     const ctx = gAbilityContext;
     if (ctx) {
-      this.favStore = FavoriteStore.loadSync(ctx);
       try {
         const win: window.Window = ctx.windowStage.getMainWindowSync();
         const topPx: number = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM).topRect.height;
@@ -49,10 +52,39 @@ struct Index {
         this.titleBarOffset = topPx / density + 48;
       } catch (_e) {}
     }
+    if (!this.privacyAgreed) return;
+    this.initAfterPrivacy();
+  }
+
+  private initAfterPrivacy(): void {
+    const ctx = gAbilityContext;
+    if (ctx) {
+      this.favStore = FavoriteStore.loadSync(ctx);
+    }
     this.scanMrpFiles();
   }
 
+  private async onPrivacyAgree(): Promise<void> {
+    await setPrivacyAgreed();
+    this.privacyAgreed = true;
+    this.showPrivacyDialog = false;
+    const ctx = gAbilityContext;
+    if (ctx) {
+      this.favStore = FavoriteStore.loadSync(ctx);
+    }
+    await this.ensureAndScan();
+    this.checkPendingMrpUri();
+  }
+
+  private onPrivacyDisagree(): void {
+    const ctx = gAbilityContext;
+    if (ctx) {
+      ctx.terminateSelf();
+    }
+  }
+
   onPageShow(): void {
+    if (!this.privacyAgreed) return;
     this.ensureAndScan();
     this.checkPendingMrpUri();
   }
@@ -106,6 +138,11 @@ struct Index {
 
   private applySort(): void {
     let list = [...this.rawList];
+    if (this.currentTab === 0) {
+      list = list.filter((item: MrpInfoData) => this.isGame(item));
+    } else if (this.currentTab === 1) {
+      list = list.filter((item: MrpInfoData) => !this.isGame(item));
+    }
     if (this.searchQuery.length > 0) {
       const q = this.searchQuery.toLowerCase();
       list = list.filter((item: MrpInfoData) => {
@@ -132,7 +169,7 @@ struct Index {
 
   private rebuildGroups(): void {
     if (this.sortMode === 1 && this.searchQuery.length === 0) {
-      const list = this.currentTab === 1
+      const list = this.currentTab === 2
         ? this.mrpList.filter((item: MrpInfoData) => this.favStore.isFavorite(item.filePath))
         : this.mrpList;
       this.groupedItems = groupByLetter(list);
@@ -145,7 +182,7 @@ struct Index {
 
   private rebuildFlatItems(): void {
     const items: FlatItem[] = [];
-    if (this.currentTab === 1 && (this.sortMode === 0 || this.searchQuery.length > 0)) {
+    if (this.currentTab === 2 && (this.sortMode === 0 || this.searchQuery.length > 0)) {
       for (const card of this.mrpList) {
         if (this.favStore.isFavorite(card.filePath)) {
           items.push({ type: 'card', letter: '', data: card, key: card.filePath });
@@ -195,6 +232,8 @@ struct Index {
   private closeSwipeActions(): void {
     if (this.currentTab === 0) {
       this.listScroller.closeAllSwipeActions();
+    } else if (this.currentTab === 1) {
+      this.appScroller.closeAllSwipeActions();
     } else {
       this.favScroller.closeAllSwipeActions();
     }
@@ -218,8 +257,8 @@ struct Index {
       title: $r('app.string.index_dialog_delete_title'),
       message: $r('app.string.index_dialog_delete_message', item.appname),
       buttons: [
-        { text: $r('app.string.btn_cancel'), color: '#007DFF' },
-        { text: $r('app.string.btn_delete'), color: '#E84026' }
+        { text: $r('app.string.btn_cancel'), color: $r('sys.color.ohos_id_color_text_primary') },
+        { text: $r('app.string.btn_delete'), color: $r('sys.color.ohos_id_color_warning') }
       ]
     }).then((data: ShowDialogSuccessResponse) => {
       if (data.index === 1) {
@@ -251,6 +290,25 @@ struct Index {
   private getBaseName(path: string): string {
     const slash = path.lastIndexOf('/');
     return slash >= 0 ? path.substring(slash + 1) : path;
+  }
+
+  private getMenuItems(item: MrpInfoData): MenuElement[] {
+    const isFav = this.favStore.isFavorite(item.filePath);
+    const items: MenuElement[] = [
+      {
+        value: isFav ? $r('app.string.a11y_btn_unfavorite') : $r('app.string.a11y_btn_favorite'),
+        action: () => { this.toggleFavorite(item); }
+      },
+      {
+        value: $r('app.string.a11y_btn_delete'),
+        action: () => { this.deleteMrp(item); }
+      }
+    ];
+    return items;
+  }
+
+  private isGame(item: MrpInfoData): boolean {
+    return item.filename.length > 0 && (item.filename.charAt(0) === 'g' || item.filename.charAt(0) === 'G');
   }
 
   @Builder
@@ -319,21 +377,21 @@ struct Index {
   @Builder
   emptyStateBuilder() {
     Column() {
-      Text(this.currentTab === 1 ? $r('app.string.index_empty_no_fav') : $r('app.string.index_empty_no_game'))
+      Text(this.currentTab === 2 ? $r('app.string.index_empty_no_fav') : (this.currentTab === 1 ? $r('app.string.index_empty_no_app') : $r('app.string.index_empty_no_game')))
         .fontSize(18)
         .fontColor($r('app.color.settings_about_title'))
         .fontWeight(FontWeight.Medium)
-       Text(this.currentTab === 1 ? $r('app.string.index_empty_hint_fav') : $r('app.string.index_empty_hint_game'))
-         .fontSize(14)
+      Text(this.currentTab === 2 ? $r('app.string.index_empty_hint_fav') : (this.currentTab === 1 ? $r('app.string.index_empty_hint_app') : $r('app.string.index_empty_hint_game')))
+        .fontSize(14)
         .fontColor($r('app.color.settings_desc_color'))
         .margin({ top: 6 })
-      if (this.currentTab === 0) {
+      if (this.currentTab !== 2) {
         Column() {
           ImmersiveLightWrapper({ radius: 22, lightHeight: 80 }) {
             Stack() {
               Text($r('app.string.index_btn_go_settings'))
                 .fontSize(14)
-                .fontColor('#FFFFFF')
+                .fontColor($r('app.color.accent_color'))
                 .fontWeight(FontWeight.Medium)
             }
             .width(140)
@@ -365,7 +423,7 @@ struct Index {
         }) {
           Column() {
             Row() {
-              if (this.currentTab === 0 && this.favStore.isFavorite(ri.item.data.filePath)) {
+              if (this.currentTab !== 2 && this.favStore.isFavorite(ri.item.data.filePath)) {
                 SymbolGlyph($r('sys.symbol.heart_fill'))
                   .fontSize(14)
                   .fontColor([Color.Red])
@@ -445,6 +503,7 @@ struct Index {
     }
     .padding({ left: 16, right: 16 })
     .swipeAction({ end: { builder: (): void => { this.swipeEndBuilder(ri.item.data, this.favStore.isFavorite(ri.item.data.filePath)); }, actionAreaDistance: 120 } })
+    .bindMenu(this.getMenuItems(ri.item.data))
     .transition(DELETE_TRANSITION)
   }
 
@@ -520,6 +579,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
         .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
         .clip(false)
         .cachedCount(5, true)
@@ -573,6 +633,143 @@ struct Index {
               fi.type === 'header' && fi.letter === letter);
             if (flatIdx >= 0) {
               this.listScroller.scrollToIndex(flatIdx + idxOffset, false, ScrollAlign.CENTER);
+            }
+          })
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .align(Alignment.TopEnd)
+    .backgroundColor(Color.Transparent)
+    .clip(false)
+  }
+
+  @Builder
+  appsContent() {
+    Stack({ alignContent: Alignment.End }) {
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        List({ space: 8, scroller: this.appScroller }) {
+          ListItem() {
+            Column().width('100%').height(this.titleBarOffset)
+          }
+          if (this.searchMode) {
+            ListItem() {
+              Search({ value: this.searchQuery, placeholder: $r('app.string.index_search_placeholder') })
+                .width('100%')
+                .height(40)
+                .backgroundColor($r('app.color.settings_card_bg'))
+                .placeholderColor($r('app.color.settings_desc_color'))
+                .placeholderFont({ size: 14 })
+                .textFont({ size: 14 })
+                .fontColor($r('app.color.settings_about_title'))
+                .onSubmit((value: string) => this.onSearchInput(value))
+                .onChange((value: string) => this.onSearchInput(value))
+            }
+            .padding({ left: 16, right: 16 })
+          }
+          if (this.isScanning) {
+            ListItem() {
+              Column() {
+                LoadingProgress()
+                  .width(40)
+                  .height(40)
+                  .color($r('app.color.accent_color'))
+                Text($r('app.string.index_scanning'))
+                  .fontSize(14)
+                  .fontColor($r('app.color.settings_desc_color'))
+                  .margin({ top: 12 })
+              }
+              .width('100%')
+              .height(200)
+              .justifyContent(FlexAlign.Center)
+              .alignItems(HorizontalAlign.Center)
+            }
+          } else if (this.flatItems.length === 0) {
+            ListItem() {
+              this.emptyStateBuilder()
+            }
+          } else {
+            Repeat<FlatItem>(this.flatItems)
+              .each((ri: RepeatItem<FlatItem>) => {
+                ListItem() {
+                  Text(ri.item.data.appname)
+                }
+              })
+              .key((item: FlatItem): string => item.key)
+              .templateId((item: FlatItem): string => item.type)
+              .template('header', (ri: RepeatItem<FlatItem>) => {
+                ListItem() {
+                  Text(ri.item.letter)
+                    .fontSize(14)
+                    .fontColor($r('app.color.settings_desc_color'))
+                    .fontWeight(FontWeight.Medium)
+                    .width('100%')
+                    .padding({ left: 20, top: 16, bottom: 4 })
+                }
+              })
+              .template('card', (ri: RepeatItem<FlatItem>) => {
+                this.cardItemBuilder(ri)
+              }, { cachedCount: 5 })
+              .virtualScroll({ totalCount: this.flatItems.length })
+          }
+        }
+        .width('100%')
+        .height('100%')
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
+        .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
+        .clip(false)
+        .cachedCount(5, true)
+        .onScrollIndex((start: number) => {
+          if (this.sortMode !== 1 || this.flatItems.length === 0) return;
+          const offset = this.searchMode ? 1 : 0;
+          const idx = start - offset;
+          if (idx < 0 || idx >= this.flatItems.length) return;
+          const item = this.flatItems[idx];
+          if (item.type === 'header') {
+            const ai = this.indexArray.indexOf(item.letter);
+            if (ai >= 0) this.selectedIndex = ai;
+          } else if (item.type === 'card') {
+            for (let i = idx; i >= 0; i--) {
+              if (this.flatItems[i].type === 'header') {
+                const ai = this.indexArray.indexOf(this.flatItems[i].letter);
+                if (ai >= 0) this.selectedIndex = ai;
+                break;
+              }
+            }
+          }
+        })
+      }
+      .refreshOffset(64)
+      .pullToRefresh(true)
+      .backgroundColor(Color.Transparent)
+      .clip(false)
+      .onRefreshing(() => {
+        this.scanMrpFiles();
+        this.isRefreshing = false;
+      })
+
+      if (this.sortMode === 1 && this.flatItems.length > 0 && this.searchQuery.length === 0) {
+        AlphabetIndexer({ arrayValue: this.indexArray, selected: this.selectedIndex })
+          .color($r('app.color.settings_desc_color'))
+          .selectedColor($r('app.color.accent_color'))
+          .usingPopup(true)
+          .font({ size: 10 })
+          .selectedFont({ size: 12, weight: FontWeight.Bold })
+          .popupFont({ size: 24, weight: FontWeight.Bold })
+          .itemSize(24)
+          .alignStyle(IndexerAlign.Left)
+          .popupPosition({ x: -72, y: this.titleBarOffset })
+          .width(24)
+          .height('100%')
+          .margin({ right: 4 })
+          .onSelect((index: number) => {
+            const letter = this.indexArray[index];
+            const idxOffset = 1 + (this.searchMode ? 1 : 0);
+            const flatIdx = this.flatItems.findIndex((fi: FlatItem) =>
+              fi.type === 'header' && fi.letter === letter);
+            if (flatIdx >= 0) {
+              this.appScroller.scrollToIndex(flatIdx + idxOffset, false, ScrollAlign.CENTER);
             }
           })
       }
@@ -641,6 +838,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
         .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
         .clip(false)
         .cachedCount(5, true)
@@ -704,7 +902,20 @@ struct Index {
   }
 
   build() {
-    HdsNavigation(this.navPathStack) {
+    if (this.showPrivacyDialog) {
+      Column() {
+        PrivacyDialog({
+          onAgree: () => { this.onPrivacyAgree(); },
+          onDisagree: () => { this.onPrivacyDisagree(); }
+        })
+      }
+      .width('100%')
+      .height('100%')
+      .padding({ top: this.titleBarOffset })
+      .justifyContent(FlexAlign.Center)
+      .backgroundColor($r('app.color.immersive_bg'))
+    } else {
+      HdsNavigation(this.navPathStack) {
       HdsTabs({ controller: this.hdsTabsController }) {
         TabContent() {
           this.gameLibraryContent()
@@ -717,6 +928,18 @@ struct Index {
             .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
             .fontColor([$r('app.color.accent_color')])
         }, $r('app.string.index_tab_library')))
+
+        TabContent() {
+          this.appsContent()
+        }
+        .tabBar(new BottomTabBarStyle({
+          normal: new SymbolGlyphModifier($r('sys.symbol.square_grid_2x2'))
+            .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+            .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
+          selected: new SymbolGlyphModifier($r('sys.symbol.square_grid_2x2'))
+            .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+            .fontColor([$r('app.color.accent_color')])
+        }, $r('app.string.index_tab_apps')))
 
         TabContent() {
           this.favoritesContent()
@@ -741,6 +964,8 @@ struct Index {
         this.applySort();
         if (index === 0) {
           this.listScroller.scrollToIndex(0, false, ScrollAlign.START);
+        } else if (index === 1) {
+          this.appScroller.scrollToIndex(0, false, ScrollAlign.START);
         } else {
           this.favScroller.scrollToIndex(0, false, ScrollAlign.START);
         }
@@ -756,7 +981,7 @@ struct Index {
     }
     .titleBar({
       content: {
-        title: { mainTitle: this.currentTab === 1 ? $r('app.string.index_tab_favorites') : $r('app.string.index_title_library') },
+        title: { mainTitle: this.currentTab === 2 ? $r('app.string.index_tab_favorites') : (this.currentTab === 1 ? $r('app.string.index_title_apps') : $r('app.string.index_title_library')) },
         menu: {
           value: [
             {
@@ -807,7 +1032,8 @@ struct Index {
     .titleMode(HdsNavigationTitleMode.MINI)
     .hideBackButton(true)
     .backgroundColor($r('app.color.immersive_bg'))
-    .bindToScrollable([this.listScroller, this.favScroller])
+    .bindToScrollable([this.listScroller, this.appScroller, this.favScroller])
     .mode(NavigationMode.Stack)
+    }
   }
 }

@@ -413,6 +413,43 @@ if(EXISTS "${_VMRP_NDF_H}")
     endif()
 endif()
 
+
+
+# --- OHOS 平台 UI 替换: native_text_widget + native_modal_menu ---
+# 通用版(带触屏/滚动条/主题配置/美化渐变),覆盖上游 .c 和 .h 文件。
+# 头文件改动(NativeWidgetTheme + filter_event p1 参数)也通过覆盖实现。
+# runtime_native_mythroad.c 的 filter 调用用补丁改传 p1。
+# 构建后由 build 脚本 :restore_patched 还原全部。
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/CMakeLists.txt")
+set(_OHOS_TW_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_text_widget.c")
+set(_OHOS_MM_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_modal_menu.c")
+set(_OHOS_TW_H "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_text_widget.h")
+set(_OHOS_MM_H "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/native_modal_menu.h")
+if(EXISTS "${_OHOS_TW_SRC}" AND EXISTS "${_OHOS_MM_SRC}")
+    file(COPY "${_OHOS_TW_SRC}" DESTINATION "${VMRP_SRC_DIR}/src/")
+    file(COPY "${_OHOS_MM_SRC}" DESTINATION "${VMRP_SRC_DIR}/src/")
+    file(COPY "${_OHOS_TW_H}" DESTINATION "${VMRP_SRC_DIR}/src/include/")
+    file(COPY "${_OHOS_MM_H}" DESTINATION "${VMRP_SRC_DIR}/src/include/")
+    message(STATUS "[OHOS] Copied ohos_src native_text_widget/modal_menu (.c+.h) over upstream")
+endif()
+
+# --- Patch runtime_native_mythroad.c: text_widget filter_event 调用传 p1 ---
+# 上游 b52bdbf 已改 modal_menu filter 传 p1,但 text_widget filter 仍是 2 参数。
+# 树外版 text_widget filter 加了 p1(y 坐标),需要同步改 runtime 调用。
+ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/runtime_native_mythroad.c")
+set(_VMRP_RT "${VMRP_SRC_DIR}/src/runtime_native_mythroad.c")
+if(EXISTS "${_VMRP_RT}")
+    file(READ "${_VMRP_RT}" _rt_text)
+    if(NOT _rt_text MATCHES "OHOS_FILTER_P1")
+        string(REPLACE
+            "switch (native_text_widget_filter_event(code, p0, &dialog_param))"
+            "switch (native_text_widget_filter_event(code, p0, p1, &dialog_param)) /* OHOS_FILTER_P1 */"
+            _rt_text "${_rt_text}")
+        file(WRITE "${_VMRP_RT}" "${_rt_text}")
+        message(STATUS "[OHOS] Patched runtime_native_mythroad.c text_widget filter p1 (OHOS_FILTER_P1)")
+    endif()
+endif()
+
 # --- Patch dsm.c: OHOS_DSM_MEDIA — 修复 PAUSE/STOP/RESUME + 实现 SETPOS/GET_TOTAL_TIME/GET_CURTIME ---
 # 上游 PAUSE 和 STOP 实现相同(都调 mr_stopSound 清空 PCM),导致 PAUSE 后无法 RESUME。
 # 修复:
@@ -508,36 +545,9 @@ endif()
 # 上游 651e421 已实现 arm_ext_host_motion_acc_slot() + motion_acc_addr 字段,
 # OHOS 不再注入 motion acc 分配/写入代码。
 
-# --- Patch arm_ext_executor.c: 禁用上游 81aae96 的 primary_resume_without_timer_owner ---
-# 上游 81aae96 为修 optwar modal close 卡顿,新增 primary_resume_without_timer_owner:
-# 在特定条件下清空 timer owner(timer_p_addr=0),让 primary 走"无 owner 恢复"路径。
-# 但在 OHOS async runner 模型下,清空 owner 会导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
-# OHOS 补丁:短路该条件,保持 v0.2.1 的无条件设 timer owner 行为。
-# 影响范围:仅 optwar 的特定 modal close 场景(timer 回调中关闭前台子模块),
-# 对其他应用无影响。
-set(_VMRP_TIMER_OWNER "${VMRP_SRC_DIR}/src/arm_ext_executor.c")
-if(EXISTS "${_VMRP_TIMER_OWNER}")
-    file(READ "${_VMRP_TIMER_OWNER}" _timer_owner)
-    if(NOT _timer_owner MATCHES "OHOS_TIMER_OWNER_FIX")
-        string(FIND "${_timer_owner}" "primary_resume_without_timer_owner" _anchor_test)
-        message(STATUS "[OHOS] timer_owner patch: anchor find pos=${_anchor_test} (>=0=found)")
-        # OHOS_TIMER_OWNER_FIX: 上游 81aae96 的 primary_resume_without_timer_owner
-        # 在 OHOS 下清空 timer owner,导致 ARM 代码走到 EXT_STOP_ADDR 死循环。
-        # 完全禁用该条件分支(if(0)),保持 v0.2.1 的无条件设 wrapper owner 行为。
-        string(REPLACE
-            "        if (code == 2 && foreground_child_active &&\n            wrapper_timer_live_at_close &&\n            primary_timer_live_at_close &&\n            m->timer_p_addr == m->p_addr &&\n            m->timer_helper_addr == m->helper_addr) {"
-            "        if (0 /* OHOS_TIMER_OWNER_FIX: 禁用上游 81aae96 的 owner 清空 */) {"
-            _timer_owner "${_timer_owner}")
-        string(REPLACE
-            "        if (m->primary_resume_without_timer_owner &&\n            m->active_p_addr == m->primary_p_addr &&\n            m->active_helper_addr == m->primary_helper_addr) {"
-            "        if (0 /* OHOS_TIMER_OWNER_FIX */) {"
-            _timer_owner "${_timer_owner}")
-        file(WRITE "${_VMRP_TIMER_OWNER}" "${_timer_owner}")
-        message(STATUS "[OHOS] Patched arm_ext timer owner fix (OHOS_TIMER_OWNER_FIX)")
-    else()
-        message(STATUS "[OHOS] timer_owner patch: SKIPPED (already has OHOS_TIMER_OWNER_FIX)")
-    endif()
-endif()
+# primary_resume_without_timer_owner 补丁已移除:上游 f619149(910b4c6)完全删除了
+# primary_resume_without_timer_owner 字段及相关条件分支(与我们的 OHOS_TIMER_OWNER_FIX
+# if(0) 等效),该补丁不再需要。
 
 # --- Patch mythroad.c: dsm_write_motion_acc_to_arm ---
 # 上游 651e421 已实现 mr_motion_input()(内部调 arm_ext_host_motion_acc_slot),

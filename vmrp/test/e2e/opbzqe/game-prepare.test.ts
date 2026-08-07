@@ -26,11 +26,15 @@ describe("opbzqe 进入主菜单", () => {
     }
     engine = await SkyEngineE2e.start("test/fixtures/opbzqe.mrp", { workDir: ws.dir });
 
-    await engine.delay(7000);
-    const boot = await engine.screen("bgm-select");
-    expect(boot.pixel(227, 308)).toEqual([0, 0, 0]);
-    // rgb(248, 252, 248)
-    expect(boot.pixel(126, 165)).toEqual([248, 252, 248]);
+    await vi.waitFor(async () => {
+      const boot = await engine!.screen("bgm-select");
+      expect(boot.pixel(227, 308)).toEqual([0, 0, 0]);
+      // rgb(248, 252, 248)
+      expect(boot.pixel(126, 165)).toEqual([248, 252, 248]);
+    }, {
+      timeout: 30_000,
+      interval: 1_000
+    })
 
     // 是否开启音乐？-> 否
     await engine.click(214, 293, 1_000);

@@ -99,6 +99,13 @@ typedef struct {
                                  uint32 dataLen, int32 loop);
     int32 (*mr_stopSoundChannel)(int32 handle);
 
+    /* 原生菜单 UI 接管(table[63]/[64]/[65] 桥到 mr_menuCreate/SetItem/Show)。
+     * DSM 持有菜单数据(title + items),宿主显示后立即返回 MR_SUCCESS；
+     * 选择和取消随后分别通过 MR_MENU_SELECT/MR_MENU_RETURN 投递。 */
+    int32 (*mr_menuShow)(int32 handle);
+    /* 释放正在显示的同一 handle；隐藏菜单仍由 DSM 自己释放持久数据。 */
+    int32 (*mr_menuRelease)(int32 handle);
+
     // 变量放在最后
     int32 flags;  // 调整运行时的一些参数，目前只有调整文件系统路径名是否使用UTF8编码这一个功能
     int32 screen_width;
@@ -121,6 +128,8 @@ int32 dsm_init(DSM_REQUIRE_FUNCS *inFuncs);
 /* Called before an application heap is released; multichannel OPEN copies
  * live in that heap while decoded voices are owned by the native mixer. */
 void dsm_media_channels_release_all(void);
+/* Runtime teardown releases host-owned title/item copies for every live menu handle. */
+void dsm_menu_release_all(void);
 int32 mr_restart_old_app(void);
 /* 宿主编码路径 → guest(GBK) 编码；get_filename() 编码规则的逆操作，
  * 详见 dsm.c 中实现处的注释。 */

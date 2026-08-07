@@ -1,10 +1,10 @@
 {
   "name": "entry",
   "version": "1.0.0",
-  "description": "Please describe the basic information.",
+  "description": "旧梦曲奇 MRP模拟器入口模块",
   "main": "",
-  "author": "",
-  "license": "",
+  "author": "xjg",
+  "license": "Apache-2.0",
   "dependencies": {},
   "libs": [
     {

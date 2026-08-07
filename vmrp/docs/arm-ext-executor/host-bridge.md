@@ -47,7 +47,10 @@ Mythroad 期望的槽位定义在 `src/mythroad/mythroad.c` 的 `_mr_c_function_
 | `22` | handler | `mr_stop_ex` |
 | `23..24` | guest 指针 | internal table、port table |
 | `25..61` | handler | 模块注册、日志、图形、timer、平台、文件、设备、音频、短信 |
-| `62..68` | fallback | WAP/menu；其中原生 table[66] 为 `NULL` |
+| `62` | fallback | mr_connectWAP |
+| `63..65` | handler | mr_menuCreate、mr_menuSetItem、mr_menuShow |
+| `66` | fallback | 原生 table[66] 为 `NULL`（mr_menuSetFocus 保留槽） |
+| `67..68` | handler | mr_menuRelease、mr_menuRefresh |
 | `69..90` | handler | dialog/text/edit/window、screen info、network/socket |
 | `91..112` | guest 指针/数据 | screen、资源数组、包名、RAM 包、应用堆、SMS 配置 |
 | `113..115` | handler | MD5 init/append/finish |

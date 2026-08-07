@@ -223,6 +223,9 @@ SKYENGINE_DNS_MAP="" ./build/skyengine --work-dir . /path/to/app.mrp
 | 接听键 | `Tab` |
 | 挂机/返回键 | `Esc` |
 
+Windows 下 `Q/W/E/A/S/D` 按物理键位识别，不受当前键盘布局影响；Shift、Ctrl、Alt
+等未映射修饰键不会发送给 MRP，也不会阻塞随后按下的模拟器控制键。
+
 SDL 窗口中的鼠标按下、移动和抬起会转换为 MRP 触摸事件。应用打开文本编辑框后，使用 `Ctrl+V` 粘贴并确认当前剪贴板内容，使用 `Ctrl+Z` 取消输入。
 
 ## 共享库与 Flutter

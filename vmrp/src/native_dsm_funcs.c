@@ -33,6 +33,7 @@
 #include "./include/bridge.h"
 #include "./include/file_lib.h"
 #include "./include/native_text_widget.h"
+#include "./include/native_modal_menu.h"
 #include "./include/network.h"
 #include "./include/utils.h"
 #include "./include/skyengine.h"
@@ -1419,23 +1420,17 @@ static int32 native_stopShake(void) {
 }
 
 static int32 native_dialogCreate(const char *title, const char *text, int32 type) {
-    (void)title;
-    (void)text;
-    (void)type;
-    return MR_FAILED;
+    /* SKYENGINE 允许对话框与文本框使用相同平台呈现；两者共享按钮事件
+     * 契约，确认/取消均由 runtime 转换为 MR_DIALOG_EVENT。 */
+    return native_text_widget_create(title, text, type);
 }
 
 static int32 native_dialogRelease(int32 dialog) {
-    (void)dialog;
-    return MR_FAILED;
+    return native_text_widget_release(dialog);
 }
 
 static int32 native_dialogRefresh(int32 dialog, const char *title, const char *text, int32 type) {
-    (void)dialog;
-    (void)title;
-    (void)text;
-    (void)type;
-    return MR_FAILED;
+    return native_text_widget_refresh(dialog, title, text, type);
 }
 
 /* 平台文本框:委托 native_text_widget(黑底绿字全屏文本页,软键转
@@ -1451,7 +1446,29 @@ static int32 native_textRelease(int32 text) {
 }
 
 static int32 native_textRefresh(int32 handle, const char *title, const char *text) {
-    return native_text_widget_refresh(handle, title, text);
+    /* mr_textRefresh 不改变创建时的按钮类型。 */
+    return native_text_widget_refresh(handle, title, text, -1);
+}
+
+/* 原生菜单(table[63]/[64]/[65]):把 dsm.c 暂存的 title/items 喂给
+ * native_modal_menu_show 显示平台模态层后立即返回;后续选择 / 取消由
+ * 主循环过滤器调用 event(MR_MENU_SELECT/_RETURN) 通知 wrapper。 */
+extern char *dsm_menu_title_ucs2be(int32 handle);
+extern char **dsm_menu_items_ucs2be(int32 handle);
+extern int32 dsm_menu_item_count(int32 handle);
+static int32 native_menuShow(int32 handle) {
+    char *title = dsm_menu_title_ucs2be(handle);
+    char **items = dsm_menu_items_ucs2be(handle);
+    int32 count = dsm_menu_item_count(handle);
+    if (count <= 0) return MR_FAILED;
+    int32_t h = native_modal_menu_show(handle, title,
+                                      (const char *const *)items,
+                                      count);
+    return h > 0 ? MR_SUCCESS : MR_FAILED;
+}
+
+static int32 native_menuRelease(int32 handle) {
+    return native_modal_menu_release(handle);
 }
 
 static void native_drawBitmap(uint16 *bmp, int16 x, int16 y, uint16 w, uint16 h) {
@@ -1525,6 +1542,8 @@ static DSM_REQUIRE_FUNCS native_funcs = {
     .mr_editGetText = native_editGetText,
     .mr_playSoundChannel = native_playSoundChannel,
     .mr_stopSoundChannel = native_stopSoundChannel,
+    .mr_menuShow = native_menuShow,
+    .mr_menuRelease = native_menuRelease,
     .flags = NATIVE_DSM_FLAGS,
     .screen_width = 0,
     .screen_height = 0,

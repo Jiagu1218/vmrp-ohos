@@ -197,6 +197,7 @@ REM ===========================================================================
 REM vmrp 自有源码:在 vmrp git 上下文还原
 pushd "%VMRP_SRC%" >nul 2>&1
 if errorlevel 1 exit /b 0
+git checkout -- CMakeLists.txt                     >nul 2>&1
 git checkout -- src\include\arm_ext_internal.h          >nul 2>&1
 git checkout -- src\native_dsm_funcs.c            >nul 2>&1
 git checkout -- src\mythroad\mythroad.c           >nul 2>&1
@@ -204,8 +205,14 @@ git checkout -- src\mythroad\dsm.c                >nul 2>&1
 git checkout -- src\arm_ext_executor.c            >nul 2>&1
 git checkout -- src\skyengine_api.c                    >nul 2>&1
 git checkout -- src\include\skyengine_api.h              >nul 2>&1
+git checkout -- src\include\arm_ext_host.h              >nul 2>&1
 git checkout -- src\include\native_dsm_funcs.h      >nul 2>&1
-git checkout -- src\network.c                     >nul 2>&1
+ git checkout -- src\native_text_widget.c          >nul 2>&1
+ git checkout -- src\native_modal_menu.c           >nul 2>&1
+git checkout -- src\include\native_text_widget.h  >nul 2>&1
+git checkout -- src\include\native_modal_menu.h   >nul 2>&1
+git checkout -- src\runtime_native_mythroad.c     >nul 2>&1
+ git checkout -- src\network.c                     >nul 2>&1
 git checkout -- src\arm_ext\aex_exec.c            >nul 2>&1
 git checkout -- src\arm_ext\aex_table.c           >nul 2>&1
 git checkout -- src\arm_ext\aex_mem.c             >nul 2>&1

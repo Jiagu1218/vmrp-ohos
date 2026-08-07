@@ -161,6 +161,12 @@ public:
     // 震动强度：0=轻, 1=中(默认), 2=强。影响 OH_Vibrator_PlayVibration 的 duration 和 usage。
     void SetShakeIntensity(int level);
     int GetShakeIntensity() const { return shake_intensity_; }
+    // 前后台切换:onBackground 时 background=true(停止传感器轮询),
+    // onForeground 时 background=false(PollMotionShake 按需重订阅)。
+    void SetBackground(bool bg) {
+        background_.store(bg);
+        if (bg) StopSensor();
+    }
 
     // 轮询上游 motion/shake 状态。由 TimerLoop 每 tick 调一次：
     // - take_shake() 返回震动请求时驱动 OH_Vibrator
@@ -185,6 +191,7 @@ private:
     bool sensor_subscribed_ = false;
     float motion_sensitivity_ = 1.0f;
     int shake_intensity_ = 1;
+    std::atomic<bool> background_{false};  // 后台标志:阻止 PollMotionShake 重订阅传感器
     // Unicorn ARM 引擎不支持并发。触摸线程的 SendEvent 和 timer 线程的 StepTimer
     // 都会调 uc_emu_start 执行 ARM 代码，并发会导致 TCG 的 TB cache/链表损坏
     //（translate-all.c g_assert_not_reached，UC_ERR_EXCEPTION），表现为运行中闪退。

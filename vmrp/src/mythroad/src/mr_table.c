@@ -157,19 +157,22 @@ static void computesizes  (int nums[], int ntotal, int *narray, int *nhash) {
   int i;
   int a = nums[0];  /* number of elements smaller than 2^i */
   int na = a;  /* number of elements to go to array part */
-  int n = (na == 0) ? -1 : 0;  /* (log of) optimal size for array part */
+  int optimal_size = (na == 0) ? 0 : 1;
   for (i = 1; a < *narray && *narray >= twoto(i-1); i++) {
     if (nums[i] > 0) {
       a += nums[i];
       if (a >= twoto(i-1)) {  /* more than half elements in use? */
-        n = i;
+        optimal_size = twoto(i);
         na = a;
       }
     }
   }
   mrp_assert(na <= *narray && *narray <= ntotal);
   *nhash = ntotal - na;
-  *narray = (n == -1) ? 0 : twoto(n);
+  /* Keep the selected size non-negative: MSVC 14.51 /O2 lowers the old
+   * -1-sentinel conditional shift to 1 << 31, making a string-only table
+   * enter resize() with nasize == INT_MIN and read before its NULL array. */
+  *narray = optimal_size;
   mrp_assert(na <= *narray && na >= *narray/2);
 }
 

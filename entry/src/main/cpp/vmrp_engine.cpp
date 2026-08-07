@@ -457,6 +457,8 @@ void VmrpEngine::SetShakeIntensity(int level) {
 // - motion_active(): -1=未监听, >=0=监听中 → 启停 OH_Sensor 订阅
 void VmrpEngine::PollMotionShake() {
     if (!loaded_) return;
+    // 后台时不订阅传感器(避免上架自检报"传感器占用")
+    if (background_) return;
     // 震动轮询
     if (api_.take_shake) {
         int req = api_.take_shake();

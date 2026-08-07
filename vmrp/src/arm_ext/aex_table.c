@@ -1222,6 +1222,67 @@ aex_done:
     c->ret = ret;
 }
 
+/* table[63] mr_menuCreate(title, num):创建独立菜单 handle；DSM 保存该
+ * handle 对应的 title/items，供异步 mr_menuShow/Refresh 呈现。 */
+static void aex_t063(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t r1 = c->r1;
+    uint32_t ret = MR_SUCCESS;
+ {
+        ret = mr_menuCreate(arm_str(m, r0), (int16)r1);
+    } goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[64] mr_menuSetItem(menu, text, index):复制并保存第 index 项文本。 */
+static void aex_t064(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t r1 = c->r1;
+    uint32_t r2 = c->r2;
+    uint32_t ret = MR_SUCCESS;
+ {
+        ret = mr_menuSetItem((int32)r0, arm_str(m, r1), (int32)r2);
+    } goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[65] mr_menuShow(menu):异步显示原生菜单并返回状态，选择/取消
+ * 随后由平台事件入口投递 MR_MENU_SELECT/MR_MENU_RETURN。 */
+static void aex_t065(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t ret = MR_SUCCESS;
+ ret = mr_menuShow((int32)r0); goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[67] mr_menuRelease(menu):释放原生菜单。mr_helper.h 第 76 行。 */
+static void aex_t067(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t ret = MR_SUCCESS;
+    ret = mr_menuRelease((int32)r0);
+    goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
+/* table[68] mr_menuRefresh(menu):刷新原生菜单显示。mr_helper.h 第 77 行。 */
+static void aex_t068(ArmExtModule *m, AexTableCtx *c) {
+    (void)m;
+    uint32_t r0 = c->r0;
+    uint32_t ret = MR_SUCCESS;
+    ret = mr_menuRefresh((int32)r0);
+    goto aex_done;
+aex_done:
+    c->ret = ret;
+}
+
 static void aex_t069(ArmExtModule *m, AexTableCtx *c) {
     (void)m;
     uint32_t r0 = c->r0;
@@ -1899,9 +1960,30 @@ static void aex_t131(ArmExtModule *m, AexTableCtx *c) {
                  * check is therefore the extChunk magic/file/length tuple.
                  */
                 arm_ext_drop_overlapping_stale_nested_modules(m, r2, r3);
-                m->pending_internal_file_addr = r2;
-                m->pending_internal_file_len = r3;
-                arm_ext_sync_internal_nested_module(m, r2, r3);
+                /* cmd=9 有两种调用方：私有 loader 的子模块 staging（小映像，
+                 * 随后会出现描述它的 extChunk 并完成登记），以及子应用返回时
+                 * wrapper 把挂起快照(dump0/arena)整块读回后的全区 cacheSync。
+                 * 后者的范围完整覆盖 primary 映像，永远不会有 extChunk 来
+                 * "完成"这次 staging——若照 staging 语义把整个恢复区设为
+                 * pending_internal_file，find_nested_module 会因 "pending
+                 * staging 窗口" 规则拒绝把恢复区内的 PC 归属给 primary 记录，
+                 * 逐 block 的 R9 纠正从此对 game 代码失效：game 每帧经
+                 * timerStart/Stop 桥进出 wrapper 后 R9 停留在 wrapper RW，
+                 * 帧回调以错误 R9 静默空转（optwar 浏览器返回后黑屏
+                 * "请稍等"卡死的根因）。整块恢复只需要 TB 缓存失效，
+                 * 不是子模块 staging。 */
+                int restores_primary_image =
+                    m->primary_file_addr && m->primary_file_len &&
+                    arm_ext_range_contains(r2, r3, m->primary_file_addr,
+                                           m->primary_file_len);
+                if (restores_primary_image) {
+                    m->pending_internal_file_addr = 0;
+                    m->pending_internal_file_len = 0;
+                } else {
+                    m->pending_internal_file_addr = r2;
+                    m->pending_internal_file_len = r3;
+                    arm_ext_sync_internal_nested_module(m, r2, r3);
+                }
                 uc_err cerr = uc_ctl_remove_cache(m->uc, r2, r2 + r3);
                 if (cerr != UC_ERR_OK && arm_ext_trace_on()) {
                     printf("arm_ext_executor: uc_ctl_remove_cache(0x%X, 0x%X) failed: %u\n",
@@ -2664,6 +2746,11 @@ const AexTableHandler aex_table_handlers[EXT_TABLE_COUNT] = {
     [59] = aex_t059,
     [60] = aex_t060,
     [61] = aex_t061,
+    [63] = aex_t063,
+    [64] = aex_t064,
+    [65] = aex_t065,
+    [67] = aex_t067,
+    [68] = aex_t068,
     [69] = aex_t069,
     [70] = aex_t070,
     [71] = aex_t071,

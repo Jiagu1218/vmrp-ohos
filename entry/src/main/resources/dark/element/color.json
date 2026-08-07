@@ -22,7 +22,7 @@
     { "name": "settings_select_option_bg", "value": "#0D0D1A" },
     { "name": "settings_select_menu_bg", "value": "#0D0D1AB3" },
     { "name": "settings_slider_track", "value": "#1AFFFFFF" },
-    { "name": "settings_slider_value_bg", "value": "#1AE94560" },
+    { "name": "settings_slider_value_bg", "value": "#E94560" },
     { "name": "settings_danger_bg", "value": "#2A0A12B3" },
     { "name": "settings_btn_deep_bg", "value": "#0A0A1EB3" },
     { "name": "settings_reset_btn_border", "value": "#E94560" },
@@ -51,6 +51,8 @@
     { "name": "emulator_edit_input_bg", "value": "#1A1A2E" },
     { "name": "emulator_edit_input_fg", "value": "#FFFFFF" },
     { "name": "emulator_edit_cancel_bg", "value": "#333355" },
-    { "name": "emulator_edit_cancel_fg", "value": "#CCCCCC" }
+    { "name": "emulator_edit_cancel_fg", "value": "#CCCCCC" },
+    { "name": "btn_text_on_accent", "value": "#FFFFFF" },
+    { "name": "btn_text_on_light", "value": "#182431" }
   ]
 }

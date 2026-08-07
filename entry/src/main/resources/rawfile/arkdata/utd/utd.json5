@@ -1,7 +1,7 @@
 {
   "UniformDataTypeDeclarations": [
     {
-      "TypeId": "com.example.vmrpohos.mrp",
+      "TypeId": "com.xjg.skyengine.mrp",
       "BelongingToTypes": ["general.file"],
       "FilenameExtensions": [".mrp"],
       "MIMETypes": ["application/x-mrp"],
