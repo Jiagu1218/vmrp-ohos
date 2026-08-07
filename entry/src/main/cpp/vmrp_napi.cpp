@@ -533,21 +533,25 @@ static napi_value GetScreenInfo(napi_env env, napi_callback_info info) {
     return obj;
 }
 
-// mediaPause(): 暂停音频渲染(不清 PCM,可恢复)
+// mediaPause(): 暂停音频渲染+传感器(不清 PCM,可恢复)
 // 同时暂停 OHAudio renderer 停止拉流回调,避免空转。
+// 退后台时调用,释放传感器占用。
 static napi_value MediaPause(napi_env env, napi_callback_info info) {
     (void)env; (void)info;
     VmrpEngine::Instance().MediaPause();
     g_audio.Pause();
+    VmrpEngine::Instance().SetBackground(true);  // 停止传感器轮询 + Unsubscribe
     return nullptr;
 }
 
 // mediaResume(): 恢复音频渲染
 // 同时恢复 OHAudio renderer 拉流回调。
+// 回前台时清除 background 标志,PollMotionShake 会在下一 tick 按需重新订阅传感器。
 static napi_value MediaResume(napi_env env, napi_callback_info info) {
     (void)env; (void)info;
     VmrpEngine::Instance().MediaResume();
     g_audio.Resume();
+    VmrpEngine::Instance().SetBackground(false);
     return nullptr;
 }
 

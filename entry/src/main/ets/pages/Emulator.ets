@@ -114,6 +114,9 @@ struct EmulatorPage {
 
   aboutToDisappear(): void {
     try {
+      display.off('foldStatusChange');
+    } catch (_e) {}
+    try {
       this.engine.stop();
     } catch (_e) {}
   }
@@ -198,6 +201,20 @@ struct EmulatorPage {
        const err = e as Error;
          this.statusText = `Failed: ${err?.message ?? String(e)}`;
      }
+  }
+
+  // 调速:更新引擎 + 保存到 preferences(与设置页同步)。
+  private cycleSpeed(): void {
+    const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
+    this.speedMultiplier = next;
+    this.engine.setSpeedMultiplier(next);
+    try {
+      const ctx = getContext(this);
+      preferences.getPreferences(ctx, 'vmrp_settings').then(pref => {
+        pref.put('speed_multiplier', next);
+        pref.flush();
+      });
+    } catch (_e) {}
   }
 
   private openEditDialog(): void {
@@ -378,11 +395,7 @@ struct EmulatorPage {
           StatusBarChip({
             chipLabel: `${this.speedMultiplier}x`,
             chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
-            onChipClick: () => {
-              const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
-              this.speedMultiplier = next;
-              this.engine.setSpeedMultiplier(next);
-            }
+            onChipClick: () => { this.cycleSpeed(); }
           }).margin(3)
           StatusBarChip({
             chipLabel: $r('app.string.emulator_chip_settings'),
@@ -505,11 +518,7 @@ struct EmulatorPage {
         StatusBarChip({
           chipLabel: `${this.speedMultiplier}x`,
           chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
-          onChipClick: () => {
-            const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
-            this.speedMultiplier = next;
-            this.engine.setSpeedMultiplier(next);
-          }
+          onChipClick: () => { this.cycleSpeed(); }
         })
         if (this.gamepadConnected) {
           StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT })
@@ -618,11 +627,7 @@ struct EmulatorPage {
          StatusBarChip({
            chipLabel: `${this.speedMultiplier}x`,
            chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
-           onChipClick: () => {
-             const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
-             this.speedMultiplier = next;
-             this.engine.setSpeedMultiplier(next);
-           }
+           onChipClick: () => { this.cycleSpeed(); }
          })
          if (this.gamepadConnected) {
            StatusBarChip({ chipLabel: '🎮', chipFontColor: RUN_DOT })
@@ -717,11 +722,7 @@ struct EmulatorPage {
          StatusBarChip({
            chipLabel: `${this.speedMultiplier}x`,
            chipFontColor: this.speedMultiplier > 1 ? $r('app.color.accent_color') : DPAD_ARROW,
-           onChipClick: () => {
-             const next = this.speedMultiplier >= 4 ? 1 : this.speedMultiplier + 1;
-             this.speedMultiplier = next;
-             this.engine.setSpeedMultiplier(next);
-           }
+           onChipClick: () => { this.cycleSpeed(); }
          })
         }
         .width('100%')
@@ -839,6 +840,21 @@ struct EmulatorPage {
     .onWillDisappear(() => {
       this.screenVisible = false;
       try { this.engine.stop(); } catch (_e) {}
+    })
+    .onShown(() => {
+      // 从设置页返回时同步调速值(设置页可能修改了 speed_multiplier)
+      try {
+        const ctx = getContext(this);
+        preferences.getPreferences(ctx, 'vmrp_settings').then(pref => {
+          pref.get('speed_multiplier', 1).then((val: preferences.ValueType) => {
+            const mult = val as number;
+            if (mult >= 1 && mult <= 4 && mult !== this.speedMultiplier) {
+              this.speedMultiplier = mult;
+              this.engine.setSpeedMultiplier(mult);
+            }
+          });
+        });
+      } catch (_e) {}
     })
   }
 }

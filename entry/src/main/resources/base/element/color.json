@@ -46,7 +46,7 @@
     { "name": "emulator_bg", "value": "#F1F1F5" },
     { "name": "emulator_idle_dot", "value": "#A0A0B0" },
     { "name": "emulator_softkey_text", "value": "#4A4A5E" },
-    { "name": "emulator_ok_text", "value": "#FFFFFF" },
+    { "name": "emulator_ok_text", "value": "#182431" },
     { "name": "emulator_edit_hint", "value": "#5A5A6E" },
     { "name": "emulator_edit_input_bg", "value": "#F1F1F5" },
     { "name": "emulator_edit_input_fg", "value": "#182431" },
