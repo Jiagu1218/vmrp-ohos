@@ -15,6 +15,7 @@
 
 #include "./include/bridge.h"
 #include "./include/e2e_control.h"
+#include "./include/keyboard_input.h"
 #include "./include/native_text_widget.h"
 #include "./include/skyengine.h"
 #include "./include/memory.h"
@@ -283,7 +284,7 @@ static int32_t editMaxSize = 0;
 static char *holdEditText = NULL;
 static uint32_t clickSeq = 0;
 
-static SDL_Keycode isKeyDown = SDLK_UNKNOWN;
+static SkyEngineKeyLatch keyLatch = SKYENGINE_KEY_LATCH_INITIALIZER;
 
 void saveEditText(char *str) {
     uint8_t *utf8Str = (uint8_t *)str;
@@ -475,111 +476,36 @@ int32_t timerStop(void) {
     return MR_SUCCESS;
 }
 
-static void keyEvent(int16 type, SDL_Keycode code) {
-    if (code >= SDLK_0 && code <= SDLK_9) {
-        int32_t key = MR_KEY_0 + (code - SDLK_0);
-        event(type, key, 0);  // 按键 0-9
-        return;
-    }
-    switch (code) {
-        case SDLK_KP_0:
-            event(type, MR_KEY_0, 0);
-            break;
-        case SDLK_KP_1:
-            event(type, MR_KEY_1, 0);
-            break;
-        case SDLK_KP_2:
-            event(type, MR_KEY_2, 0);
-            break;
-        case SDLK_KP_3:
-            event(type, MR_KEY_3, 0);
-            break;
-        case SDLK_KP_4:
-            event(type, MR_KEY_4, 0);
-            break;
-        case SDLK_KP_5:
-            event(type, MR_KEY_5, 0);
-            break;
-        case SDLK_KP_6:
-            event(type, MR_KEY_6, 0);
-            break;
-        case SDLK_KP_7:
-            event(type, MR_KEY_7, 0);
-            break;
-        case SDLK_KP_8:
-            event(type, MR_KEY_8, 0);
-            break;
-        case SDLK_KP_9:
-            event(type, MR_KEY_9, 0);
-            break;
-        case SDLK_KP_ENTER:
-        case SDLK_RETURN:                   // 回车键
-            event(type, MR_KEY_SELECT, 0);  // 确认/选择/ok
-            break;
-        case SDLK_EQUALS:                 // 等号
-            event(type, MR_KEY_SOFTLEFT, 0);
-            break;
-        case SDLK_MINUS:                  // 减号
-            event(type, MR_KEY_SOFTRIGHT, 0);
-            break;
-        case SDLK_ASTERISK:
-            event(type, MR_KEY_STAR, 0);
-            break;
-        case SDLK_HASH:
-            event(type, MR_KEY_POUND, 0);
-            break;
-        case SDLK_w:
-        case SDLK_UP:  // 上
-            event(type, MR_KEY_UP, 0);
-            break;
-        case SDLK_s:
-        case SDLK_DOWN:  // 下
-            event(type, MR_KEY_DOWN, 0);
-            break;
-        case SDLK_a:
-        case SDLK_LEFT:  // 左
-            event(type, MR_KEY_LEFT, 0);
-            break;
-        case SDLK_d:
-        case SDLK_RIGHT:  // 右
-            event(type, MR_KEY_RIGHT, 0);
-            break;
-        case SDLK_q:
-        case SDLK_LEFTBRACKET:                // 左中括号
-            event(type, MR_KEY_SOFTLEFT, 0);  // 左功能键
-            break;
-        case SDLK_e:
-        case SDLK_RIGHTBRACKET:                // 右中括号
-            event(type, MR_KEY_SOFTRIGHT, 0);  // 右功能键
-            break;
-        case SDLK_TAB:
-            event(type, MR_KEY_SEND, 0);  // 接听键
-            break;
-        case SDLK_ESCAPE:
-            event(type, MR_KEY_POWER, 0);  // 挂机键
-            break;
-        default:
-            printf("key:%d\n", code);
-            break;
-    }
+static SDL_Keycode keyboard_event_keycode(const SDL_KeyboardEvent *key) {
+#ifdef _WIN32
+    return (SDL_Keycode)skyengine_normalize_windows_keycode(
+        (int32_t)key->keysym.sym, (int32_t)key->keysym.scancode,
+        key->windowID == E2E_KEY_WINDOW_ID);
+#else
+    return key->keysym.sym;
+#endif
 }
 
-static int dispatch_key_down(SDL_Keycode code) {
-    if (isKeyDown == SDLK_UNKNOWN) {
-        isKeyDown = code;
-        keyEvent(MR_KEY_PRESS, code);
-        return 1;
+static int dispatch_key_down(SDL_Keycode code, Uint8 repeat) {
+    int32_t mr_key;
+    if (!skyengine_key_latch_press(&keyLatch, (int32_t)code, &mr_key)) {
+        /* Preserve the useful unknown-key diagnostic without allowing that key
+         * to occupy the handset's single active-key slot. */
+        if (!repeat && keyLatch.active_keycode == SDLK_UNKNOWN &&
+            skyengine_mr_key_from_sdl_key((int32_t)code) == MR_KEY_NONE) {
+            printf("key:%d\n", code);
+        }
+        return 0;
     }
-    return 0;
+    event(MR_KEY_PRESS, mr_key, 0);
+    return 1;
 }
 
 static int dispatch_key_up(SDL_Keycode code) {
-    if (isKeyDown == code) {
-        isKeyDown = SDLK_UNKNOWN;
-        keyEvent(MR_KEY_RELEASE, code);
-        return 1;
-    }
-    return 0;
+    int32_t mr_key;
+    if (!skyengine_key_latch_release(&keyLatch, (int32_t)code, &mr_key)) return 0;
+    event(MR_KEY_RELEASE, mr_key, 0);
+    return 1;
 }
 
 static void complete_e2e_key_event(const SDL_KeyboardEvent *key, int delivered) {
@@ -599,8 +525,7 @@ static void dispatch_e2e_key_up(int after_timer) {
     int delivered;
     if (isEditMode) {
         /* 与 edit-mode SDL_KEYUP 分支一致：编辑器拥有输入，只清宿主按键锁。 */
-        delivered = isKeyDown == code;
-        if (delivered) isKeyDown = SDLK_UNKNOWN;
+        delivered = skyengine_key_latch_clear(&keyLatch, (int32_t)code);
     } else {
         delivered = dispatch_key_up(code);
     }
@@ -817,10 +742,9 @@ void loop(void) {
                          * input, so consume it without sending a Mythroad key
                          * release but clear the host key latch.  Otherwise the
                          * next physical keydown is rejected as a duplicate. */
-                        int delivered = isKeyDown == ev.key.keysym.sym;
-                        if (delivered) {
-                            isKeyDown = SDLK_UNKNOWN;
-                        }
+                        SDL_Keycode code = keyboard_event_keycode(&ev.key);
+                        int delivered = skyengine_key_latch_clear(
+                            &keyLatch, (int32_t)code);
                         /* 编辑模式也完成了 release；按 token 通知对应的 E2E 命令。 */
                         complete_e2e_key_event(&ev.key, delivered);
                         continue;
@@ -863,15 +787,18 @@ void loop(void) {
                 continue;
             }
             switch (ev.type) {
-                case SDL_KEYDOWN:
+                case SDL_KEYDOWN: {
+                    SDL_Keycode code = keyboard_event_keycode(&ev.key);
                     complete_e2e_key_event(
-                        &ev.key, dispatch_key_down(ev.key.keysym.sym));
+                        &ev.key, dispatch_key_down(code, ev.key.repeat));
                     /* A guest with no pending timer still needs a deterministic
                      * short-key release at this same main-thread boundary. */
                     dispatch_e2e_key_up(0);
                     break;
+                }
                 case SDL_KEYUP: {
-                    int delivered = dispatch_key_up(ev.key.keysym.sym);
+                    SDL_Keycode code = keyboard_event_keycode(&ev.key);
+                    int delivered = dispatch_key_up(code);
                     /* dispatch 返回表示 guest release 回调已完成，可等待下一 timer epoch。 */
                     complete_e2e_key_event(&ev.key, delivered);
                     break;
@@ -906,9 +833,37 @@ static void abort_handler(int sig) {
     raise(SIGABRT);
 }
 static LONG WINAPI win_exception_filter(EXCEPTION_POINTERS *ep) {
+    const EXCEPTION_RECORD *record = ep->ExceptionRecord;
+    const CONTEXT *context = ep->ContextRecord;
+    const void *image_base = (const void *)GetModuleHandleW(NULL);
     fprintf(stderr, "[CRASH] Unhandled exception: code=0x%08lX addr=%p\n",
-        ep->ExceptionRecord->ExceptionCode,
-        ep->ExceptionRecord->ExceptionAddress);
+        record->ExceptionCode, record->ExceptionAddress);
+    /* ASLR makes a raw PC insufficient for matching optimized Windows builds to
+     * dumpbin/PDB output. Keep the module-relative address and failed access in
+     * the crash log so Release-only faults remain reproducible without a JIT debugger. */
+    fprintf(stderr, "[CRASH] image_base=%p rva=0x%llX\n", image_base,
+            (unsigned long long)((uintptr_t)record->ExceptionAddress -
+                                 (uintptr_t)image_base));
+    if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION &&
+        record->NumberParameters >= 2) {
+        const char *operation = record->ExceptionInformation[0] == 0 ? "read" :
+                                record->ExceptionInformation[0] == 1 ? "write" :
+                                record->ExceptionInformation[0] == 8 ? "execute" :
+                                "unknown";
+        fprintf(stderr, "[CRASH] access=%s target=%p\n", operation,
+                (void *)record->ExceptionInformation[1]);
+    }
+#if defined(_M_X64)
+    fprintf(stderr,
+            "[CRASH] rip=%016llX rsp=%016llX rbp=%016llX rbx=%016llX\n"
+            "[CRASH] rcx=%016llX rdx=%016llX rsi=%016llX rdi=%016llX\n"
+            "[CRASH] r8 =%016llX r9 =%016llX r10=%016llX r11=%016llX\n"
+            "[CRASH] r12=%016llX r13=%016llX r14=%016llX r15=%016llX\n",
+            context->Rip, context->Rsp, context->Rbp, context->Rbx,
+            context->Rcx, context->Rdx, context->Rsi, context->Rdi,
+            context->R8, context->R9, context->R10, context->R11,
+            context->R12, context->R13, context->R14, context->R15);
+#endif
     fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
 }

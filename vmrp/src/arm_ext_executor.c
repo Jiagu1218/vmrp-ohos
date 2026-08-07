@@ -1553,6 +1553,72 @@ static int arm_ext_finish_callback_state(ArmExtModule *m, uint32_t ext_chunk) {
     return 0;
 }
 
+static int arm_ext_snapshot_repeating_timer_period(
+    ArmExtModule *m, uint32_t node, uint32_t *period) {
+    if (!m || !node || !period || !arm_ptr_span(m, node, 0x18u)) return 0;
+    if (arm_ext_read_u32_or_zero_(m, node) != ARM_EXT_COMPACT_TIMER_MAGIC ||
+        arm_ext_read_u32_or_zero_(m, node + AEX_COMPACT_TIMER_REPEAT_OFF) == 0) {
+        return 0;
+    }
+    memcpy(period, arm_ptr(m, node + AEX_COMPACT_TIMER_PERIOD_OFF), 4);
+    return 1;
+}
+
+static uint32_t arm_ext_primary_repeating_timer_node(
+    ArmExtModule *m, uint32_t *period) {
+    if (!m || !period || !m->primary_p_addr ||
+        !arm_ptr(m, m->primary_p_addr)) {
+        return 0;
+    }
+    ArmExtNestedModule *primary_mod = arm_ext_find_nested_module_by_p(
+        m, m->primary_p_addr);
+    if (!primary_mod || !primary_mod->compact_timer_scheduler_off) return 0;
+
+    uint32_t rw = 0;
+    memcpy(&rw, arm_ptr(m, m->primary_p_addr), 4);
+    uint32_t scheduler = rw + primary_mod->compact_timer_scheduler_off;
+    if (!rw || scheduler < rw || !arm_ptr_span(m, scheduler, 0x10u)) return 0;
+
+    /* The discovered compact scheduler exposes its queued/current heads at
+     * +0x08/+0x0C. Only a repeat node at either primary head defines cadence;
+     * do not guess through unrelated one-shot work deeper in the lists. */
+    uint32_t candidates[2] = {
+        arm_ext_read_u32_or_zero_(m, scheduler + 0x08u),
+        arm_ext_read_u32_or_zero_(m, scheduler + 0x0Cu)
+    };
+    for (size_t i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
+        if (arm_ext_snapshot_repeating_timer_period(
+                m, candidates[i], period)) {
+            return candidates[i];
+        }
+    }
+    return 0;
+}
+
+static void arm_ext_save_modal_repeating_timer(
+    ArmExtModule *m, uint32_t node, uint32_t period) {
+    if (!m) return;
+    /* A new outer modal boundary supersedes any incomplete older snapshot.
+     * Capture only a structurally valid repeat node from the pre-suspend head. */
+    m->modal_repeating_timer_node = node;
+    m->modal_repeating_timer_period = node ? period : 0;
+}
+
+static void arm_ext_restore_modal_repeating_timer(ArmExtModule *m) {
+    if (!m) return;
+    uint32_t node = m->modal_repeating_timer_node;
+    uint32_t period = m->modal_repeating_timer_period;
+    uint32_t ignored = 0;
+    if (node && arm_ext_snapshot_repeating_timer_period(m, node, &ignored)) {
+        /* Resume may deliberately request a short first expiry in remaining
+         * (+0x08). Restore only the pre-modal period used by later repeats. */
+        memcpy(arm_ptr(m, node + AEX_COMPACT_TIMER_PERIOD_OFF), &period, 4);
+    }
+    /* This snapshot belongs to one outer modal generation only. */
+    m->modal_repeating_timer_node = 0;
+    m->modal_repeating_timer_period = 0;
+}
+
 static int arm_ext_save_modal_screen_snapshot(ArmExtModule *m) {
     if (!m || !m->screen_addr || !m->screen_len ||
         !arm_ptr(m, m->screen_addr)) {
@@ -1919,9 +1985,13 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
 
     /* 保存 arm_ext_call 前的 game state[8] */
     uint32_t _ac_grw = 0, _ac_s8_pre = 0;
+    uint32_t _ac_repeat_node_pre = 0;
+    uint32_t _ac_repeat_period_pre = 0;
     if (m->primary_p_addr && arm_ptr(m, m->primary_p_addr))
         memcpy(&_ac_grw, arm_ptr(m, m->primary_p_addr), 4);
     _ac_s8_pre = read_game_timer_head(m, _ac_grw);
+    _ac_repeat_node_pre = arm_ext_primary_repeating_timer_node(
+        m, &_ac_repeat_period_pre);
     int call_modal_snapshot_candidate = 0;
     /* 非模态状态下的 code=1 事件可能触发子模块加载，需要事先保存 game
      * 的快照以便子模块关闭后恢复。事件经 wrapper 路由时 call_p_addr
@@ -2216,6 +2286,10 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
     int wrapper_entered_modal =
         code == 1 && has_separate_wrapper && input_len >= 12 && input_addr &&
         modal_suspend_depth_pre == 0 && modal_suspend_depth_post > 0;
+    if (modal_suspend_depth_pre == 0 && modal_suspend_depth_post > 0) {
+        arm_ext_save_modal_repeating_timer(
+            m, _ac_repeat_node_pre, _ac_repeat_period_pre);
+    }
     if (modal_suspend_depth_pre == 0 && modal_suspend_depth_post > 0 &&
         call_modal_snapshot_candidate) {
         m->modal_screen_snapshot_valid = 1;
@@ -2265,6 +2339,7 @@ int arm_ext_call(ArmExtModule *m, int32 code, const void *input, uint32 input_le
                 write_game_timer_head(m, grw, m->saved_game_timer_head);
             m->saved_game_timer_head = 0;
         }
+        arm_ext_restore_modal_repeating_timer(m);
         arm_ext_restore_modal_screen_snapshot(m);
         m->primary_child_reopen_timer_needed = 1;
         reopen_set_this_call = 1;
@@ -2447,6 +2522,21 @@ static int arm_ext_call_primary_compact_dispatch(
     uint32_t rw = arm_ext_primary_rw_base_(m);
     if (!rw) return MR_FAILED;
 
+    uint32_t modal_ext_chunk = 0;
+    uint32_t suspend_depth_pre = 0;
+    if (arm_ptr(m, m->primary_p_addr + AEX_P_EXT_CHUNK_OFF)) {
+        memcpy(&modal_ext_chunk,
+               arm_ptr(m, m->primary_p_addr + AEX_P_EXT_CHUNK_OFF), 4);
+    }
+    if (modal_ext_chunk &&
+        arm_ptr(m, modal_ext_chunk + AEX_CHUNK_SUSPEND_OFF)) {
+        memcpy(&suspend_depth_pre,
+               arm_ptr(m, modal_ext_chunk + AEX_CHUNK_SUSPEND_OFF), 4);
+    }
+    uint32_t repeat_period_pre = 0;
+    uint32_t repeat_node_pre = arm_ext_primary_repeating_timer_node(
+        m, &repeat_period_pre);
+
     uint32_t sp = EXT_STACK_ADDR + EXT_STACK_SIZE - 32u;
     uint32_t stack_args[8] = {0};
     uc_mem_write(m->uc, sp, stack_args, sizeof(stack_args));
@@ -2481,6 +2571,22 @@ static int arm_ext_call_primary_compact_dispatch(
     capture_timer_dispatches(m);
     arm_ext_sanitize_compact_timer_heaps(m);
     arm_ext_diag_dump_primary_compact_timer_nodes(m, "primary_dispatch_post");
+
+    uint32_t suspend_depth_post = suspend_depth_pre;
+    if (modal_ext_chunk &&
+        arm_ptr(m, modal_ext_chunk + AEX_CHUNK_SUSPEND_OFF)) {
+        memcpy(&suspend_depth_post,
+               arm_ptr(m, modal_ext_chunk + AEX_CHUNK_SUSPEND_OFF), 4);
+    }
+    /* A primary walker can open a wrapper modal from its due callback and
+     * bypass arm_ext_call_dispatch's common boundary handling. Keep the same
+     * outer-depth snapshot contract on this direct entry as well. */
+    if (suspend_depth_pre == 0 && suspend_depth_post > 0) {
+        arm_ext_save_modal_repeating_timer(
+            m, repeat_node_pre, repeat_period_pre);
+    } else if (suspend_depth_pre > 0 && suspend_depth_post == 0) {
+        arm_ext_restore_modal_repeating_timer(m);
+    }
 
     int wrapper_live = arm_ext_wrapper_has_timer_queue(m);
     int primary_live = arm_ext_primary_has_compact_timer_queue(m);
@@ -2642,10 +2748,14 @@ int arm_ext_call_dispatch(ArmExtModule *m, int is_stop, uint32_t timer_interval)
 
     /* 保存 dispatch 前的 game timer head，用于模态框取消时恢复 */
     uint32_t _game_rw = 0, _s8_pre = 0;
+    uint32_t repeat_node_pre = 0;
+    uint32_t repeat_period_pre = 0;
     if (m->primary_p_addr && arm_ptr(m, m->primary_p_addr))
         memcpy(&_game_rw, arm_ptr(m, m->primary_p_addr), 4);
     if (_game_rw)
         _s8_pre = read_game_timer_head(m, _game_rw);
+    repeat_node_pre = arm_ext_primary_repeating_timer_node(
+        m, &repeat_period_pre);
     uint32_t suspend_depth_pre = 0;
     if (arm_ptr(m, ext_chunk + AEX_CHUNK_SUSPEND_OFF))
         memcpy(&suspend_depth_pre, arm_ptr(m, ext_chunk + AEX_CHUNK_SUSPEND_OFF), 4);
@@ -2827,6 +2937,10 @@ int arm_ext_call_dispatch(ArmExtModule *m, int is_stop, uint32_t timer_interval)
         if (suspend_depth_pre == 0 && suspend_depth_post > 0 && m->modal_fg_snapshot) {
             m->modal_fg_snapshot_valid = 1;
         }
+        if (suspend_depth_pre == 0 && suspend_depth_post > 0) {
+            arm_ext_save_modal_repeating_timer(
+                m, repeat_node_pre, repeat_period_pre);
+        }
         /* 通用模态框关闭：与 arm_ext_call 中相同的通用清理 */
         if (suspend_depth_pre > 0 && suspend_depth_post == 0) {
             /* 与 arm_ext_call 一致：本次关闭的前台子模块记录必须清除，
@@ -2847,6 +2961,7 @@ int arm_ext_call_dispatch(ArmExtModule *m, int is_stop, uint32_t timer_interval)
                     write_game_timer_head(m, _grw2, m->saved_game_timer_head);
                 m->saved_game_timer_head = 0;
             }
+            arm_ext_restore_modal_repeating_timer(m);
             arm_ext_restore_modal_screen_snapshot(m);
             m->primary_child_reopen_timer_needed = 1;
         }

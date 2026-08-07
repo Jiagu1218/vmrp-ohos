@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.11)
 project(sky-engine VERSION 0.1.0 LANGUAGES C CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 function(skyengine_add_link_flags target flags)
@@ -237,6 +239,7 @@ set(SKYENGINE_CORE_SOURCES
 set(SKYENGINE_PLATFORM_SDL_SOURCES
   ./src/main.c
   ./src/e2e_control.c
+  ./src/keyboard_input.c
 )
 
 set(SKYENGINE_MYTHROAD_SOURCES
@@ -359,6 +362,21 @@ else()
   # --no-as-needed 确保 libm 不被 GNU ld 按需跳过——unicorn 的内部静态库
   # （arm-softmmu）在链接顺序上排在 -lm 之后，需要其中的 sqrtf 等符号
   target_link_libraries(skyengine unicorn "-Wl,--no-as-needed" SDL2main SDL2 m pthread z)
+endif()
+
+if(BUILD_TESTING AND NOT CMAKE_CROSSCOMPILING)
+  # Input normalization is independent of Unicorn/MRP data, so keep this test
+  # small enough to exercise Windows scancodes in every native configuration.
+  add_executable(skyengine-keyboard-input-test
+    ./test/unit/keyboard_input_test.c
+    ./src/keyboard_input.c
+  )
+  target_include_directories(skyengine-keyboard-input-test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/include)
+  if(MSVC)
+    target_include_directories(skyengine-keyboard-input-test PRIVATE ${SDL2_INCLUDE_DIRS})
+  endif()
+  add_test(NAME skyengine-keyboard-input COMMAND skyengine-keyboard-input-test)
 endif()
 
 # The executable directory is the desktop default work-dir.  Deploy the base

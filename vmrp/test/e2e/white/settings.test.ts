@@ -141,4 +141,75 @@ describe("white", () => {
         interval: 1_000
     });
   }, 240_000);
+
+  it("设置菜单支持触摸", async () => {
+    ws = await SkyEngineWorkspace.create();
+    engine = await SkyEngineE2e.start("test/fixtures/white.mrp", { workDir: ws.dir });
+
+    await engine.waitForPixel(40, 13, [72, 144, 248], {
+      name: "touch-menu",
+      timeoutMs: 30_000,
+      intervalMs: 1_000,
+    });
+    await engine.key("DOWN", 1_000);
+    await engine.key("DOWN", 1_000);
+    await engine.key("DOWN", 1_000);
+    await engine.waitForPixel(165, 221, [0, 144, 192], {
+      name: "touch-menu-setting",
+      timeoutMs: 30_000,
+      intervalMs: 1_000,
+    });
+    await engine.key("ENTER", 1_000);
+
+    let parent!: PpmImage;
+    await vi.waitFor(async () => {
+      parent = await engine!.screen("touch-setting-parent");
+      expect(parent.pixel(144, 50)).toEqual([0, 0, 248]);
+      expectMenuSoftkeyLabels(parent);
+    }, {
+      timeout: 30_000,
+      interval: 1_000,
+    });
+
+    /* 先把焦点移到第二项，再点第一项；子菜单必须由触点命中的 index 0 打开，
+     * 不能只是把任意点击等价成当前焦点的 ENTER。 */
+    await engine.key("DOWN", 1_000);
+    const itemFirstDraw = await engine.drawCount();
+    await engine.click(144, 50, 2_000);
+    let child!: PpmImage;
+    await vi.waitFor(async () => {
+      child = await engine!.screen("touch-setting-child");
+      expect(child.pixel(144, 50)).toEqual([0, 0, 248]);
+      expect(child.diffPixelCount(parent)).toBeGreaterThan(0);
+      expectMenuSoftkeyLabels(child);
+    }, {
+      timeout: 30_000,
+      interval: 1_000,
+    });
+    await expectNoMainMenuTransition(engine, itemFirstDraw, "touch-item-transition");
+
+    /* 软键栏左右半区与可见的“确定/返回”一致；返回恢复父菜单，确定再打开
+     * 同一个子菜单。PPM 全帧比较同时覆盖触摸回调后的 handle 生命周期。 */
+    const backFirstDraw = await engine.drawCount();
+    await engine.click(220, 306, 2_000);
+    await vi.waitFor(async () => {
+      const screen = await engine!.screen("touch-setting-parent-restored");
+      expect(screen.diffPixelCount(parent)).toBe(0);
+    }, {
+      timeout: 30_000,
+      interval: 1_000,
+    });
+    await expectNoMainMenuTransition(engine, backFirstDraw, "touch-back-transition");
+
+    const okFirstDraw = await engine.drawCount();
+    await engine.click(20, 306, 2_000);
+    await vi.waitFor(async () => {
+      const screen = await engine!.screen("touch-setting-child-reopened");
+      expect(screen.diffPixelCount(child)).toBe(0);
+    }, {
+      timeout: 30_000,
+      interval: 1_000,
+    });
+    await expectNoMainMenuTransition(engine, okFirstDraw, "touch-ok-transition");
+  }, 240_000);
 });

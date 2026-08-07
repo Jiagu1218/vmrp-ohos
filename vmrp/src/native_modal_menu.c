@@ -9,7 +9,7 @@
  * 与 native_text_widget 的关键差异:
  * - 两者都非阻塞，由公共 runtime event filter 接管平台 UI 输入
  * - text widget 一次性投递 MR_DIALOG_EVENT;菜单投递 MR_MENU_SELECT idx
- * - text widget 反复渲染;菜单只在 KEY 变化时重绘
+ * - text widget 反复渲染;菜单在按键或触摸改变焦点时重绘
  */
 
 #include "./include/native_modal_menu.h"
@@ -50,6 +50,16 @@ static ModalMenu g_menu;
 /* 菜单关闭发生在 MR_KEY_PRESS 回调内；保存平台已接管的键，确保随后到达
  * 的配对 MR_KEY_RELEASE 仍由同一平台层消费，不泄漏给 guest。 */
 static int32_t g_captured_key = -1;
+
+enum {
+    MENU_TOUCH_TARGET_BACK = -3,
+    MENU_TOUCH_TARGET_OK = -2,
+    MENU_TOUCH_TARGET_NONE = -1
+};
+/* 与按键相同，触摸所有权从 DOWN 延续到 UP。目标另存是为了只让完整落在
+ * 同一控件内的手势生效；菜单在手势中途刷新时仍消费 UP，但取消旧目标动作。 */
+static int g_captured_touch_active;
+static int g_captured_touch_target = MENU_TOUCH_TARGET_NONE;
 
 /* 选中时高亮背景矩形;非选中时不画高亮背景。 */
 static void menu_fill_rect(uint16_t *page, int pw, int ph,
@@ -212,6 +222,8 @@ int32_t native_modal_menu_release(int32_t handle) {
 void native_modal_menu_destroy(void) {
     native_modal_menu_dismiss();
     g_captured_key = -1;
+    g_captured_touch_active = 0;
+    g_captured_touch_target = MENU_TOUCH_TARGET_NONE;
 }
 
 /* 异步显示平台菜单。white wrapper 的 mr_menuShow veneer(cfunction.ext
@@ -251,6 +263,11 @@ int32_t native_modal_menu_show(int32_t handle, const char *title_ucs2be,
         return -7;
     }
     menu_free_content(&previous);
+    /* Refresh 可能替换同一 handle 的文本和行数；旧 DOWN 的目标不再有效，
+     * 但保留 capture 标记，使它的配对 UP 仍由平台层消费。 */
+    if (g_captured_touch_active) {
+        g_captured_touch_target = MENU_TOUCH_TARGET_NONE;
+    }
     return handle;
 }
 
@@ -285,12 +302,53 @@ static void menu_move_selection(int delta) {
     }
 }
 
-int native_modal_menu_filter_event(int32_t code, int32_t p0) {
+/* 命中区与 menu_render_and_present 使用同一组布局常量，避免触摸区域随
+ * 分辨率或软键栏位置变化后偏离可见控件。返回菜单 index 或软键目标。 */
+static int menu_touch_target(int x, int y) {
+    int pw = skyengine_display_width();
+    int ph = skyengine_display_height();
+    if (pw <= 0 || ph <= 0 || x < 0 || x >= pw || y < 0 || y >= ph) {
+        return MENU_TOUCH_TARGET_NONE;
+    }
+
+    int bar_y = ph - MENU_SOFTBAR_H;
+    if (bar_y >= 0 && y >= bar_y) {
+        return x < pw / 2 ? MENU_TOUCH_TARGET_OK : MENU_TOUCH_TARGET_BACK;
+    }
+
+    int first_item_y = MENU_ITEM_Y - 2;
+    if (y < first_item_y) return MENU_TOUCH_TARGET_NONE;
+    int index = (y - first_item_y) / MENU_ITEM_DY;
+    return index < g_menu.item_count ? index : MENU_TOUCH_TARGET_NONE;
+}
+
+int native_modal_menu_filter_event(int32_t code, int32_t p0, int32_t p1) {
     /* 选择回调可能已经关闭当前菜单，但该 press 的 release 仍归平台所有。 */
     if (code == MR_KEY_RELEASE && p0 == g_captured_key) {
         g_captured_key = -1;
         return 1;
     }
+    /* UP 必须由捕获 DOWN 的平台层闭环；先清 capture 再同步回调，避免回调
+     * 创建的子菜单继承旧手势。刷新/关闭过的目标只消费，不执行选择。 */
+    if (code == MR_MOUSE_UP && g_captured_touch_active) {
+        int target = g_captured_touch_target;
+        int release_target = g_menu.active
+            ? menu_touch_target(p0, p1)
+            : MENU_TOUCH_TARGET_NONE;
+        g_captured_touch_active = 0;
+        g_captured_touch_target = MENU_TOUCH_TARGET_NONE;
+        if (target != MENU_TOUCH_TARGET_NONE && target == release_target) {
+            if (target >= 0) {
+                menu_select_and_post(target, 0);
+            } else if (target == MENU_TOUCH_TARGET_OK) {
+                menu_select_and_post(g_menu.selected, 0);
+            } else if (target == MENU_TOUCH_TARGET_BACK) {
+                menu_select_and_post(0, 1);
+            }
+        }
+        return 1;
+    }
+    if (code == MR_MOUSE_MOVE && g_captured_touch_active) return 1;
     if (!g_menu.active) return 0;
 
     switch (code) {
@@ -310,8 +368,19 @@ int native_modal_menu_filter_event(int32_t code, int32_t p0) {
         /* 没有命中 g_captured_key，说明对应 press 在菜单打开前已交给 guest
          * （典型路径是该 press 自己打开菜单）；release 也必须交还 guest。 */
         return 0;
-    case MR_MOUSE_DOWN:
+    case MR_MOUSE_DOWN: {
+        int target = menu_touch_target(p0, p1);
+        g_captured_touch_active = 1;
+        g_captured_touch_target = target;
+        if (target >= 0 && target != g_menu.selected) {
+            g_menu.selected = target;
+            menu_render_and_present();
+        }
+        return 1;
+    }
     case MR_MOUSE_UP:
+        /* DOWN 在菜单打开前已交给 guest 时，配对 UP 也必须交还 guest。 */
+        return 0;
     case MR_MOUSE_MOVE:
         /* 平台菜单显示期间拥有全部用户输入，未使用的输入也不能穿透。 */
         return 1;

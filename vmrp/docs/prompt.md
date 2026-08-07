@@ -661,10 +661,11 @@ tool/server-http.js已启动，修改tool/proxy.js来实现代理服务器。
 充分利用子Agent。
 记得存储记忆数据。
 
-测试用例`pnpm vitest run test/e2e/optwar/game-play.test.ts -t 突然加速1`执行后，“返回游戏界面”后，会突然加速。
+测试用例`pnpm vitest run test/e2e/optwar/game-play.test.ts -t 突然加速1`执行后，先进入广告插件，然后“返回游戏界面”后，会突然加速。
 
 预期结果：游戏最终保持正常速度。
-实际结果：“返回游戏界面”后，会突然加速。
+实际结果：先进入广告插件，“返回游戏界面”后，会突然加速。
+`third_party`目录中有一些SKY平台代码，可能有参考价值。
 
 程序的现有代码不一定正确。
 注意trace日志量会特别大。
@@ -681,10 +682,7 @@ tool/server-http.js已启动，修改tool/proxy.js来实现代理服务器。
 充分利用子Agent。
 记得存储记忆数据。
 
-测试用例`pnpm vitest run test/e2e/white/settings.test.ts`执行后，游戏会调用外部来绘制操作菜单，但目前不支持测试用例操作。
-
-预期：实现测试用例操作菜单的支持。
-实际：手动操作ENTER有响应，但不支持测试用例操作。
+测试用例`pnpm vitest run test/e2e/white/settings.test.ts`是正常的，但是设置菜单不支持触摸，添加一下触摸支持以及触摸的测试用例。
 
 程序的现有代码不一定正确。
 注意trace日志量会特别大。

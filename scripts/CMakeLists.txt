@@ -433,23 +433,20 @@ if(EXISTS "${_OHOS_TW_SRC}" AND EXISTS "${_OHOS_MM_SRC}")
     message(STATUS "[OHOS] Copied ohos_src native_text_widget/modal_menu (.c+.h) over upstream")
 endif()
 
-# --- Patch runtime_native_mythroad.c: filter_event 调用传 p1 ---
-# 树外版 filter_event 签名加了 p1(y 坐标),runtime 的调用需要同步改。
+# --- Patch runtime_native_mythroad.c: text_widget filter_event 调用传 p1 ---
+# 上游 b52bdbf 已改 modal_menu filter 传 p1,但 text_widget filter 仍是 2 参数。
+# 树外版 text_widget filter 加了 p1(y 坐标),需要同步改 runtime 调用。
 ohos_crlf_to_lf("${VMRP_SRC_DIR}/src/runtime_native_mythroad.c")
 set(_VMRP_RT "${VMRP_SRC_DIR}/src/runtime_native_mythroad.c")
 if(EXISTS "${_VMRP_RT}")
     file(READ "${_VMRP_RT}" _rt_text)
     if(NOT _rt_text MATCHES "OHOS_FILTER_P1")
         string(REPLACE
-            "if (native_modal_menu_filter_event(code, p0)) return MR_SUCCESS;"
-            "if (native_modal_menu_filter_event(code, p0, p1)) return MR_SUCCESS; /* OHOS_FILTER_P1 */"
-            _rt_text "${_rt_text}")
-        string(REPLACE
             "switch (native_text_widget_filter_event(code, p0, &dialog_param))"
             "switch (native_text_widget_filter_event(code, p0, p1, &dialog_param)) /* OHOS_FILTER_P1 */"
             _rt_text "${_rt_text}")
         file(WRITE "${_VMRP_RT}" "${_rt_text}")
-        message(STATUS "[OHOS] Patched runtime_native_mythroad.c filter_event p1 (OHOS_FILTER_P1)")
+        message(STATUS "[OHOS] Patched runtime_native_mythroad.c text_widget filter p1 (OHOS_FILTER_P1)")
     endif()
 endif()
 

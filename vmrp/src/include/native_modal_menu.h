@@ -9,7 +9,7 @@
  *   mr_menuCreate(title, num)        ─► dsmInFuncs 创建并保存 handle
  *   mr_menuSetItem(handle, text, idx) ─► dsmInFuncs 写入 item
  *   mr_menuShow(handle)              ─► dsmInFuncs 调本模块弹模态
- *   用户选择 ENTER/SELECT             ─► runtime 平台事件过滤器拦截
+ *   用户按键或触摸选择                 ─► runtime 平台事件过滤器拦截
  *                                       投递 event(MR_MENU_SELECT, idx, 0)
  *                                       或 event(MR_MENU_RETURN, 0, 0) 取消
  *
@@ -25,9 +25,9 @@ int32_t native_modal_menu_show(int32_t handle, const char *title_ucs2be,
 /* 若 handle 正在显示则关闭对应平台层；未显示返回 MR_IGNORE。 */
 int32_t native_modal_menu_release(int32_t handle);
 
-/* guest 事件入口前置过滤。返回 1 表示输入已由平台菜单消费，调用方不得
- * 再投递给应用；返回 0 表示非菜单输入，应继续正常事件路径。 */
-int native_modal_menu_filter_event(int32_t code, int32_t p0);
+/* guest 事件入口前置过滤。触摸事件使用 p0=x、p1=y；返回 1 表示输入已由
+ * 平台菜单消费，调用方不得再投递给应用；返回 0 表示应继续正常事件路径。 */
+int native_modal_menu_filter_event(int32_t code, int32_t p0, int32_t p1);
 
 /* 当前是否有菜单在显示(供主循环 / e2e 探测用)。 */
 int native_modal_menu_active(void);

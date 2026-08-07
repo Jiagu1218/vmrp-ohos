@@ -33,7 +33,7 @@ int skyengine_runtime_event(VmrpRuntime *rt, int32_t code, int32_t p0, int32_t p
     (void)rt;
     /* 原生菜单和文本框一样属于平台 UI；在全部前端共享的事件入口接管
      * 输入，选择/取消会由菜单模块另行投递 MR_MENU_SELECT/RETURN。 */
-    if (native_modal_menu_filter_event(code, p0)) return MR_SUCCESS;
+    if (native_modal_menu_filter_event(code, p0, p1)) return MR_SUCCESS;
     /* 平台文本框(mr_textCreate)显示期间按真机语义接管输入:软键翻译为
      * MR_DIALOG_EVENT 投递给应用,其余输入事件被平台窗口消费。这里是
      * 全部前端入口(SDL/wasm/flutter)进入 guest 的唯一漏斗,保证行为一致。

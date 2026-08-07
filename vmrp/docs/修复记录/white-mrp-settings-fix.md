@@ -239,3 +239,64 @@ shared-only 构建均通过。
 `e54eedc83be0e1bbba9fe23b29144353783bdaa722635e5e6a5ff518a2bfc4c8`；父菜单恢复帧
 仍与首次父菜单逐字节相同，无闪帧检查继续通过。最终兼容组为 5 文件/6 用例通过，
 普通构建与 shared-only 构建通过。
+
+### 2026-08-07：设置菜单触摸支持（诊断阶段）
+
+目标用例的既有键盘流程仍通过（1/1，约 2.27 秒）。在同一流程打开第一层平台
+“游戏设置”菜单后，执行 `CLICK 120 48` 的修复前基线为 draw count `5 -> 5`，
+最终返回 `ERR wait_draw_timeout current=5 target>5`。这排除了测试启动、菜单创建和
+画面等待问题，直接证明触摸没有触发任何菜单重绘或选择。
+
+事件链证据如下：
+
+- E2E `CLICK` 已生成带完整坐标的 SDL mouse down/up；`main.c` 将其原样转换为
+  `event(MR_MOUSE_DOWN/UP, x, y)`，无需新增测试协议。
+- `skyengine_runtime_event` 调 `native_modal_menu_filter_event` 时只传 `code,p0`，
+  因而菜单只能取得 x；当前过滤器又对三个 `MR_MOUSE_*` 分支直接返回 1，y 被丢弃且
+  事件只被消费、不产生动作。这是可见菜单只能用键盘、触摸完全无响应的直接原因。
+- 平台参考实现 `mrp_localui.cpp` 将 `VcpListMenu::m_signalItemTapped` 连接到
+  `onSelectItem`，完整点按后发送 `MR_MENU_SELECT(index)`；底部返回工具栏发送
+  `MR_MENU_RETURN`。所以 raw mouse 不能穿透到 guest，而应在平台菜单层转换事件。
+- white.ext 的既有反汇编显示 `0xE84168` 只处理 `MR_MENU_SELECT/RETURN`；
+  `0xE842BC..0xE842C0` 的 `mr_menuShow` veneer 也不等待 raw touch。该证据与平台
+  源码相互印证，故障不在 guest 菜单 handler。
+
+最小通用改动限定为：把完整 `x/y` 交给 `native_modal_menu`，按当前渲染几何命中
+菜单项和底部确定/返回区域，并只在 down/up 命中同一目标时提交选择。需要记录 down
+所有权，避免“打开菜单的 guest DOWN 对应的 UP”误选新菜单，也避免选择回调同步创建
+子菜单后旧事件穿透。此次不扩展 SDL finger、多点触控或 dialog 触摸，它们不是当前
+`MR_MOUSE_*` 菜单故障的必要改动面。未启用 trace，未使用 xvfb。
+
+#### 实现与验证
+
+- `native_modal_menu_filter_event` 接收完整 `p0=x,p1=y`。菜单项命中直接复用绘制
+  常量：第 i 行是 `[38 + 22*i, 60 + 22*i)`；软键栏从动态屏高减 26 得到，左右
+  半区分别对应确定和返回，没有应用名、菜单文字或包名分支。
+- 平台层在 `MR_MOUSE_DOWN` 保存目标，命中菜单项时只更新焦点；仅当
+  `MR_MOUSE_UP` 仍命中同一目标时才发送 `MR_MENU_SELECT/RETURN`。UP 前先清捕获，
+  防止同步创建的子菜单继承旧手势；中途 refresh 会取消旧目标但继续消费其 UP。
+- 新增独立 E2E 用例保留原键盘全流程。测试先把焦点移到第二项，再触摸第一项，随后
+  触摸子菜单“返回”和父菜单“确定”，证明实现使用触点 index 而非把任意点击映射为
+  当前焦点 ENTER，并覆盖嵌套 handle 恢复。
+
+目标用例 `pnpm vitest run test/e2e/white/settings.test.ts --retry=0
+--reporter=verbose` 为 2/2 通过（约 4.15 秒）。产物
+`/tmp/skyengine-e2e-U5e2Rx` 的 PPM 证据：
+
+- 父菜单、触摸返回后的父菜单 SHA-256 均为
+  `8cb7c7c5bd62dae601da7bdefb4f1d1d16505977df2ebf6ac4caa69eae9d2d00`，逐字节相同；
+- 子菜单、触摸确定后重开的子菜单 SHA-256 均为
+  `e54eedc83be0e1bbba9fe23b29144353783bdaa722635e5e6a5ff518a2bfc4c8`，逐字节相同；
+- 选项触摸只提交父菜单和子菜单两帧，返回/确定各只提交目标层一帧；所有过渡帧均未
+  出现 guest 主菜单标题像素。修复前同一点为 draw `5 -> 5`，修复后探针为
+  `6 -> 8`，父子帧相差 1991 个像素。
+
+最终兼容审计：
+
+- `pnpm test:e2e`：36 个测试文件、63 个用例全部通过；套件中 `gtlbd/text` 曾重试
+  一次，随后单独用 `--retry=0` 运行 1/1 通过（约 11.09 秒）。
+- `cmake --build build --target skyengine` 与从空目录配置、构建的
+  `build-shared-only`/`skyengine-shared` 均通过；共享库未发现 SDL、E2E、
+  native menu/text widget 未解析符号。
+- `pnpm exec tsc --noEmit` 与 `git diff --check` 通过。全过程未使用 xvfb，也未开启
+  大量 trace。

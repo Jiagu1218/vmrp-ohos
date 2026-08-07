@@ -108,6 +108,10 @@ typedef struct ArmExtModule ArmExtModule;
  * 校验时须按布局选偏移,不能只看常量值。
  */
 #define ARM_EXT_COMPACT_TIMER_MAGIC 0x79ABBCCFu
+/* compact/frame 定时器节点字段。repeat 节点的 walker 在首次到期后沿用
+ * +0x04 的周期重挂；+0x08 是当前剩余时间，二者不能混为一项恢复。 */
+#define AEX_COMPACT_TIMER_PERIOD_OFF 0x04u
+#define AEX_COMPACT_TIMER_REPEAT_OFF 0x14u
 /* frame.ext 定时器调度头(R9 相对,DOTA 0x2C96A0 消费):头+0x08 为排队链,
  * 头+0x0C 为活跃链(分级清单 #13) */
 #define AEX_FRAME_TIMER_SCHED_OFF 0x94u
@@ -412,6 +416,10 @@ struct ArmExtModule {
     int supplementary_code5_pending;
     int supplementary_init_done;
     uint32_t saved_game_timer_head;
+    /* 真实 wrapper 模态边界进入前的 primary repeat 节点节奏。关闭回调可
+     * 为即时首拍改 remaining；这里只恢复后续 repeat 使用的 period。 */
+    uint32_t modal_repeating_timer_node;
+    uint32_t modal_repeating_timer_period;
     uint8_t *modal_screen_snapshot;
     uint32_t modal_screen_snapshot_len;
     int modal_screen_snapshot_valid;
