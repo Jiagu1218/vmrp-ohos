@@ -939,6 +939,7 @@ export struct SettingsPage {
       .width('100%')
       .layoutWeight(1)
       .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
       .padding({ left: 16, right: 16, top: 4, bottom: this.avoidData.bottomVp })
       .clip(false)
       .expandSafeArea()
@@ -965,6 +966,14 @@ export struct SettingsPage {
     .systemTransition(NavigationSystemTransitionType.SLIDE_BOTTOM)
     .onReady((context: NavDestinationContext) => {
       this.navPathStack = context.pathStack;
+    })
+    .onAreaChange((_old: Area, newVal: Area) => {
+      // 折叠屏内屏↔外屏切换时,根据宽度更新列数(sm=1列, md=2列)
+      const w = newVal.width as number;
+      const newBp = w >= 520 ? 'md' : 'sm';
+      if (newBp !== this.currentBp) {
+        this.currentBp = newBp;
+      }
     })
   }
 }

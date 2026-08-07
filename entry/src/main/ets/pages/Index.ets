@@ -391,7 +391,7 @@ struct Index {
             Stack() {
               Text($r('app.string.index_btn_go_settings'))
                 .fontSize(14)
-                .fontColor($r('app.color.btn_text_on_accent'))
+                .fontColor($r('app.color.accent_color'))
                 .fontWeight(FontWeight.Medium)
             }
             .width(140)
@@ -579,6 +579,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
         .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
         .clip(false)
         .cachedCount(5, true)
@@ -715,6 +716,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
         .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
         .clip(false)
         .cachedCount(5, true)
@@ -836,6 +838,7 @@ struct Index {
         .width('100%')
         .height('100%')
         .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
         .padding({ left: 0, right: 0, top: 4, bottom: this.avoidData.bottomVp + 84 })
         .clip(false)
         .cachedCount(5, true)
