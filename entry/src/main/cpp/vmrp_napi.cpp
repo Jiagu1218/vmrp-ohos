@@ -42,6 +42,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <pthread.h>
 
 #undef LOG_TAG
 #define LOG_TAG "vmrp_napi"
@@ -309,7 +310,42 @@ static napi_value StartEngine(napi_env env, napi_callback_info info) {
         g_audio.SetVolume(level);
     });
 
-    int r = VmrpEngine::Instance().Start(mrp, ext, entry);
+    // skyengine_api_start must run on a large-stack thread: TCI interpreter
+    // recurses deeply and overflows the default main-thread stack (SIGSEGV on
+    // guard page).  Launch with 8 MB stack instead of the ~1 MB default.
+    struct StartCtx {
+        const char *mrp;
+        const char *ext;
+        const char *entry;
+        int result;
+        bool done;
+        std::mutex mtx;
+        std::condition_variable cv;
+    } sctx{mrp, ext, entry, -1, false, {}, {}};
+
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+    pthread_t tid;
+    auto start_routine = [](void *p) -> void * {
+        auto *c = static_cast<StartCtx *>(p);
+        c->result = VmrpEngine::Instance().Start(c->mrp, c->ext, c->entry);
+        {
+            std::lock_guard<std::mutex> lk(c->mtx);
+            c->done = true;
+        }
+        c->cv.notify_one();
+        return nullptr;
+    };
+    pthread_create(&tid, &attr, start_routine, &sctx);
+    pthread_attr_destroy(&attr);
+    {
+        std::unique_lock<std::mutex> lk(sctx.mtx);
+        sctx.cv.wait(lk, [&] { return sctx.done; });
+    }
+    pthread_join(tid, nullptr);
+
+    int r = sctx.result;
     if (r == 0 && VmrpEngine::Instance().IsRunning()) {
         g_engine_running.store(true);
         g_renderer.SetDirty();
@@ -441,9 +477,30 @@ static napi_value StartDsmB(napi_env env, napi_callback_info info) {
     char entry[512] = "*A";
     size_t l = 0;
     if (argc > 0) napi_get_value_string_utf8(env, args[0], entry, sizeof(entry), &l);
-    int r = VmrpEngine::Instance().StartDsmB(entry);
+    struct DsmArgs {
+        const char *entry;
+        int result;
+        bool done;
+        std::mutex mtx;
+        std::condition_variable cv;
+    } a{entry, -1, false, {}, {}};
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+    pthread_t tid;
+    auto fn = [](void *p) -> void * {
+        auto *a = static_cast<DsmArgs *>(p);
+        a->result = VmrpEngine::Instance().StartDsmB(a->entry);
+        { std::lock_guard<std::mutex> lk(a->mtx); a->done = true; }
+        a->cv.notify_one();
+        return nullptr;
+    };
+    pthread_create(&tid, &attr, fn, &a);
+    pthread_attr_destroy(&attr);
+    { std::unique_lock<std::mutex> lk(a.mtx); a.cv.wait(lk, [&] { return a.done; }); }
+    pthread_join(tid, nullptr);
     napi_value result;
-    napi_create_int32(env, r, &result);
+    napi_create_int32(env, a.result, &result);
     return result;
 }
 
@@ -455,9 +512,30 @@ static napi_value StartDsmC(napi_env env, napi_callback_info info) {
     char entry[512] = "*A";
     size_t l = 0;
     if (argc > 0) napi_get_value_string_utf8(env, args[0], entry, sizeof(entry), &l);
-    int r = VmrpEngine::Instance().StartDsmC(entry);
+    struct DsmArgs {
+        const char *entry;
+        int result;
+        bool done;
+        std::mutex mtx;
+        std::condition_variable cv;
+    } a{entry, -1, false, {}, {}};
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+    pthread_t tid;
+    auto fn = [](void *p) -> void * {
+        auto *a = static_cast<DsmArgs *>(p);
+        a->result = VmrpEngine::Instance().StartDsmC(a->entry);
+        { std::lock_guard<std::mutex> lk(a->mtx); a->done = true; }
+        a->cv.notify_one();
+        return nullptr;
+    };
+    pthread_create(&tid, &attr, fn, &a);
+    pthread_attr_destroy(&attr);
+    { std::unique_lock<std::mutex> lk(a.mtx); a.cv.wait(lk, [&] { return a.done; }); }
+    pthread_join(tid, nullptr);
     napi_value result;
-    napi_create_int32(env, r, &result);
+    napi_create_int32(env, a.result, &result);
     return result;
 }
 
@@ -471,9 +549,31 @@ static napi_value StartDsmEx(napi_env env, napi_callback_info info) {
     size_t l = 0;
     napi_get_value_string_utf8(env, args[0], path, sizeof(path), &l);
     if (argc > 1 && args[1]) napi_get_value_string_utf8(env, args[1], entry, sizeof(entry), &l);
-    int r = VmrpEngine::Instance().StartDsmEx(path, entry);
+    struct DsmExArgs {
+        const char *path;
+        const char *entry;
+        int result;
+        bool done;
+        std::mutex mtx;
+        std::condition_variable cv;
+    } a{path, entry, -1, false, {}, {}};
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
+    pthread_t tid;
+    auto fn = [](void *p) -> void * {
+        auto *a = static_cast<DsmExArgs *>(p);
+        a->result = VmrpEngine::Instance().StartDsmEx(a->path, a->entry);
+        { std::lock_guard<std::mutex> lk(a->mtx); a->done = true; }
+        a->cv.notify_one();
+        return nullptr;
+    };
+    pthread_create(&tid, &attr, fn, &a);
+    pthread_attr_destroy(&attr);
+    { std::unique_lock<std::mutex> lk(a.mtx); a.cv.wait(lk, [&] { return a.done; }); }
+    pthread_join(tid, nullptr);
     napi_value result;
-    napi_create_int32(env, r, &result);
+    napi_create_int32(env, a.result, &result);
     return result;
 }
 
