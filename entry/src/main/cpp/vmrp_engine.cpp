@@ -247,14 +247,25 @@ int VmrpEngine::Init(int w, int h) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
     panel_w_ = w;
     panel_h_ = h;
+
+    // pay 拦截通过 ohos_src/network.c 中的虚拟 socket 实现(无端口监听):
+    // rop.skymobiapp.com → 127.0.0.1:18088 → my_connect 识别后虚拟化,
+    // my_send 收集 TLV 请求,my_recv 返回 TLV 响应,无需外部服务器。
+    // 其余域名走外部服务 159.75.119.124(proxy2/applist/download 等)。
     int ret = api_.init(w, h);
     if (ret == 0 && api_.set_dns_map) {
-        api_.set_dns_map(
-            "wap.skmeg.com->159.75.119.124;rop.skymobiapp.com->159.75.119.124;"
-            "spd.skymobiapp.com->159.75.119.124;freeads.51mrp.com->159.75.119.124;"
-            "proxy.51mrp.com->159.75.119.124;proxy2.51mrp.com->159.75.119.124;"
-            "help.proxy.51mrp.com->159.75.119.124");
-        LOGI("DNS map set: 7 entries (upstream default)");
+        const char *dns_map =
+            "wap.skmeg.com->159.75.119.124;"
+            "rop.skymobiapp.com->127.0.0.1:18088;"
+            "spd.skymobiapp.com->159.75.119.124;"
+            "freeads.51mrp.com->159.75.119.124;"
+            "proxy.51mrp.com->159.75.119.124;"
+            "proxy2.51mrp.com->159.75.119.124;"
+            "help.proxy.51mrp.com->159.75.119.124;"
+            "dmrp.wapproxy.sky-mobi.com->159.75.119.124;"
+            "211.155.236.18->159.75.119.124";
+        api_.set_dns_map(dns_map);
+        LOGI("DNS map set: pay→virtual 127.0.0.1:18088, others→159.75.119.124");
     }
     return ret;
 }

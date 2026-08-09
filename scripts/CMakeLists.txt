@@ -433,6 +433,14 @@ if(EXISTS "${_OHOS_TW_SRC}" AND EXISTS "${_OHOS_MM_SRC}")
     message(STATUS "[OHOS] Copied ohos_src native_text_widget/modal_menu (.c+.h) over upstream")
 endif()
 
+# --- OHOS pay 虚拟 socket: 覆盖 network.c,拦截 rop.skymobiapp.com 的 TLV 请求 ---
+# 不监听端口,在 my_connect/my_send/my_recv 中进程内拦截,避免安全审核风险。
+set(_OHOS_NET_SRC "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/network.c")
+if(EXISTS "${_OHOS_NET_SRC}")
+    file(COPY "${_OHOS_NET_SRC}" DESTINATION "${VMRP_SRC_DIR}/src/")
+    message(STATUS "[OHOS] Copied ohos_src/network.c (pay virtual socket) over upstream")
+endif()
+
 # --- Patch runtime_native_mythroad.c: text_widget filter_event 调用传 p1 ---
 # 上游 b52bdbf 已改 modal_menu filter 传 p1,但 text_widget filter 仍是 2 参数。
 # 树外版 text_widget filter 加了 p1(y 坐标),需要同步改 runtime 调用。
