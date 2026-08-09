@@ -55,7 +55,6 @@ Thumbs.db
 *.tmp
 
 # ===== 诊断/截图（开发用，不入库）=====
-/screenshots/
 /screenshot/
 /screenshot*.png
 build_chk*.txt
@@ -72,3 +71,6 @@ build_diag*.txt
 # - Git for Windows（提供 POSIX sh，Unicorn 构建需要）
 # - node/ohpm 工具链（DevEco Studio 自带）
 /.appanalyzer/
+
+# Code Scanner cache
+.codescanner/

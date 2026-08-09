@@ -17,6 +17,8 @@ import { zlib } from '@kit.BasicServicesKit';
 const TAG = 'VmrpAssets';
 // rawfile 中 mythroad 资源根目录（相对 rawfile，无前后斜杠）。
 const RAW_MYTHROAD_ROOT = 'mythroad';
+// 资源版本号：rawfile 内容变更后递增此值，ensureRuntime 会检测并强制刷新沙箱资源。
+const ASSETS_VERSION = 2;
 
 export class VmrpAssets {
   // 获取沙箱工作目录（files 根）。
@@ -114,31 +116,41 @@ export class VmrpAssets {
     return copied;
   }
 
-  // 确保 mythroad 运行时资源存在于 files/mythroad/。首次调用时从 rawfile 解压。
+  // 确保 mythroad 运行时资源存在于 files/mythroad/。
+  // 首次安装或 ASSETS_VERSION 递增时从 rawfile 重新解压，覆盖已有文件。
   static async ensureRuntime(ctx: common.Context): Promise<string> {
-    // getWorkDir 会创建 files/mythroad，dumpRawDir 写顶层文件（如 dsm_gm.mrp）
-    // 时依赖该目录已存在，否则 openSync 报 ENOENT。
     VmrpAssets.getWorkDir(ctx);
     const mythroadDir = VmrpAssets.getMythroadDir(ctx);
     const marker = `${mythroadDir}/.installed`;
-    // 用标记文件判断是否已解压（避免每次启动重复拷贝）。
     let needInstall = true;
     try {
-      needInstall = !fs.accessSync(marker);
+      if (fs.accessSync(marker)) {
+        const f = fs.openSync(marker, fs.OpenMode.READ_ONLY);
+        const buf = new ArrayBuffer(16);
+        const readLen = fs.readSync(f.fd, buf);
+        fs.closeSync(f);
+        const u8 = new Uint8Array(buf);
+        let verStr = '';
+        for (let i = 0; i < readLen; i++) {
+          verStr += String.fromCharCode(u8[i]);
+        }
+        verStr = verStr.trim();
+        const ver = parseInt(verStr, 10);
+        needInstall = isNaN(ver) || ver < ASSETS_VERSION;
+      }
     } catch (e) {
       needInstall = true;
     }
     if (needInstall) {
       try {
         const n = await VmrpAssets.dumpRawDir(ctx, RAW_MYTHROAD_ROOT, mythroadDir);
-        console.info(`${TAG}: installed ${n} mythroad assets`);
+        console.info(`${TAG}: installed ${n} mythroad assets (v${ASSETS_VERSION})`);
       } catch (e) {
         console.error(`${TAG}: dumpRawDir failed: ${JSON.stringify(e)}`);
       }
-      // 写标记文件。
       try {
-        const f = fs.openSync(marker, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
-        fs.writeSync(f.fd, '1');
+        const f = fs.openSync(marker, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+        fs.writeSync(f.fd, `${ASSETS_VERSION}`);
         fs.closeSync(f);
       } catch (e) { /* 忽略标记失败 */ }
     }
