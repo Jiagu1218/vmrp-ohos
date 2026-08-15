@@ -260,6 +260,51 @@ static void arm_ext_sync_r9_for_code_addr(ArmExtModule *m, uint32_t addr) {
     }
 }
 
+static int arm_ext_redirect_replaced_code_instance(ArmExtModule *m,
+                                                    uint32_t address) {
+    ArmExtNestedModule *old_mod = arm_ext_find_nested_module(m, address);
+    if (!old_mod) return 0;
+    ArmExtNestedModule *new_mod =
+        arm_ext_find_nested_module_by_p(m, old_mod->p_addr);
+    if (!new_mod || new_mod == old_mod ||
+        new_mod->file_addr == old_mod->file_addr ||
+        new_mod->file_len != old_mod->file_len || old_mod->file_len <= 8u) {
+        return 0;
+    }
+
+    const uint8_t *old_body = (const uint8_t *)arm_ptr_span(
+        m, old_mod->file_addr + 8u, old_mod->file_len - 8u);
+    const uint8_t *new_body = (const uint8_t *)arm_ptr_span(
+        m, new_mod->file_addr + 8u, new_mod->file_len - 8u);
+    if (!old_body || !new_body ||
+        memcmp(old_body, new_body, old_mod->file_len - 8u) != 0) {
+        return 0;
+    }
+
+    /*
+     * A private loader may replace one PIC child while the primary keeps the
+     * raw function table published by the old instance.  Its first eight image
+     * bytes are runtime record/P metadata and are overwritten by compact-free
+     * bookkeeping, so executing the retained address makes otherwise identical
+     * code resolve table bridges through allocator data.  When the registry
+     * proves a newer instance with the same P and byte-identical immutable body,
+     * preserve the function's relative offset and execute that instance.  The
+     * body comparison prevents a recycled P shared by different child modules
+     * from being treated as a replacement.
+     */
+    uint32_t offset = address - old_mod->file_addr;
+    uint32_t target = new_mod->file_addr + offset;
+    uint32_t cpsr = reg_read32(m->uc, UC_ARM_REG_CPSR);
+    uint32_t resume_addr = target | ((cpsr & (1u << 5)) ? 1u : 0u);
+    reg_write32(m->uc, UC_ARM_REG_PC, resume_addr);
+    arm_ext_sync_r9_for_code_addr(m, target);
+    if (arm_ext_trace_on()) {
+        printf("arm_ext_executor: redirected replaced child pc=0x%X -> 0x%X P=0x%X\n",
+               address, target, old_mod->p_addr);
+    }
+    return 1;
+}
+
 /* Resolve the one saved LR that belongs to the wrapper leaf thunk currently
  * executing a table bridge.  Thumb PUSH stores LR after every low register,
  * so the matching PUSH/POP register list determines the exact stack slot.
@@ -962,6 +1007,9 @@ static void hook_restore_r9(uc_engine *uc, uint64_t address, uint32_t size, void
         }
         m->outer_r9 = 0;
         m->nested_return_addr = 0;
+        return;
+    }
+    if (arm_ext_redirect_replaced_code_instance(m, (uint32_t)address)) {
         return;
     }
     /*

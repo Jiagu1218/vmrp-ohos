@@ -11,6 +11,19 @@ cmake --build build --target skyengine
 pnpm test:e2e
 ```
 
+On Windows with the Visual Studio generator, build the configuration used by the
+harness before running the same Vitest command:
+
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Release --target skyengine
+pnpm test:e2e
+```
+
+The Windows default is `build/Release/skyengine.exe`. Set `VMRP_BIN` when using a
+different configuration or output directory, for example
+`$env:VMRP_BIN = 'build/Debug/skyengine.exe'`.
+
 To run a focused scenario:
 
 ```bash
@@ -19,9 +32,10 @@ pnpm vitest run test/e2e/opbzqe/game-prepare.test.ts
 
 ## E2E Harness
 
-The Vitest harness starts `build/skyengine` with `SKYENGINE_E2E_SOCKET` and talks to the
-emulator through a local socket.  Commands are marshalled onto SDL's main
-thread before they touch input handling or screenshot capture.
+The Vitest harness starts the platform's default SkyEngine binary with
+`SKYENGINE_E2E_SOCKET`. It uses a Unix domain socket on Unix and a local named pipe
+on Windows. Commands are marshalled onto SDL's main thread before they touch input
+handling or screenshot capture.
 
 Supported commands:
 
@@ -41,13 +55,13 @@ Useful environment overrides:
 
 | Variable | Purpose |
 | --- | --- |
-| `VMRP_BIN` | Path to the skyengine executable, defaults to `build/skyengine`. |
+| `VMRP_BIN` | Path to the SkyEngine executable; defaults to `build/skyengine` on Unix and `build/Release/skyengine.exe` on Windows. |
 | `SKYENGINE_WORK_DIR` | Runtime working directory, defaults to repository root. |
-| `VMRP_TIMEOUT_MS` | Socket startup and command timeout. |
+| `VMRP_TIMEOUT_MS` | Local IPC startup and command timeout. |
 
 ## Visual Assertions
 
-Screenshots are dumped as PPM files by the e2e socket `SCREEN` command and read
+Screenshots are dumped as PPM files by the e2e `SCREEN` command and read
 directly in TypeScript.  Tests assert exact RGB pixels for stable UI states and
 menu transitions.
 

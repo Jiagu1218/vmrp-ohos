@@ -250,7 +250,7 @@ void skyengine_args_print_usage(const char *program) {
     printf("  SKYENGINE_WORK_DIR       Working directory (overridden by --work-dir)\n");
     printf("  SKYENGINE_DNS_MAP        Domain map, e.g. old.example->new.example\n");
     printf("  SKYENGINE_PPM_PATH       PPM screen dump path for SIGUSR1/verification\n");
-    printf("  SKYENGINE_E2E_SOCKET     Unix socket path for stepwise E2E control\n");
+    printf("  SKYENGINE_E2E_SOCKET     Local E2E endpoint (Unix socket or Windows named pipe)\n");
     printf("\n");
     printf("Without arguments, skyengine keeps the old behavior and starts VMRP_MRP or dsm_gm.mrp.\n");
     printf("Examples:\n");

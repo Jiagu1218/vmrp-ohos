@@ -1,0 +1,239 @@
+name: Build, test and publish
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "v*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-latest
+          - platform: windows-x64
+            os: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake libsdl2-dev pkg-config zlib1g-dev
+
+      - name: Configure Linux
+        if: runner.os == 'Linux'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure Windows
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -A x64
+
+      - name: Build
+        run: cmake --build build --config Release --target skyengine skyengine-keyboard-input-test --parallel
+
+      - name: Package Linux artifacts
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          package_dir="dist/skyengine-${{ matrix.platform }}"
+          test_dir="dist/test-${{ matrix.platform }}"
+          mkdir -p "${package_dir}" "${test_dir}"
+          install -m 0755 build/skyengine "${package_dir}/skyengine"
+          cp -a wasm/dist/fs/mythroad "${package_dir}/mythroad"
+          install -m 0644 README.md LICENSE "${package_dir}"
+          install -m 0755 build/skyengine "${test_dir}/skyengine"
+          install -m 0755 build/skyengine-keyboard-input-test "${test_dir}/skyengine-keyboard-input-test"
+          tar -czf "dist/skyengine-${{ matrix.platform }}.tar.gz" -C dist "skyengine-${{ matrix.platform }}"
+          tar -czf "dist/test-${{ matrix.platform }}.tar.gz" -C "${test_dir}" .
+
+      - name: Package Windows artifacts
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $packageDir = "dist/skyengine-${{ matrix.platform }}"
+          $testDir = "dist/test-${{ matrix.platform }}"
+          New-Item -ItemType Directory -Force $packageDir, $testDir | Out-Null
+          Copy-Item -Path "build/Release/skyengine.exe", "build/Release/SDL2.dll" -Destination $packageDir
+          Copy-Item -Path "wasm/dist/fs/mythroad" -Destination $packageDir -Recurse
+          Copy-Item -Path "README.md", "LICENSE" -Destination $packageDir
+          Copy-Item -Path "build/Release/skyengine.exe", "build/Release/SDL2.dll", "build/Release/skyengine-keyboard-input-test.exe" -Destination $testDir
+          Compress-Archive -Path $packageDir -DestinationPath "dist/skyengine-${{ matrix.platform }}.zip"
+          Compress-Archive -Path "$testDir/*" -DestinationPath "dist/test-${{ matrix.platform }}.zip"
+
+      - name: Upload test artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-${{ matrix.platform }}
+          path: dist/test-${{ matrix.platform }}.*
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.platform }}
+          path: dist/skyengine-${{ matrix.platform }}.*
+          if-no-files-found: error
+          retention-days: 7
+
+  test:
+    name: Test (${{ matrix.platform }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x64
+            os: ubuntu-latest
+          - platform: windows-x64
+            os: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: test-${{ matrix.platform }}
+          path: artifacts
+
+      - name: Extract Linux build
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p build
+          tar -xzf "artifacts/test-${{ matrix.platform }}.tar.gz" -C build
+
+      - name: Extract Windows build
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Expand-Archive "artifacts/test-${{ matrix.platform }}.zip" -DestinationPath build
+
+      - name: Run native unit test on Linux
+        if: runner.os == 'Linux'
+        run: ./build/skyengine-keyboard-input-test
+
+      - name: Run native unit test on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./build/skyengine-keyboard-input-test.exe
+
+      - name: Install Linux runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsdl2-2.0-0 zlib1g
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install test dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Vitest
+        id: vitest
+        env:
+          # Build artifacts are flattened into build/ by the extraction steps above.
+          VMRP_BIN: ${{ runner.os == 'Windows' && 'build/skyengine.exe' || 'build/skyengine' }}
+          # main.c updates the latest PPM after every draw when SKYENGINE_PPM is set.
+          SKYENGINE_PPM: "1"
+          VMRP_E2E_KEEP_TMP: "1"
+          # Keep failure artifacts at one cross-platform path for the upload step.
+          TEMP: ${{ runner.temp }}
+          TMPDIR: ${{ runner.temp }}
+        run: pnpm test:e2e
+
+      - name: Upload last frames
+        if: failure() && steps.vitest.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-last-frames-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/skyengine-e2e-*/screen.ppm
+          if-no-files-found: warn
+
+  publish:
+    name: Publish
+    needs:
+      - build
+      - test
+    if: >-
+      github.event_name == 'push' &&
+      (startsWith(github.ref, 'refs/tags/v') ||
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: publish-${{ github.ref }}
+      cancel-in-progress: true
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Publish continuous prerelease
+        if: github.ref_type == 'branch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release delete continuous \
+            --repo "${GITHUB_REPOSITORY}" \
+            --cleanup-tag \
+            --yes >/dev/null 2>&1 || true
+          gh api --method DELETE \
+            "repos/${GITHUB_REPOSITORY}/git/refs/tags/continuous" >/dev/null 2>&1 || true
+          gh release create continuous release-assets/* \
+            --repo "${GITHUB_REPOSITORY}" \
+            --target "${GITHUB_SHA}" \
+            --title "Continuous" \
+            --notes "Automated preview build from commit ${GITHUB_SHA}." \
+            --prerelease
+
+      - name: Publish tagged release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" release-assets/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" release-assets/* \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "${GITHUB_REF_NAME}" \
+              --generate-notes
+          fi

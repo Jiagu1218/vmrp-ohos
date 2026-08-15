@@ -15,6 +15,7 @@
 
 #include "./include/bridge.h"
 #include "./include/e2e_control.h"
+#include "./include/file_lib.h"
 #include "./include/keyboard_input.h"
 #include "./include/native_text_widget.h"
 #include "./include/skyengine.h"
@@ -70,7 +71,9 @@ static int dump_screen_ppm(const char *path) {
     if (!window) return -1;
     SDL_Surface *surface = SDL_GetWindowSurface(window);
     if (!surface) return -1;
-    FILE *fp = fopen(path, "wb");
+    /* E2E 截图通常位于用户 TEMP；主机接口在 Windows 用 _wfopen 保留
+     * Node 传入的 UTF-8 路径，Linux 行为仍等价于 fopen。 */
+    FILE *fp = skyengine_host_fopen(path, "wb");
     if (!fp) return -1;
     fprintf(fp, "P6\n%d %d\n255\n", surface->w, surface->h);
     if (SDL_MUSTLOCK(surface) && SDL_LockSurface(surface) != 0) {
@@ -125,7 +128,7 @@ static int write_ppm_rgb(const char *path, int width, int height,
     if (!path || !rgb || width <= 0 || height <= 0) return -1;
     size_t expected = (size_t)width * (size_t)height * 3u;
     if (rgb_len < expected) return -1;
-    FILE *fp = fopen(path, "wb");
+    FILE *fp = skyengine_host_fopen(path, "wb");
     if (!fp) return -1;
     fprintf(fp, "P6\n%d %d\n255\n", width, height);
     fwrite(rgb, 1, expected, fp);

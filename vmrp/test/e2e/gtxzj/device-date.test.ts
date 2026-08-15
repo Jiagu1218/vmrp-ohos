@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { SkyEngineE2e, SkyEngineWorkspace } from "../engine-e2e.js";
+import { resolveSkyEngineBin, SkyEngineE2e, SkyEngineWorkspace } from "../engine-e2e.js";
 
 describe("设备日期配置", () => {
   let engine: SkyEngineE2e | undefined;
@@ -28,18 +28,33 @@ describe("设备日期配置", () => {
     "2011-01-00",
     "2011-01-01x",
   ])("在启动前拒绝非法日期 %s", date => {
-    const bin = process.env.VMRP_BIN ?? "build/skyengine";
+    const bin = resolveSkyEngineBin();
     const result = spawnSync(bin, [
       "--device-date",
       date,
       "test/fixtures/gtxzj.mrp",
     ], { encoding: "utf8" });
 
+    // A missing Windows Release binary is a spawn failure, not evidence that the
+    // emulator rejected the date; surface it before checking the process status.
+    if (result.error) throw result.error;
     // main() returns -1; hosts encode that value differently, but all must
     // report a real nonzero exit together with the precise validation error.
     expect(result.status).not.toBeNull();
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`invalid device date '${date}'`);
+  });
+
+  it("同步启动遵循 VMRP_BIN 指定的 CI 产物路径", () => {
+    const savedVmrpBin = process.env.VMRP_BIN;
+    const ciArtifactBin = "build/skyengine.exe";
+    try {
+      process.env.VMRP_BIN = ciArtifactBin;
+      expect(resolveSkyEngineBin()).toBe(ciArtifactBin);
+    } finally {
+      if (savedVmrpBin === undefined) delete process.env.VMRP_BIN;
+      else process.env.VMRP_BIN = savedVmrpBin;
+    }
   });
 
   it("接受环境变量中的确定性通过日期", async () => {

@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable } from "node:stream";
+import { finished } from "node:stream/promises";
 import { createWriteStream, cpSync } from "node:fs";
 import { copyFile, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { createConnection } from "node:net";
@@ -72,14 +73,17 @@ export class SkyEngineE2e {
   private readonly deviceDate?: string;
   private readonly captureLatestFrame: boolean;
   private process?: ChildProcessByStdio<null, Readable, Readable>;
+  private spawnError?: Error;
+  private stdoutLog?: ReturnType<typeof createWriteStream>;
+  private stderrLog?: ReturnType<typeof createWriteStream>;
 
   private constructor(tmpDir: string, options: SkyEngineE2eOptions = {}) {
     this.tmpDir = tmpDir;
-    this.socketPath = path.join(tmpDir, "skyengine-e2e.sock");
+    this.socketPath = controlEndpoint(tmpDir);
     this.stdoutPath = path.join(tmpDir, "stdout.log");
     this.stderrPath = path.join(tmpDir, "stderr.log");
     this.defaultScreenPath = path.join(tmpDir, "screen.ppm");
-    this.bin = options.bin ?? process.env.VMRP_BIN ?? "build/skyengine";
+    this.bin = resolveSkyEngineBin(options.bin);
     this.workDir = options.workDir ?? process.env.SKYENGINE_WORK_DIR ?? ".";
     this.timeoutMs = options.timeoutMs ?? Number(process.env.VMRP_TIMEOUT_MS ?? 30_000);
     this.dnsMap = options.dnsMap;
@@ -92,7 +96,14 @@ export class SkyEngineE2e {
   static async start(mrpPath: string, options: SkyEngineE2eOptions = {}): Promise<SkyEngineE2e> {
     const tmpDir = await mkdtemp(path.join(tmpdir(), "skyengine-e2e-"));
     const engine = new SkyEngineE2e(tmpDir, options);
-    await engine.spawn(await engine.prepareMrp(mrpPath));
+    try {
+      await engine.spawn(await engine.prepareMrp(mrpPath));
+    } catch (error) {
+      // Windows keeps log files locked until their streams close; clean failed starts here
+      // so an ENOENT or IPC startup error does not leak a process or temp directory.
+      await engine.close();
+      throw error;
+    }
     // 同时输出 CI 收集的截图目录和模拟器工作目录，便于从用例日志定位产物。
     console.info(`[skyengine-e2e] artifact-dir: ${tmpDir}; work-dir: ${path.resolve(engine.workDir)}`);
     return engine;
@@ -111,7 +122,10 @@ export class SkyEngineE2e {
   private async prepareMrp(mrpPath: string): Promise<string> {
     const workDir = path.resolve(this.workDir);
     const absMrp = path.resolve(mrpPath);
-    if (absMrp.startsWith(workDir + path.sep)) return mrpPath;
+    const relative = path.relative(workDir, absMrp);
+    if (relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) {
+      return mrpPath;
+    }
     const dest = path.join(workDir, path.basename(absMrp));
     await copyFile(absMrp, dest);
     return dest;
@@ -137,6 +151,12 @@ export class SkyEngineE2e {
         await this.waitForExit(2_000);
       }
     }
+    /* Some tests inspect stdout immediately after stop(); wait for destination
+     * streams, not only the child close event, so Windows file buffers are final. */
+    await Promise.all([
+      this.stdoutLog ? finished(this.stdoutLog) : Promise.resolve(),
+      this.stderrLog ? finished(this.stderrLog) : Promise.resolve()
+    ]);
   }
 
   async drawCount(): Promise<number> {
@@ -251,7 +271,14 @@ export class SkyEngineE2e {
       socket.once("connect", () => socket.write(`${command}\n`));
       socket.on("data", chunk => {
         response += chunk;
-        if (response.includes("\n")) socket.end();
+        if (response.includes("\n")) {
+          const line = response.slice(0, response.indexOf("\n")).trim();
+          /* Windows named-pipe disconnect may surface as EPIPE after the complete
+           * response was read. The newline is the protocol completion boundary. */
+          socket.destroy();
+          if (line.startsWith("OK")) resolve(line);
+          else reject(new Error(line || `Empty response to ${command}`));
+        }
       });
       socket.once("timeout", () => {
         socket.destroy();
@@ -280,34 +307,50 @@ export class SkyEngineE2e {
         SDL_AUDIODRIVER: process.env.SDL_AUDIODRIVER ?? "dummy",
         SKYENGINE_E2E_SOCKET: this.socketPath,
         SKYENGINE_PPM_PATH: this.defaultScreenPath,
-        ...(this.captureLatestFrame ? { VMRP_PPM: "1" } : {})
+        ...(this.captureLatestFrame ? { SKYENGINE_PPM: "1" } : {})
       },
       stdio: ["ignore", "pipe", "pipe"]
     });
+    this.process.once("error", error => {
+      this.spawnError = error;
+    });
 
-    const stdout = createWriteStream(this.stdoutPath);
-    const stderr = createWriteStream(this.stderrPath);
-    this.process.stdout.pipe(stdout);
-    this.process.stderr.pipe(stderr);
+    this.stdoutLog = createWriteStream(this.stdoutPath);
+    this.stderrLog = createWriteStream(this.stderrPath);
+    this.process.stdout.pipe(this.stdoutLog);
+    this.process.stderr.pipe(this.stderrLog);
 
     await this.waitForSocket();
   }
 
   private async waitForSocket(): Promise<void> {
     const start = Date.now();
+    const proc = this.process;
+    if (!proc) throw new Error("SkyEngine process was not created");
     while (Date.now() - start < this.timeoutMs) {
-      if (this.process?.exitCode !== null) {
-        throw new Error(`SkyEngine exited before E2E socket was ready: ${this.process?.exitCode}`);
+      if (this.spawnError) {
+        throw new Error(`Failed to start SkyEngine (${this.bin}): ${this.spawnError.message}`);
+      }
+      if (proc.exitCode !== null || proc.signalCode !== null) {
+        throw new Error(
+          `SkyEngine exited before E2E endpoint was ready: code=${proc.exitCode}, signal=${proc.signalCode}`
+        );
       }
       try {
+        if (process.platform === "win32") {
+          // Windows named pipes are not filesystem nodes. A protocol round-trip proves
+          // that both CreateNamedPipe and the command loop are ready.
+          await this.command("DRAW_COUNT", 250);
+          return;
+        }
         const info = await stat(this.socketPath);
         if (info.isSocket()) return;
       } catch {
-        // Socket is created asynchronously after SDL and VM startup.
+        // The local IPC endpoint is created asynchronously after SDL and VM startup.
       }
       await sleep(25);
     }
-    throw new Error(`E2E socket was not ready after ${this.timeoutMs}ms`);
+    throw new Error(`E2E endpoint was not ready after ${this.timeoutMs}ms`);
   }
 
   private async waitDrawAfter(previous: number, timeoutMs: number): Promise<void> {
@@ -316,15 +359,47 @@ export class SkyEngineE2e {
 
   async waitForExit(timeoutMs: number): Promise<boolean> {
     const proc = this.process;
-    if (!proc || proc.exitCode !== null) return true;
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null || this.spawnError) return true;
     return new Promise(resolve => {
-      const timer = setTimeout(() => resolve(false), timeoutMs);
-      proc.once("exit", () => {
+      const done = (exited: boolean) => {
         clearTimeout(timer);
-        resolve(true);
-      });
+        proc.off("close", onClose);
+        proc.off("error", onError);
+        resolve(exited);
+      };
+      const onClose = () => done(true);
+      const onError = () => done(true);
+      const timer = setTimeout(() => done(false), timeoutMs);
+      proc.once("close", onClose);
+      proc.once("error", onError);
+      // Close/error may have raced with listener registration.
+      if (proc.exitCode !== null || proc.signalCode !== null || this.spawnError) done(true);
     });
   }
+}
+
+/** CMake's documented native output for each host platform. */
+export function defaultSkyEngineBin(): string {
+  return process.platform === "win32"
+    ? "build/Release/skyengine.exe"
+    : "build/skyengine";
+}
+
+/**
+ * Keep direct spawn callers on the same executable selection as SkyEngineE2e.
+ * CI flattens packaged binaries into build/, so VMRP_BIN must win over the
+ * multi-config Windows default even when no SkyEngineE2e instance is created.
+ */
+export function resolveSkyEngineBin(bin?: string): string {
+  return bin ?? process.env.VMRP_BIN ?? defaultSkyEngineBin();
+}
+
+function controlEndpoint(tmpDir: string): string {
+  if (process.platform === "win32") {
+    // Keep the pipe name ASCII and independent of a profile/TEMP path containing spaces.
+    return `\\\\.\\pipe\\skyengine-e2e-${process.pid}-${path.basename(tmpDir)}`;
+  }
+  return path.join(tmpDir, "skyengine-e2e.sock");
 }
 
 /**

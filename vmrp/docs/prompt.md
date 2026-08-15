@@ -699,7 +699,31 @@ tool/server-http.js已启动，修改tool/proxy.js来实现代理服务器。
 充分利用子Agent。
 记得存储记忆数据。
 
-测试用例`pnpm vitest run test/e2e/optwar/temp.test.ts`执行后，游戏表现比较卡顿，分析热点，优化执行速度。
+测试用例`pnpm vitest run test/e2e/gfktjc/render.test.ts`执行后，游戏渲染有问题。
+
+预期：从“图形加速”界面进入“开启音乐？”界面后，不应该再显示“图形加速”相关文字。
+实际：从“图形加速”界面进入“开启音乐？”界面后，“图形加速”相关文字残留叠加，导致画面渲染异常。
+
+程序的现有代码不一定正确。
+注意trace日志量会特别大。
+不要使用xvfb。
+修改代码要加注释，不要有兜底代码逻辑。
+深入反汇编检测BUG所在位置。
+你可以检测PPM，来验证修复是否成功。
+不能写硬编码代码，如if(is_xxx_app()) {...}
+禁止硬编码
+做最小化修改，禁止一直大量新增代码。
+
+在分析与解决过程中，把进度定期保存至文档中。
+先不管其它测试用例，先修好BUG，最后一定要去兼容其它测试用例。
+充分利用子Agent。
+记得存储记忆数据。
+
+测试用例`pnpm vitest run test/e2e/aqcw/download-plugin.test.ts`执行后，游戏付费失败，是服务器没有实现`/payOne`接口。
+
+任务：
+1. 修改测试用例映射服务器到`tools/pay-server/skymobi-pay-server.go`，来支持本地游戏付费。
+2. 调整`tools/pay-server/skymobi-pay-server.go`代码，实现`/payOne`接口，来支持总是成功的游戏付费。
 
 程序的现有代码不一定正确。
 注意trace日志量会特别大。
