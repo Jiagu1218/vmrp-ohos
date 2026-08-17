@@ -36,7 +36,7 @@ jobs:
             ls -la entry/libs || true
           else
             echo "ERROR: No prebuilt native libs found under entry/libs/."
-            echo "Please ensure you committed prebuilt so files (entry/libs/<abi>/) as indicated in the project README."
+            echo "Please ensure you committed prebuilt so files under entry/libs/<abi>/ as indicated in the README."
             exit 1
           fi
 
