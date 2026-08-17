@@ -1,0 +1,121 @@
+name: Build and Release HAP (api26)
+
+on:
+  push:
+    # 自动在打 tag 时发布（推荐）
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: 'Create Release after build?'
+        required: false
+        default: 'true'
+      release_tag:
+        description: 'Tag name to use for manual release (optional)'
+        required: false
+        default: ''
+
+jobs:
+  build-hap:
+    name: Build HAP (api26)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/dalongzhuazi/harmonyos-ci:api26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: "Debug: show workspace info"
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "--- /github ---"
+          ls -la /github || true
+          echo "--- /github/workspace ---"
+          ls -la /github/workspace || true
+          echo "--- pwd & listing ---"
+          pwd
+          ls -la
+
+      - name: Verify prebuilt native libs are present
+        run: |
+          set -e
+          echo "Checking for prebuilt libs under entry/libs/..."
+          if [ -d "entry/libs/arm64-v8a" ] || [ -d "entry/libs/x86_64" ]; then
+            echo "Found entry/libs/"
+            ls -la entry/libs || true
+          else
+            echo "ERROR: No prebuilt native libs found under entry/libs/."
+            echo "Please ensure you committed prebuilt so files under entry/libs/<abi>/ as indicated in the README."
+            exit 1
+          fi
+
+      - name: Install ohpm dependencies
+        run: |
+          ohpm install --all
+
+      - name: Build HAP (release)
+        run: |
+          # 采用 release 构建以生成正式 hap；如需 debug 改 buildMode=debug
+          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon
+
+      - name: Prepare release assets
+        run: |
+          mkdir -p release-assets
+          # 收集所有 hap 并生成 sha256 校验文件
+          for f in $(find . -name '*.hap'); do
+            [ -f "$f" ] || continue
+            sha256sum "$f" > "$f.sha256"
+            # 复制到 release-assets 目录，保留原名
+            cp "$f" release-assets/
+            cp "$f.sha256" release-assets/
+          done
+          echo "Release assets:"
+          ls -la release-assets || true
+
+      - name: Upload release-assets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+  release:
+    name: Create Release and Upload Assets
+    needs: build-hap
+    runs-on: ubuntu-latest
+    # 仅在 tag push 或手动要求创建 release 时运行
+    if: >
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.create_release == 'true')
+
+    steps:
+      - name: Download release-assets artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "tag=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+          elif [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.release_tag }}" != "" ]]; then
+            echo "tag=${{ github.event.inputs.release_tag }}" >> $GITHUB_OUTPUT
+          else
+            # fallback: auto name using run id
+            echo "tag=ci-auto-${GITHUB_RUN_ID}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Show chosen tag
+        run: echo "Publishing release for tag: ${{ steps.tag.outputs.tag }}"
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: Release ${{ steps.tag.outputs.tag }}
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
