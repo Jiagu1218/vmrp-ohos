@@ -16,7 +16,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Debug: show workspace info
+      - name: "Debug: show workspace info"
         run: |
           echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
           echo "--- /github ---"
