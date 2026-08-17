@@ -1,0 +1,61 @@
+name: Build HAP with harmonyos-ci (api26)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-hap:
+    name: Build HAP (api26)
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/dalongzhuazi/harmonyos-ci:api26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify prebuilt native libs are present
+        run: |
+          set -e
+          echo "Checking for prebuilt libs under entry/libs/..."
+          if [ -d "entry/libs/arm64-v8a" ] || [ -d "entry/libs/x86_64" ]; then
+            echo "Found entry/libs/"
+            ls -la entry/libs || true
+          else
+            echo "ERROR: No prebuilt native libs found under entry/libs/."
+            echo "Please ensure you committed prebuilt so files (entry/libs/<abi>/) as indicated in the project README."
+            exit 1
+          fi
+
+      - name: Install ohpm dependencies
+        run: |
+          cd /github/workspace
+          ohpm install --all
+
+      - name: Build HAP (debug)
+        run: |
+          cd /github/workspace
+          hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
+
+      - name: Upload debug HAP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap-debug
+          path: |
+            **/*.hap
+            entry/libs/**
+
+      - name: (Optional) Build HAP (release) — triggered on manual dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cd /github/workspace
+          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon || true
+
+      - name: (Optional) Upload release HAP artifact
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hap-release
+          path: '**/*.hap'
