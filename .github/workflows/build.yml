@@ -16,6 +16,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Debug: show workspace info
+        run: |
+          echo "GITHUB_WORKSPACE=$GITHUB_WORKSPACE"
+          echo "--- /github ---"
+          ls -la /github || true
+          echo "--- /github/workspace ---"
+          ls -la /github/workspace || true
+          echo "--- pwd & listing ---"
+          pwd
+          ls -la
+
       - name: Verify prebuilt native libs are present
         run: |
           set -e
@@ -31,12 +42,10 @@ jobs:
 
       - name: Install ohpm dependencies
         run: |
-          cd /github/workspace
           ohpm install --all
 
       - name: Build HAP (debug)
         run: |
-          cd /github/workspace
           hvigorw assembleHap --mode module -p product=default -p buildMode=debug --no-daemon
 
       - name: Upload debug HAP artifact
@@ -46,16 +55,3 @@ jobs:
           path: |
             **/*.hap
             entry/libs/**
-
-      - name: (Optional) Build HAP (release) — triggered on manual dispatch
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          cd /github/workspace
-          hvigorw assembleHap --mode module -p product=default -p buildMode=release --no-daemon || true
-
-      - name: (Optional) Upload release HAP artifact
-        if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
-        with:
-          name: hap-release
-          path: '**/*.hap'
