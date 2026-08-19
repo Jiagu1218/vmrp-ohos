@@ -20,6 +20,13 @@ const RAW_MYTHROAD_ROOT = 'mythroad';
 // 资源版本号：rawfile 内容变更后递增此值，ensureRuntime 会检测并强制刷新沙箱资源。
 const ASSETS_VERSION = 4;
 
+export interface Sf2Info {
+  name: string;
+  size: number;
+  isBuiltin: boolean;
+  isActive: boolean;
+}
+
 export class VmrpAssets {
   // 获取沙箱工作目录（files 根）。
   // vmrp 的 dsmWorkPath 默认 "mythroad/"，它会拼接成 mythroad/<相对路径>，
@@ -349,6 +356,83 @@ export class VmrpAssets {
       }
     }
     fs.rmdirSync(dir);
+  }
+
+  // 扫描 filesDir/soundfont/ 下所有 .sf2 文件，返回 Sf2Info 数组。
+  static listSf2Files(ctx: common.Context, activeName: string): Sf2Info[] {
+    const sfDir = `${ctx.filesDir}/soundfont`;
+    const result: Sf2Info[] = [];
+    try {
+      if (!fs.accessSync(sfDir)) return result;
+      const names: string[] = fs.listFileSync(sfDir);
+      for (const name of names) {
+        if (!name.toLowerCase().endsWith('.sf2')) continue;
+        // 跳过隐藏文件（如 .active_sf2 不会以 .sf2 结尾，但防御性检查）
+        if (name.startsWith('.')) continue;
+        const child = `${sfDir}/${name}`;
+        try {
+          const stat = fs.statSync(child);
+          if (!stat.isFile()) continue;
+          const isBuiltin = name === 'TimGM6mb.sf2';
+          const isActive = name === activeName;
+          const info: Sf2Info = {
+            name: name,
+            size: stat.size,
+            isBuiltin: isBuiltin,
+            isActive: isActive
+          };
+          result.push(info);
+        } catch (_e) { continue; }
+      }
+    } catch (_e) {}
+    // 排序：内置在前，然后按名称
+    result.sort((a: Sf2Info, b: Sf2Info) => {
+      if (a.isBuiltin !== b.isBuiltin) return a.isBuiltin ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    return result;
+  }
+
+  // 从 URI 导入 SF2 文件到 filesDir/soundfont/，同名覆盖。返回 true 表示成功。
+  static async importSf2(ctx: common.Context, srcUri: string): Promise<boolean> {
+    const sfDir = `${ctx.filesDir}/soundfont`;
+    try {
+      if (!fs.accessSync(sfDir)) {
+        fs.mkdirSync(sfDir, true);
+      }
+    } catch (_e) { /* 目录可能已存在 */ }
+    const encodedName = srcUri.substring(srcUri.lastIndexOf('/') + 1);
+    const name = decodeURIComponent(encodedName);
+    if (!name.toLowerCase().endsWith('.sf2')) return false;
+    const dst = `${sfDir}/${name}`;
+    try {
+      const srcFile = fs.openSync(srcUri, fs.OpenMode.READ_ONLY);
+      const dstFile = fs.openSync(dst, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      await fs.copyFile(srcFile.fd, dstFile.fd);
+      fs.closeSync(srcFile);
+      fs.closeSync(dstFile);
+      console.info(`${TAG}: importSf2 OK: ${name}`);
+      return true;
+    } catch (e) {
+      console.error(`${TAG}: importSf2 failed: ${JSON.stringify(e)}`);
+      return false;
+    }
+  }
+
+  // 删除用户导入的 SF2 文件（内置 TimGM6mb.sf2 不可删）。返回 true 表示成功。
+  static deleteSf2(ctx: common.Context, name: string): boolean {
+    if (name === 'TimGM6mb.sf2') return false;
+    const sfDir = `${ctx.filesDir}/soundfont`;
+    const path = `${sfDir}/${name}`;
+    try {
+      if (!fs.accessSync(path)) return false;
+      fs.unlinkSync(path);
+      console.info(`${TAG}: deleteSf2 OK: ${name}`);
+      return true;
+    } catch (e) {
+      console.error(`${TAG}: deleteSf2 failed: ${JSON.stringify(e)}`);
+      return false;
+    }
   }
 
   // 备份 filesDir 到 zip 文件，通过 picker 写入 destUri（下载目录 URI）。

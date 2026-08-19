@@ -254,23 +254,45 @@ int VmrpEngine::Init(int w, int h) {
     // 其余域名走外部服务 159.75.119.124(proxy2/applist/download 等)。
     int ret = api_.init(w, h);
     if (ret == 0 && api_.set_dns_map) {
-        const char *dns_map =
-            "wap.skmeg.com->159.75.119.124;"
-            "rop.skymobiapp.com->127.0.0.1:18088;"
-            "spd.skymobiapp.com->159.75.119.124;"
-            "freeads.51mrp.com->159.75.119.124;"
-            "proxy.51mrp.com->159.75.119.124;"
-            "proxy2.51mrp.com->159.75.119.124;"
-            "help.proxy.51mrp.com->159.75.119.124;"
-            "dmrp.wapproxy.sky-mobi.com->159.75.119.124;"
-            "211.155.236.18->159.75.119.124";
-        api_.set_dns_map(dns_map);
-        LOGI("DNS map set: pay→virtual 127.0.0.1:18088, others→159.75.119.124");
+        // 使用用户自定义 DNS 映射（如已保存），否则使用默认硬编码映射
+        if (custom_dns_map_.length() > 0) {
+            api_.set_dns_map(custom_dns_map_.c_str());
+            LOGI("DNS map set from preferences (%zu bytes)", custom_dns_map_.length());
+        } else {
+            const char *dns_map =
+                "wap.skmeg.com->159.75.119.124;"
+                "rop.skymobiapp.com->127.0.0.1:18088;"
+                "spd.skymobiapp.com->159.75.119.124;"
+                "freeads.51mrp.com->159.75.119.124;"
+                "proxy.51mrp.com->159.75.119.124;"
+                "proxy2.51mrp.com->159.75.119.124;"
+                "help.proxy.51mrp.com->159.75.119.124;"
+                "dmrp.wapproxy.sky-mobi.com->159.75.119.124;"
+                "211.155.236.18->159.75.119.124";
+            api_.set_dns_map(dns_map);
+            LOGI("DNS map set: pay→virtual 127.0.0.1:18088, others→159.75.119.124");
+        }
     }
+
+    // 写入 .active_sf2 文件（用户选择的 SF2 文件名），供 tsf_midi_auto_load_soundfont 读取
+    if (work_dir_.length() > 0 && active_sf2_.length() > 0) {
+        char path[1536];
+        snprintf(path, sizeof(path), "%s/soundfont/.active_sf2", work_dir_.c_str());
+        FILE *f = fopen(path, "w");
+        if (f) {
+            fputs(active_sf2_.c_str(), f);
+            fclose(f);
+            LOGI("Active SF2 written: %s", active_sf2_.c_str());
+        } else {
+            LOGE("Failed to write .active_sf2 to %s", path);
+        }
+    }
+
     return ret;
 }
 int VmrpEngine::SetWorkDir(const std::string &dir) {
     std::lock_guard<std::mutex> lk(engine_mtx_);
+    work_dir_ = dir;
     OH_LOG_INFO(LOG_APP, "setWorkDir: %{public}s", dir.c_str());
     return api_.set_work_dir(dir.c_str());
 }

@@ -173,6 +173,12 @@ public:
     // - motion_active() 变化时启停加速度传感器
     void PollMotionShake();
 
+    // 设置自定义 DNS 映射字符串（在 Init 前设置，Init 会使用此映射替代默认值）
+    void SetCustomDnsMap(const std::string &map) { custom_dns_map_ = map; }
+
+    // 设置活跃 SF2 文件名（在 Init 前设置，Init 会写入 .active_sf2 文件）
+    void SetActiveSf2Name(const std::string &name) { active_sf2_ = name; }
+
     const VmrpApi *Api() const { return &api_; }
 
     // 当前引擎模式:"JIT" 或 "TCI"(双 so 方案运行时探测结果)。
@@ -203,6 +209,9 @@ private:
     int panel_w_ = 0;
     int panel_h_ = 0;
     const char *engine_mode_ = "";  // "JIT" / "TCI" / ""(未加载)
+    std::string custom_dns_map_;     // 用户自定义 DNS 映射（分号分隔格式），空则用默认
+    std::string active_sf2_;         // 用户选择的 SF2 文件名，空则用默认 TimGM6mb.sf2
+    std::string work_dir_;           // 工作目录（由 SetWorkDir 设置）
 };
 
 #endif // VMRP_ENGINE_H

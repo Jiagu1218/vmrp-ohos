@@ -36,3 +36,5 @@ export const setEditCallback: (cb: (editText: string) => void) => void;
 export const setExitCallback: (cb: () => void) => void;
 export const setSpeedMultiplier: (mult: number) => void;
 export const createSurfaceNode: (nodeContent: object) => void;
+export const setDnsMap: (map: string) => number;
+export const setActiveSf2: (workDir: string, name: string) => number;

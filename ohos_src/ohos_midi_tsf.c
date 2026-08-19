@@ -127,6 +127,32 @@ int tsf_midi_auto_load_soundfont(const char *work_dir) {
     if (!work_dir || !*work_dir) return 0;
     if (g_tsf) return 1;  /* 幂等: 已加载 */
 
+    /* 先尝试读取 .active_sf2 文件，获取用户选择的 SF2 文件名 */
+    {
+        char active_path[1536];
+        snprintf(active_path, sizeof(active_path), "%s/soundfont/.active_sf2", work_dir);
+        FILE *af = fopen(active_path, "r");
+        if (af) {
+            char active_name[256] = {0};
+            if (fgets(active_name, sizeof(active_name), af)) {
+                /* 去除尾部换行/空白 */
+                size_t len = strlen(active_name);
+                while (len > 0 && (active_name[len-1] == '\n' || active_name[len-1] == '\r' || active_name[len-1] == ' '))
+                    active_name[--len] = '\0';
+                if (active_name[0] != '\0') {
+                    char sf2_path[1536];
+                    snprintf(sf2_path, sizeof(sf2_path), "%s/soundfont/%s", work_dir, active_name);
+                    if (tsf_midi_load_soundfont_file(sf2_path)) {
+                        fclose(af);
+                        return 1;
+                    }
+                    printf("ohos_midi_tsf: .active_sf2 '%s' load failed, falling back to search list\n", active_name);
+                }
+            }
+            fclose(af);
+        }
+    }
+
     /* 构造搜索路径: work_dir/soundfont/ (优先 TimGM6mb: GM 全覆盖 128 音色+打击乐) */
     static const char *sf2_names[] = {
         "soundfont/TimGM6mb.sf2",
@@ -146,6 +172,18 @@ int tsf_midi_auto_load_soundfont(const char *work_dir) {
     printf("ohos_midi_tsf: no SF2 found in %s/soundfont/, MIDI will use fallback synth\n",
            work_dir);
     return 0;
+}
+
+/* 按名称加载 SF2 音色库。
+ * 在 work_dir/soundfont/<name> 路径下加载指定 SF2 文件。
+ * 成功返回 1, 失败返回 0。幂等(已加载则跳过)。 */
+int tsf_midi_load_soundfont_by_name(const char *work_dir, const char *name) {
+    if (!work_dir || !*work_dir || !name || !*name) return 0;
+    if (g_tsf) return 1;  /* 幂等: 已加载 */
+
+    char path[1536];
+    snprintf(path, sizeof(path), "%s/soundfont/%s", work_dir, name);
+    return tsf_midi_load_soundfont_file(path);
 }
 
 /* ---------- MIDI 播放控制 ---------- */

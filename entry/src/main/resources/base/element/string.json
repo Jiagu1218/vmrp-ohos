@@ -220,6 +220,36 @@
     { "name": "settings_desc_dark_mode", "value": "减少屏幕蓝光，保护眼睛" },
     { "name": "settings_label_follow_system", "value": "跟随系统" },
     { "name": "settings_desc_follow_system", "value": "自动跟随系统深色模式设置" },
-    { "name": "settings_section_appearance", "value": "外观" }
+    { "name": "settings_section_appearance", "value": "外观" },
+
+    { "name": "settings_section_dns", "value": "域名映射" },
+    { "name": "settings_desc_dns", "value": "自定义域名→IP映射，替换引擎默认配置，重启后生效" },
+    { "name": "settings_btn_add_dns", "value": "添加映射" },
+    { "name": "settings_btn_reset_dns", "value": "重置默认映射" },
+    { "name": "settings_dns_reset_confirm", "value": "确定要恢复为默认域名映射吗？当前自定义映射将被清除。" },
+    { "name": "settings_dialog_title_add_dns", "value": "添加域名映射" },
+    { "name": "settings_dialog_title_edit_dns", "value": "编辑域名映射" },
+    { "name": "settings_hint_domain", "value": "域名 (如 example.com)" },
+    { "name": "settings_hint_target_ip", "value": "目标 IP (如 127.0.0.1)" },
+    { "name": "settings_hint_target_port", "value": "端口 (可选)" },
+    { "name": "settings_err_domain_empty", "value": "域名不能为空" },
+    { "name": "settings_err_ip_invalid", "value": "IP 格式不合法" },
+    { "name": "settings_err_port_invalid", "value": "端口范围 1-65535" },
+    { "name": "settings_err_domain_dup", "value": "该域名已存在" },
+    { "name": "settings_toast_dns_saved", "value": "域名映射已保存" },
+    { "name": "settings_toast_dns_reset", "value": "已重置为默认域名映射" },
+
+    { "name": "settings_section_sf2", "value": "音色库管理" },
+    { "name": "settings_desc_sf2", "value": "SF2 音色库决定 MIDI 合成音色，切换后下次启动生效" },
+    { "name": "settings_btn_import_sf2", "value": "导入 SF2" },
+    { "name": "settings_label_active_sf2", "value": "当前" },
+    { "name": "settings_label_builtin", "value": "内置" },
+    { "name": "settings_toast_sf2_importing", "value": "正在导入 SF2..." },
+    { "name": "settings_toast_sf2_import_ok", "value": "SF2 导入成功" },
+    { "name": "settings_toast_sf2_import_failed", "value": "SF2 导入失败" },
+    { "name": "settings_toast_sf2_selected", "value": "已选择 SF2，下次启动生效" },
+    { "name": "settings_dialog_title_delete_sf2", "value": "删除音色库" },
+    { "name": "settings_dialog_msg_delete_sf2", "value": "确定删除「%s」吗？此操作不可恢复。" },
+    { "name": "settings_toast_sf2_fallback", "value": "已回退到内置音色库" }
   ]
 }

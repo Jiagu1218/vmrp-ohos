@@ -7,10 +7,10 @@ import { AvoidData } from '../common/AvoidData';
 import { gAbilityContext } from '../entryability/EntryAbility';
 import { HapticManager, HapticState, HapticStrength } from '../common/HapticManager';
 import { VmrpEngineTs } from '../vmrp/VmrpEngine';
-import { VmrpAssets } from '../vmrp/VmrpAssets';
+import { VmrpAssets, Sf2Info } from '../vmrp/VmrpAssets';
 import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
 import { GlassPanel } from '../common/GlassPanel';
-import { SectionHeader, SDivider, SDesc, SRow, SSliderLabel, SSlider, SSelect, CARD_RADIUS, PAD_H, ROW_H } from '../components/SettingsControls';
+import { SectionHeader, SDivider, SDesc, SRow, SSliderLabel, SSlider, SSelect, CARD_RADIUS, PAD_H, ROW_H, DnsMapEntry, DnsMapListDialogParams, DnsMapListDialogBuilder } from '../components/SettingsControls';
 import { GpBinding, GamepadDialogParams, GamepadDialogBuilder, defaultBindings, bindingsToJson, jsonToBindings, GAMEPAD_PRESET_OPTIONS } from '../components/GamepadBinding';
 
 const PREF_NAME = 'vmrp_settings';
@@ -73,6 +73,20 @@ const SPEED_OPTIONS: SelectOption[] = [
   { value: $r('app.string.speed_1x') }, { value: $r('app.string.speed_2x') }, { value: $r('app.string.speed_3x') }, { value: $r('app.string.speed_4x') }
 ];
 const SPEED_VALUES: number[] = [1, 2, 3, 4];
+const KEY_DNS_MAP = 'dns_map';
+const KEY_ACTIVE_SF2 = 'active_sf2';
+const DEFAULT_SF2_NAME = 'TimGM6mb.sf2';
+const DEFAULT_DNS_MAP: DnsMapEntry[] = [
+  { original: 'wap.skmeg.com', target: '159.75.119.124', port: 0, enabled: true },
+  { original: 'rop.skymobiapp.com', target: '127.0.0.1', port: 18088, enabled: true },
+  { original: 'spd.skymobiapp.com', target: '159.75.119.124', port: 0, enabled: true },
+  { original: 'freeads.51mrp.com', target: '159.75.119.124', port: 0, enabled: true },
+  { original: 'proxy.51mrp.com', target: '159.75.119.124', port: 0, enabled: true },
+  { original: 'proxy2.51mrp.com', target: '159.75.119.124', port: 0, enabled: true },
+  { original: 'help.proxy.51mrp.com', target: '159.75.119.124', port: 0, enabled: true },
+  { original: 'dmrp.wapproxy.sky-mobi.com', target: '159.75.119.124', port: 0, enabled: true },
+  { original: '211.155.236.18', target: '159.75.119.124', port: 0, enabled: true },
+];
 
 @ComponentV2
 export struct SettingsPage {
@@ -98,6 +112,9 @@ export struct SettingsPage {
   @Local darkMode: boolean = true;
   @Local followSystem: boolean = true;
   @Local currentBp: string = 'sm';
+  @Local dnsMapEntries: DnsMapEntry[] = [];
+  @Local sf2Files: Sf2Info[] = [];
+  @Local activeSf2Name: string = DEFAULT_SF2_NAME;
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -109,6 +126,7 @@ export struct SettingsPage {
     this.strengthIndex = STRENGTH_VALUES.indexOf(this.hapticState.strength);
     if (this.strengthIndex < 0) this.strengthIndex = 1;
     this.loadPrefsSync();
+    this.loadSf2List();
     try { this.xengineMode = this.engine.getXengineUpscaleMode(); } catch (_e) {}
     try {
       const d = display.getDefaultDisplaySync();
@@ -165,6 +183,8 @@ export struct SettingsPage {
       this.loadGpBindings(pref);
       this.darkMode = pref.getSync(KEY_DARK_MODE, true) as boolean;
       this.followSystem = pref.getSync(KEY_FOLLOW_SYSTEM, true) as boolean;
+      this.loadDnsMap(pref);
+      this.activeSf2Name = pref.getSync(KEY_ACTIVE_SF2, DEFAULT_SF2_NAME) as string;
       if (this.followSystem) {
         const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
         if (ctx) {
@@ -284,6 +304,171 @@ export struct SettingsPage {
     }
   }
 
+  loadDnsMap(pref: preferences.Preferences): void {
+    try {
+      const raw = pref.getSync(KEY_DNS_MAP, '') as string;
+      if (raw.length > 0) {
+        const arr: DnsMapEntry[] = JSON.parse(raw) as DnsMapEntry[];
+        if (arr.length > 0) {
+          this.dnsMapEntries = arr;
+          return;
+        }
+      }
+    } catch (_e) {}
+    // No saved DNS map — use defaults
+    this.dnsMapEntries = DEFAULT_DNS_MAP.map((e: DnsMapEntry) => {
+      const entry: DnsMapEntry = { original: e.original, target: e.target, port: e.port, enabled: e.enabled };
+      return entry;
+    });
+  }
+
+  saveDnsMap(): void {
+    const pref = this.getPref();
+    if (!pref) return;
+    const json = JSON.stringify(this.dnsMapEntries.map((e: DnsMapEntry): Record<string, Object> => {
+      const obj: Record<string, Object> = {
+        'o': e.original,
+        't': e.target,
+        'p': e.port,
+        'e': e.enabled
+      };
+      return obj;
+    }));
+    pref.putSync(KEY_DNS_MAP, json);
+    pref.flush();
+    // Convert to C-side format and apply immediately
+    this.applyDnsMap();
+  }
+
+  applyDnsMap(): void {
+    const cMap = this.dnsMapEntries
+      .filter((e: DnsMapEntry) => e.enabled && e.original.length > 0 && e.target.length > 0)
+      .map((e: DnsMapEntry) => {
+        if (e.port > 0) {
+          return `${e.original}->${e.target}:${e.port}`;
+        }
+        return `${e.original}->${e.target}`;
+      })
+      .join(';');
+    if (cMap.length > 0) {
+      this.engine.setDnsMap(cMap);
+    }
+  }
+
+  resetDnsMap(): void {
+    this.dnsMapEntries = DEFAULT_DNS_MAP.map((e: DnsMapEntry) => {
+      const entry: DnsMapEntry = { original: e.original, target: e.target, port: e.port, enabled: e.enabled };
+      return entry;
+    });
+    this.saveDnsMap();
+  }
+
+  openDnsMapListDialog(): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: DnsMapListDialogParams = {
+      onClose: () => {
+        prompt.closeCustomDialog(contentNode);
+        // 弹窗自己已写 preferences，这里重新加载 + 应用
+        const pref = this.getPref();
+        if (pref) {
+          this.loadDnsMap(pref);
+        }
+      }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(DnsMapListDialogBuilder), params);
+    prompt.openCustomDialog(contentNode, { alignment: DialogAlignment.Center, autoCancel: true });
+  }
+
+  loadSf2List(): void {
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    const pref = this.getPref();
+    if (pref) {
+      this.activeSf2Name = pref.getSync(KEY_ACTIVE_SF2, DEFAULT_SF2_NAME) as string;
+    }
+    this.sf2Files = VmrpAssets.listSf2Files(ctx, this.activeSf2Name);
+  }
+
+  async doImportSf2(): Promise<void> {
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    try {
+      const opt = new picker.DocumentSelectOptions();
+      opt.maxSelectNumber = 1;
+      opt.fileSuffixFilters = ['.sf2'];
+      const docPicker = new picker.DocumentViewPicker();
+      const uris = await docPicker.select(opt);
+      if (!uris || uris.length === 0) return;
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.settings_toast_sf2_importing') });
+      const ok = await VmrpAssets.importSf2(ctx, uris[0]);
+      if (ok) {
+        this.loadSf2List();
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.settings_toast_sf2_import_ok'), duration: 2500 });
+      } else {
+        this.getUIContext().getPromptAction().showToast({ message: $r('app.string.settings_toast_sf2_import_failed'), duration: 2500 });
+      }
+    } catch (e) {
+      console.error(`doImportSf2 failed: ${JSON.stringify(e)}`);
+      this.getUIContext().getPromptAction().showToast({ message: $r('app.string.settings_toast_sf2_import_failed'), duration: 2500 });
+    }
+  }
+
+  selectSf2(name: string): void {
+    this.activeSf2Name = name;
+    const pref = this.getPref();
+    if (pref) {
+      pref.putSync(KEY_ACTIVE_SF2, name);
+      pref.flush();
+    }
+    const ctx = this.getUIContext().getHostContext();
+    if (ctx) {
+      this.engine.setActiveSf2(ctx.filesDir, name);
+    }
+    // Refresh list to update active indicator
+    this.loadSf2List();
+    this.getUIContext().getPromptAction().showToast({ message: $r('app.string.settings_toast_sf2_selected'), duration: 2000 });
+  }
+
+  confirmDeleteSf2(name: string): void {
+    this.getUIContext().showAlertDialog({
+      title: $r('app.string.settings_dialog_title_delete_sf2'),
+      message: `确定删除「${name}」吗？此操作不可恢复。`,
+      alignment: DialogAlignment.Center,
+      autoCancel: true,
+      primaryButton: { value: $r('app.string.btn_cancel'), action: () => {} },
+      secondaryButton: {
+        value: $r('app.string.btn_delete'),
+        fontColor: $r('app.color.accent_color'),
+        action: () => {
+          const ctx = this.getUIContext().getHostContext();
+          if (!ctx) return;
+          const ok = VmrpAssets.deleteSf2(ctx, name);
+          if (ok) {
+            // If deleting the active SF2, fall back to default
+            if (name === this.activeSf2Name) {
+              this.activeSf2Name = DEFAULT_SF2_NAME;
+              const pref = this.getPref();
+              if (pref) {
+                pref.putSync(KEY_ACTIVE_SF2, DEFAULT_SF2_NAME);
+                pref.flush();
+              }
+              this.engine.setActiveSf2(ctx.filesDir, DEFAULT_SF2_NAME);
+              this.getUIContext().getPromptAction().showToast({ message: $r('app.string.settings_toast_sf2_fallback'), duration: 2500 });
+            }
+            this.loadSf2List();
+          }
+        }
+      }
+    });
+  }
+
+  formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   openGamepadDialog(): void {
     const uiCtx = this.getUIContext();
     const prompt = uiCtx.getPromptAction();
@@ -386,9 +571,19 @@ export struct SettingsPage {
     pref.putSync(KEY_SCREEN_H, 320);
     pref.putSync(KEY_DARK_MODE, true);
     pref.putSync(KEY_FOLLOW_SYSTEM, true);
+    pref.putSync(KEY_DNS_MAP, '');
+    pref.putSync(KEY_ACTIVE_SF2, DEFAULT_SF2_NAME);
     pref.flush();
     this.applyDisplayFilter();
     this.applyColorMode();
+    this.applyDnsMap();
+    // Reset DNS map to defaults
+    this.dnsMapEntries = DEFAULT_DNS_MAP.map((e: DnsMapEntry) => {
+      const entry: DnsMapEntry = { original: e.original, target: e.target, port: e.port, enabled: e.enabled };
+      return entry;
+    });
+    this.activeSf2Name = DEFAULT_SF2_NAME;
+    this.loadSf2List();
     const ctx = this.getUIContext().getHostContext();
     if (ctx) {
       HapticManager.saveEnabledPref(ctx, true);
@@ -811,11 +1006,120 @@ export struct SettingsPage {
              }
             }
           }
+           .width('100%')
+
+           FlowItem() {
+             Column() {
+               SectionHeader({ title: $r('app.string.settings_section_dns') })
+              ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
+                Column() {
+                  Row() {
+                    Text($r('app.string.settings_section_dns'))
+                      .fontSize(16)
+                      .fontColor($r('app.color.settings_label_color'))
+                      .fontWeight(FontWeight.Medium)
+                      .layoutWeight(1)
+                    Text(`${this.dnsMapEntries.length} 条映射`)
+                      .fontSize(13)
+                      .fontColor($r('app.color.settings_desc_color'))
+                      .margin({ right: 8 })
+                    Button($r('app.string.btn_set'))
+                      .height(28)
+                      .fontSize(13)
+                      .fontColor($r('app.color.btn_text_on_accent'))
+                      .fontWeight(FontWeight.Medium)
+                      .backgroundColor($r('app.color.accent_color'))
+                      .borderRadius(8)
+                      .padding({ left: 12, right: 12 })
+                      .onClick(() => { this.openDnsMapListDialog(); })
+                      .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                  }
+                  .width('100%')
+                  .alignItems(VerticalAlign.Center)
+                  .padding({ left: PAD_H, right: PAD_H, top: 12, bottom: 8 })
+                  SDesc({ text: $r('app.string.settings_desc_dns') })
+                }
+               }
+             }
+           }
+           .width('100%')
+
+          FlowItem() {
+            Column() {
+              SectionHeader({ title: $r('app.string.settings_section_sf2') })
+             ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
+               Column() {
+                 ForEach(this.sf2Files, (item: Sf2Info, index: number) => {
+                   Row() {
+                      Radio({ value: item.name, group: 'sf2_group' })
+                        .checked(item.isActive)
+                        .onChange((isChecked: boolean) => {
+                         if (isChecked) { this.selectSf2(item.name); }
+                       })
+                       .width(20)
+                       .height(20)
+                       .margin({ right: 8 })
+                     Column() {
+                       Text(item.name)
+                         .fontSize(14)
+                         .fontColor($r('app.color.settings_label_color'))
+                         .fontWeight(item.isActive ? FontWeight.Bold : FontWeight.Normal)
+                       Text(this.formatFileSize(item.size))
+                         .fontSize(11)
+                         .fontColor($r('app.color.settings_desc_color'))
+                         .margin({ top: 2 })
+                     }
+                     .layoutWeight(1)
+                     .alignItems(HorizontalAlign.Start)
+                     if (item.isActive) {
+                       Text($r('app.string.settings_label_active_sf2'))
+                         .fontSize(11)
+                         .fontColor($r('app.color.accent_color'))
+                         .fontWeight(FontWeight.Medium)
+                         .margin({ right: 4 })
+                     }
+                     if (item.isBuiltin) {
+                       Text($r('app.string.settings_label_builtin'))
+                         .fontSize(11)
+                         .fontColor($r('app.color.settings_desc_color'))
+                         .margin({ right: 4 })
+                     }
+                     if (!item.isBuiltin) {
+                       Button() {
+                         Text($r('app.string.btn_delete'))
+                           .fontSize(12)
+                           .fontColor($r('app.color.accent_color'))
+                       }
+                       .height(28)
+                       .backgroundColor(Color.Transparent)
+                       .border({ width: 1, color: $r('app.color.settings_reset_btn_border'), radius: 6 })
+                       .padding({ left: 8, right: 8 })
+                       .onClick(() => { this.confirmDeleteSf2(item.name); })
+                     }
+                   }
+                   .width('100%')
+                   .alignItems(VerticalAlign.Center)
+                   .padding({ left: PAD_H, right: PAD_H, top: 8, bottom: 8 })
+                 }, (_item: Sf2Info, index: number) => `${index}`)
+                 SDivider()
+                 Column() {
+                   Button($r('app.string.settings_btn_import_sf2'))
+                     .width('100%').height(44).fontSize(16)
+                     .fontColor($r('app.color.btn_text_on_accent')).backgroundColor($r('app.color.settings_btn_deep_bg')).borderRadius(12)
+                     .onClick(() => { this.doImportSf2(); })
+                     .stateStyles({ pressed: { .opacity(0.7) }, normal: { .opacity(1) } })
+                 }
+                 .padding({ left: PAD_H, right: PAD_H, top: 4, bottom: 4 })
+                 SDesc({ text: $r('app.string.settings_desc_sf2') })
+               }
+              }
+            }
+          }
           .width('100%')
 
-         FlowItem() {
-           Column() {
-             SectionHeader({ title: $r('app.string.settings_section_about') })
+          FlowItem() {
+            Column() {
+              SectionHeader({ title: $r('app.string.settings_section_about') })
             GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {

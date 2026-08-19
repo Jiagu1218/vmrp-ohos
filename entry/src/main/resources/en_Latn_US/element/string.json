@@ -219,6 +219,36 @@
     { "name": "settings_desc_dark_mode", "value": "Reduce blue light to protect your eyes" },
     { "name": "settings_label_follow_system", "value": "Follow system" },
     { "name": "settings_desc_follow_system", "value": "Automatically follow system dark mode setting" },
-    { "name": "settings_section_appearance", "value": "Appearance" }
+    { "name": "settings_section_appearance", "value": "Appearance" },
+
+    { "name": "settings_section_dns", "value": "Domain Mapping" },
+    { "name": "settings_desc_dns", "value": "Custom domain→IP mapping replaces the engine defaults. Takes effect after restart." },
+    { "name": "settings_btn_add_dns", "value": "Add Mapping" },
+    { "name": "settings_btn_reset_dns", "value": "Reset to Default" },
+    { "name": "settings_dns_reset_confirm", "value": "Reset domain mappings to default? Current custom mappings will be removed." },
+    { "name": "settings_dialog_title_add_dns", "value": "Add Domain Mapping" },
+    { "name": "settings_dialog_title_edit_dns", "value": "Edit Domain Mapping" },
+    { "name": "settings_hint_domain", "value": "Domain (e.g. example.com)" },
+    { "name": "settings_hint_target_ip", "value": "Target IP (e.g. 127.0.0.1)" },
+    { "name": "settings_hint_target_port", "value": "Port (optional)" },
+    { "name": "settings_err_domain_empty", "value": "Domain cannot be empty" },
+    { "name": "settings_err_ip_invalid", "value": "Invalid IP format" },
+    { "name": "settings_err_port_invalid", "value": "Port range 1-65535" },
+    { "name": "settings_err_domain_dup", "value": "Domain already exists" },
+    { "name": "settings_toast_dns_saved", "value": "Domain mapping saved" },
+    { "name": "settings_toast_dns_reset", "value": "Domain mapping reset to default" },
+
+    { "name": "settings_section_sf2", "value": "SoundFont Manager" },
+    { "name": "settings_desc_sf2", "value": "SF2 SoundFont determines MIDI synthesis quality. Switch takes effect on next launch." },
+    { "name": "settings_btn_import_sf2", "value": "Import SF2" },
+    { "name": "settings_label_active_sf2", "value": "Active" },
+    { "name": "settings_label_builtin", "value": "Built-in" },
+    { "name": "settings_toast_sf2_importing", "value": "Importing SF2..." },
+    { "name": "settings_toast_sf2_import_ok", "value": "SF2 imported successfully" },
+    { "name": "settings_toast_sf2_import_failed", "value": "SF2 import failed" },
+    { "name": "settings_toast_sf2_selected", "value": "SF2 selected, takes effect on next launch" },
+    { "name": "settings_dialog_title_delete_sf2", "value": "Delete SoundFont" },
+    { "name": "settings_dialog_msg_delete_sf2", "value": "Delete \"%s\"? This cannot be undone." },
+    { "name": "settings_toast_sf2_fallback", "value": "Reverted to built-in SoundFont" }
   ]
 }

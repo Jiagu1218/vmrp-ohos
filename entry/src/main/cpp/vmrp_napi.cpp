@@ -39,6 +39,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <cstdio>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -722,6 +723,53 @@ static napi_value SetSpeedMultiplier(napi_env env, napi_callback_info info) {
     return nullptr;
 }
 
+// setDnsMap(map: string): number — 设置 DNS 映射字符串（分号分隔 domain->ip[:port] 格式）
+static napi_value SetDnsMap(napi_env env, napi_callback_info info) {
+    size_t argc = 1;
+    napi_value args[1];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char map[8192] = {0};
+    size_t l = 0;
+    napi_get_value_string_utf8(env, args[0], map, sizeof(map), &l);
+    int r = -1;
+    if (VmrpEngine::Instance().Api()->set_dns_map) {
+        r = VmrpEngine::Instance().Api()->set_dns_map(map);
+    }
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
+// setActiveSf2(workDir: string, name: string): number — 写入 .active_sf2 文件
+static napi_value SetActiveSf2(napi_env env, napi_callback_info info) {
+    size_t argc = 2;
+    napi_value args[2];
+    napi_get_cb_info(env, info, &argc, args, nullptr, nullptr);
+    char workDir[1024] = {0};
+    char name[256] = {0};
+    size_t l = 0;
+    napi_get_value_string_utf8(env, args[0], workDir, sizeof(workDir), &l);
+    if (argc > 1 && args[1]) {
+        napi_get_value_string_utf8(env, args[1], name, sizeof(name), &l);
+    }
+    // Write workDir/soundfont/.active_sf2 with the SF2 filename
+    char path[1536];
+    snprintf(path, sizeof(path), "%s/soundfont/.active_sf2", workDir);
+    int r = -1;
+    FILE *f = fopen(path, "w");
+    if (f) {
+        fputs(name, f);
+        fclose(f);
+        r = 0;
+        LOGI("setActiveSf2: wrote '%s' to %s", name, path);
+    } else {
+        LOGE("setActiveSf2: failed to open %s for writing", path);
+    }
+    napi_value result;
+    napi_create_int32(env, r, &result);
+    return result;
+}
+
 // native 触摸事件回调：PointerEvent_GetX/Y + GetAction → SendEvent（不经 ArkTS）。
 static void OnNodeTouchEvent(ArkUI_NodeEvent *event) {
     const ArkUI_UIInputEvent *input = OH_ArkUI_NodeEvent_GetInputEvent(event);
@@ -874,6 +922,8 @@ static napi_value VmrpExport(napi_env env, napi_value exports) {
         {"setEditCallback", nullptr, SetEditCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setExitCallback", nullptr, SetExitCallback, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"setSpeedMultiplier", nullptr, SetSpeedMultiplier, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setDnsMap", nullptr, SetDnsMap, nullptr, nullptr, nullptr, napi_default, nullptr},
+        {"setActiveSf2", nullptr, SetActiveSf2, nullptr, nullptr, nullptr, napi_default, nullptr},
         {"createSurfaceNode", nullptr, CreateSurfaceNode, nullptr, nullptr, nullptr, napi_default, nullptr},
     };
     napi_define_properties(env, exports, sizeof(desc) / sizeof(desc[0]), desc);

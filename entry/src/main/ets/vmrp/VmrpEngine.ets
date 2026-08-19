@@ -28,7 +28,9 @@ import {
   setSpeedMultiplier as nativeSetSpeedMultiplier,
   createSurfaceNode as nativeCreateSurfaceNode,
   mediaPause as nativeMediaPause, mediaResume as nativeMediaResume,
-  getScreenInfo as nativeGetScreenInfo
+  getScreenInfo as nativeGetScreenInfo,
+  setDnsMap as nativeSetDnsMap,
+  setActiveSf2 as nativeSetActiveSf2
 } from 'libentry.so';
 
 interface ScreenInfo {
@@ -189,5 +191,15 @@ export class VmrpEngineTs {
   // 必须在 aboutToAppear 时调用（UI 线程）。范式5：NDK 创建 XComponent 节点 + SurfaceHolder。
   createSurfaceNode(nodeContent: object): void {
     nativeCreateSurfaceNode(nodeContent);
+  }
+
+  // 设置 DNS 映射字符串（分号分隔 domain->ip[:port] 格式），立即生效。
+  setDnsMap(map: string): number {
+    return nativeSetDnsMap(map);
+  }
+
+  // 设置当前活跃的 SF2 文件名，写入 .active_sf2 文件，下次启动引擎时加载。
+  setActiveSf2(workDir: string, name: string): number {
+    return nativeSetActiveSf2(workDir, name);
   }
 }

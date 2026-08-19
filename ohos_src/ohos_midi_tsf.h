@@ -26,8 +26,15 @@ int tsf_midi_load_soundfont_file(const char *path);
  * 在 work_dir 下的 soundfont/ 子目录中搜索 .sf2 文件。
  * 典型路径: work_dir/soundfont/TimGM6mb.sf2
  * 找到第一个可加载的 SF2 即返回 1, 全部失败返回 0。
- * 已加载过则跳过(幂等)。 */
+ * 已加载过则跳过(幂等)。
+ * 优先读取 .active_sf2 文件中的用户选择，失败则回退到搜索列表。 */
 int tsf_midi_auto_load_soundfont(const char *work_dir);
+
+/* 按名称加载 SF2 音色库。
+ * 在 work_dir/soundfont/<name> 路径下加载指定 SF2 文件。
+ * 成功返回 1, 失败返回 0。
+ * 已加载过则跳过(幂等)。 */
+int tsf_midi_load_soundfont_by_name(const char *work_dir, const char *name);
 
 /* 释放 SF2 资源 */
 void tsf_midi_unload_soundfont(void);
