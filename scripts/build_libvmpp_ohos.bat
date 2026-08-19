@@ -232,4 +232,11 @@ git checkout -- vmrp\third_party\unicorn\qemu\tcg\tcg.c >nul 2>&1
 if exist "vmrp\third_party\unicorn\qemu\tcg\tci.c" del /q "vmrp\third_party\unicorn\qemu\tcg\tci.c" >nul 2>&1
 if exist "vmrp\third_party\unicorn\qemu\tcg\tci\" rmdir /s /q "vmrp\third_party\unicorn\qemu\tcg\tci" >nul 2>&1
 popd
+
+REM unicorn 嵌套子模块内部:ohos_crlf_to_lf + file(WRITE) 会导致 CRLF 污染,
+REM 从 unicorn 自身的 git 还原以确保子模块也干净。
+pushd "%VMRP_SRC%\third_party\unicorn" >nul 2>&1
+if errorlevel 1 exit /b 0
+git checkout -- . >nul 2>&1
+popd
 exit /b 0

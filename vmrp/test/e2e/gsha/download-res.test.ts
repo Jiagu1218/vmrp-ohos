@@ -89,7 +89,11 @@ describe("gsha", () => {
     // 模拟器负责的边界：同一 socket 已连接，并完整发送正确的下载请求。
     await engine.stop();
     const stdout = await readFile(engine.stdoutPath, "utf8");
-    const request = /my_getSocketState\((\d+)\): 0[\s\S]*?my_send\(s:\1, fd:\d+, len:(\d+)\): sent=(\d+),[^\n]*\n\[my_send\] data: POST \/simpleDownload HTTP\/1\.1\r?\nHost: spd\.skymobiapp\.com:6009/.exec(stdout);
+    // MSVC text stdout expands every LF to CRLF, including the request's existing
+    // CRLF bytes, so captured HTTP lines become CRCRLF. Normalize host line endings
+    // before applying the same protocol assertion on Windows and Unix.
+    const normalizedStdout = stdout.replace(/\r+\n/g, "\n");
+    const request = /my_getSocketState\((\d+)\): 0[\s\S]*?my_send\(s:\1, fd:\d+, len:(\d+)\): sent=(\d+),[^\n]*\n\[my_send\] data: POST \/simpleDownload HTTP\/1\.1\nHost: spd\.skymobiapp\.com:6009/.exec(normalizedStdout);
     expect(request, "resource download request was not sent on the connected socket").not.toBeNull();
     expect(request![3]).toBe(request![2]);
 

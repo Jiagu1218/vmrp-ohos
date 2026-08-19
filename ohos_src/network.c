@@ -52,7 +52,10 @@ typedef struct {
     // --- OHOS pay 虚拟 socket 拦截 ---
     // rop.skymobiapp.com 被映射到 127.0.0.1:18088 时,不建立真实 TCP 连接,
     // 而在进程内拦截 send/recv,直接返回 TLV 响应,避免监听端口的安全审核风险。
+    // payPath: 区分 /payOneAsTlv (TLV 二进制) 和 /payOne (表单) 两种协议路径。
+    enum { PAY_PATH_NONE = 0, PAY_AS_TLV = 1, PAY_ONE = 2 };
     int32_t isPayVirtual;
+    int32_t payPath;  /* OHOS pay path: PAY_PATH_NONE/PAY_AS_TLV/PAY_ONE */
     uint8_t* paySendBuf;
     int32_t paySendLen;
     int32_t paySendCap;
@@ -763,6 +766,7 @@ int32 my_socket(int32 type, int32 protocol) {
     data->cmwapProxyAck = 0;
     // OHOS pay 虚拟 socket 字段初始化
     data->isPayVirtual = 0;
+    data->payPath = PAY_PATH_NONE;
     data->paySendBuf = NULL;
     data->paySendLen = 0;
     data->paySendCap = 0;
@@ -1060,6 +1064,22 @@ int32 my_send(int32 s, const char* buf, int len) {
         }
         memcpy(data->paySendBuf + data->paySendLen, buf, len);
         data->paySendLen += len;
+        // 首次 send 时检测 HTTP 请求行中的路径,区分 /payOne 与 /payOneAsTlv
+        if (data->payPath == PAY_PATH_NONE && data->paySendLen > 4) {
+            if (memcmp(data->paySendBuf, "POST", 4) == 0) {
+                const uint8_t* sp = (const uint8_t*)memchr(data->paySendBuf, ' ', 4 + 32);
+                if (sp) {
+                    int32_t pathLen = (const uint8_t*)memchr(sp + 1, ' ', 32) - (sp + 1);
+                    if (pathLen > 0 && pathLen < 32) {
+                        if (pathLen == 7 && memcmp(sp + 1, "/payOne", 7) == 0) {
+                            data->payPath = PAY_ONE;
+                        } else {
+                            data->payPath = PAY_AS_TLV;
+                        }
+                    }
+                }
+            }
+        }
         return len;
     }
 
@@ -1186,7 +1206,7 @@ int32 my_recv(int32 s, char* buf, int len) {
     // OHOS pay 虚拟 socket: 第一次 recv 时解析请求并生成 HTTP+TLV 响应
     if (data->isPayVirtual) {
         if (!data->payRecvBuf) {
-            // 尚未生成响应:解析 HTTP body 中的 TLV 请求,构建响应
+            // 尚未生成响应:解析 HTTP body 中的请求,构建响应
             // 找 HTTP body (双 \r\n 之后)
             int32_t bodyOff = 0;
             if (data->paySendBuf) {
@@ -1198,82 +1218,140 @@ int32 my_recv(int32 s, char* buf, int len) {
                     }
                 }
             }
+
             // 构建 TLV 响应 body
             uint8_t tlvBuf[256];
             int32_t tlvLen = 0;
-            // 解析请求中的 stage 和 txn
-            uint8_t stage[32] = {0};
-            int32_t stageLen = 0;
-            uint8_t txn[4] = {0};
-            int32_t hasTxn = 0;
-            if (bodyOff < data->paySendLen && data->paySendBuf) {
-                uint8_t* body = data->paySendBuf + bodyOff;
-                int32_t bodyLen = data->paySendLen - bodyOff;
-                uint32_t off = 0;
-                while (off + 8 <= (uint32_t)bodyLen) {
-                    uint32_t type = ((uint32_t)body[off] << 24) | (body[off+1] << 16) | (body[off+2] << 8) | body[off+3];
-                    uint32_t vlen = ((uint32_t)body[off+4] << 24) | (body[off+5] << 16) | (body[off+6] << 8) | body[off+7];
-                    if (off + 8 + vlen > (uint32_t)bodyLen) break;
-                    if (type == 0x0452 && vlen < 32) {
-                        stageLen = vlen;
-                        memcpy(stage, body + off + 8, vlen);
-                    } else if (type == 0x045b && vlen == 4) {
-                        memcpy(txn, body + off + 8, 4);
-                        hasTxn = 1;
+            const char* respContentType = "application/x-tar";
+
+            if (data->payPath == PAY_ONE) {
+                // /payOne: 表单协议(application/x-www-form-urlencoded)
+                // 解析 msgid 参数,返回 TLV 100=200 + TLV 101=msgid回显 + TLV 200=action 1
+                // smsend.ext 只有在 TLV 100=200 且 TLV 101 回显 msgid 时才接受响应
+                uint32_t msgID = 0;
+                int32_t foundMsgID = 0;
+                if (bodyOff < data->paySendLen && data->paySendBuf) {
+                    uint8_t* body = data->paySendBuf + bodyOff;
+                    int32_t bodyLen = data->paySendLen - bodyOff;
+                    // 查找 "msgid=" 参数
+                    for (int32_t i = 0; i < bodyLen - 6; i++) {
+                        if (memcmp(body + i, "msgid=", 6) == 0) {
+                            const uint8_t* p = body + i + 6;
+                            uint32_t val = 0;
+                            while (p < body + bodyLen && *p >= '0' && *p <= '9') {
+                                val = val * 10 + (*p - '0');
+                                p++;
+                            }
+                            msgID = val;
+                            foundMsgID = 1;
+                            break;
+                        }
                     }
-                    off += 8 + vlen;
                 }
-            }
-            // 根据 stage 构建响应
-            // PREREG → 不授权(non-entitling): type0x03f1="000000006", type0x044f=0
-            // REG/PROP → 继续体(continuation): type0x045b=txn回显, type100=200, type200=0x0c
-            if ((stageLen == 3 && memcmp(stage, "REG", 3) == 0) ||
-                (stageLen == 4 && memcmp(stage, "PROP", 4) == 0)) {
-                if (hasTxn) {
-                    // type0x045b = txn 回显
-                    uint32_t t = 0x045b;
-                    tlvBuf[tlvLen++] = (t >> 24) & 0xFF;
-                    tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
-                    tlvBuf[tlvLen++] = (t >> 8) & 0xFF;
-                    tlvBuf[tlvLen++] = t & 0xFF;
-                    tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 4;
-                    memcpy(tlvBuf + tlvLen, txn, 4); tlvLen += 4;
+                if (!foundMsgID) {
+                    // 无法解析 msgid,返回 HTTP 400
+                    const char* err400 = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
+                    int32_t errLen = (int32_t)strlen(err400);
+                    data->payRecvBuf = (uint8_t*)malloc(errLen);
+                    memcpy(data->payRecvBuf, err400, errLen);
+                    data->payRecvLen = errLen;
+                    data->payRecvOff = 0;
+                    free(data->paySendBuf);
+                    data->paySendBuf = NULL;
+                    data->paySendLen = 0;
+                    data->paySendCap = 0;
+                    goto pay_recv_return;
                 }
-                // type100 = 200 (status=成功)
+                // TLV 100 = 200 (status OK, big-endian)
                 { uint32_t t = 100; uint32_t v = 200;
                 tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
                 tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
                 tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 4;
                 tlvBuf[tlvLen++] = (v >> 24) & 0xFF; tlvBuf[tlvLen++] = (v >> 16) & 0xFF;
                 tlvBuf[tlvLen++] = (v >> 8) & 0xFF; tlvBuf[tlvLen++] = v & 0xFF; }
-                // type200 = 0x0c (action=12,继续下一步)
+                // TLV 101 = msgID 回显 (big-endian)
+                { uint32_t t = 101;
+                tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
+                tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
+                tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 4;
+                tlvBuf[tlvLen++] = (msgID >> 24) & 0xFF; tlvBuf[tlvLen++] = (msgID >> 16) & 0xFF;
+                tlvBuf[tlvLen++] = (msgID >> 8) & 0xFF; tlvBuf[tlvLen++] = msgID & 0xFF; }
+                // TLV 200 = 1 (action 1: 直接完成,无 SMS 项目)
                 { uint32_t t = 200;
                 tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
                 tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
                 tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 1;
-                tlvBuf[tlvLen++] = 0x0c; }
-                printf("[my_recv] pay virtual: REG/PROP response, tlvLen=%d\n", tlvLen);
+                tlvBuf[tlvLen++] = 1; }
+                respContentType = "application/octet-stream";
+                printf("[my_recv] pay virtual: /payOne response msgid=%u, tlvLen=%d\n", msgID, tlvLen);
             } else {
-                // PREREG 或其他 → 不授权
-                // type0x03f1 = "000000006"
-                { uint32_t t = 0x03f1;
-                tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
-                tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
-                tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 9;
-                memcpy(tlvBuf + tlvLen, "000000006", 9); tlvLen += 9; }
-                // type0x044f = 0
-                { uint32_t t = 0x044f; uint32_t v = 0;
-                tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
-                tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
-                tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 4;
-                tlvBuf[tlvLen++] = (v >> 24) & 0xFF; tlvBuf[tlvLen++] = (v >> 16) & 0xFF;
-                tlvBuf[tlvLen++] = (v >> 8) & 0xFF; tlvBuf[tlvLen++] = v & 0xFF; }
-                printf("[my_recv] pay virtual: PREREG response, tlvLen=%d\n", tlvLen);
+                // /payOneAsTlv: TLV 二进制协议 (原有逻辑)
+                // 解析请求中的 stage 和 txn
+                uint8_t stage[32] = {0};
+                int32_t stageLen = 0;
+                uint8_t txn[4] = {0};
+                int32_t hasTxn = 0;
+                if (bodyOff < data->paySendLen && data->paySendBuf) {
+                    uint8_t* body = data->paySendBuf + bodyOff;
+                    int32_t bodyLen = data->paySendLen - bodyOff;
+                    uint32_t off = 0;
+                    while (off + 8 <= (uint32_t)bodyLen) {
+                        uint32_t type = ((uint32_t)body[off] << 24) | (body[off+1] << 16) | (body[off+2] << 8) | body[off+3];
+                        uint32_t vlen = ((uint32_t)body[off+4] << 24) | (body[off+5] << 16) | (body[off+6] << 8) | body[off+7];
+                        if (off + 8 + vlen > (uint32_t)bodyLen) break;
+                        if (type == 0x0452 && vlen < 32) {
+                            stageLen = vlen;
+                            memcpy(stage, body + off + 8, vlen);
+                        } else if (type == 0x045b && vlen == 4) {
+                            memcpy(txn, body + off + 8, 4);
+                            hasTxn = 1;
+                        }
+                        off += 8 + vlen;
+                    }
+                }
+                // 根据 stage 构建响应
+                if ((stageLen == 3 && memcmp(stage, "REG", 3) == 0) ||
+                    (stageLen == 4 && memcmp(stage, "PROP", 4) == 0)) {
+                    if (hasTxn) {
+                        uint32_t t = 0x045b;
+                        tlvBuf[tlvLen++] = (t >> 24) & 0xFF;
+                        tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
+                        tlvBuf[tlvLen++] = (t >> 8) & 0xFF;
+                        tlvBuf[tlvLen++] = t & 0xFF;
+                        tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 4;
+                        memcpy(tlvBuf + tlvLen, txn, 4); tlvLen += 4;
+                    }
+                    { uint32_t t = 100; uint32_t v = 200;
+                    tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
+                    tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
+                    tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 4;
+                    tlvBuf[tlvLen++] = (v >> 24) & 0xFF; tlvBuf[tlvLen++] = (v >> 16) & 0xFF;
+                    tlvBuf[tlvLen++] = (v >> 8) & 0xFF; tlvBuf[tlvLen++] = v & 0xFF; }
+                    { uint32_t t = 200;
+                    tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
+                    tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
+                    tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 1;
+                    tlvBuf[tlvLen++] = 0x0c; }
+                    printf("[my_recv] pay virtual: /payOneAsTlv REG/PROP response, tlvLen=%d\n", tlvLen);
+                } else {
+                    { uint32_t t = 0x03f1;
+                    tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
+                    tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
+                    tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 9;
+                    memcpy(tlvBuf + tlvLen, "000000006", 9); tlvLen += 9; }
+                    { uint32_t t = 0x044f; uint32_t v = 0;
+                    tlvBuf[tlvLen++] = (t >> 24) & 0xFF; tlvBuf[tlvLen++] = (t >> 16) & 0xFF;
+                    tlvBuf[tlvLen++] = (t >> 8) & 0xFF; tlvBuf[tlvLen++] = t & 0xFF;
+                    tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 0; tlvBuf[tlvLen++] = 4;
+                    tlvBuf[tlvLen++] = (v >> 24) & 0xFF; tlvBuf[tlvLen++] = (v >> 16) & 0xFF;
+                    tlvBuf[tlvLen++] = (v >> 8) & 0xFF; tlvBuf[tlvLen++] = v & 0xFF; }
+                    printf("[my_recv] pay virtual: /payOneAsTlv PREREG response, tlvLen=%d\n", tlvLen);
+                }
             }
             // 构建完整 HTTP 响应
             char httpHead[128];
             int headLen = snprintf(httpHead, sizeof(httpHead),
-                "HTTP/1.1 200 OK\r\nContent-Type: application/x-tar\r\nContent-Length: %d\r\n\r\n", tlvLen);
+                "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-Length: %d\r\n\r\n", respContentType, tlvLen);
             int32_t totalRespLen = headLen + tlvLen;
             data->payRecvBuf = (uint8_t*)malloc(totalRespLen);
             memcpy(data->payRecvBuf, httpHead, headLen);
@@ -1286,20 +1364,22 @@ int32 my_recv(int32 s, char* buf, int len) {
             data->paySendLen = 0;
             data->paySendCap = 0;
         }
-        // 从响应缓冲区拷贝数据
-        int32_t remain = data->payRecvLen - data->payRecvOff;
-        if (remain <= 0) return MR_FAILED;
-        int32_t toCopy = remain < len ? remain : len;
-        memcpy(buf, data->payRecvBuf + data->payRecvOff, toCopy);
-        data->payRecvOff += toCopy;
-        printf("[my_recv] pay virtual: returning %d bytes (remain=%d)\n", toCopy, remain - toCopy);
-        if (data->payRecvOff >= data->payRecvLen) {
-            free(data->payRecvBuf);
-            data->payRecvBuf = NULL;
-            data->payRecvLen = 0;
-            data->payRecvOff = 0;
+        pay_recv_return:
+        {
+            int32_t remain = data->payRecvLen - data->payRecvOff;
+            if (remain <= 0) return MR_FAILED;
+            int32_t toCopy = remain < len ? remain : len;
+            memcpy(buf, data->payRecvBuf + data->payRecvOff, toCopy);
+            data->payRecvOff += toCopy;
+            printf("[my_recv] pay virtual: returning %d bytes (remain=%d)\n", toCopy, remain - toCopy);
+            if (data->payRecvOff >= data->payRecvLen) {
+                free(data->payRecvBuf);
+                data->payRecvBuf = NULL;
+                data->payRecvLen = 0;
+                data->payRecvOff = 0;
+            }
+            return toCopy;
         }
-        return toCopy;
     }
     if (data->realState == MR_WAITING) {
         return 0;

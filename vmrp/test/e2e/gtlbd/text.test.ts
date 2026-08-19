@@ -28,19 +28,6 @@ function interactionGlyphPixelCount(image: PpmImage): number {
   return matchingPixelCount(image, INTERACTION_TEXT_RECT, (red, green, blue) => red + green + blue > 600);
 }
 
-async function startFromDevicePath(ws: SkyEngineWorkspace, repoDir: string): Promise<SkyEngineE2e> {
-  process.chdir(ws.dir);
-  try {
-    return await SkyEngineE2e.start("mythroad/gtlbd.mrp", {
-      bin: path.resolve(repoDir, process.env.VMRP_BIN ?? "build/skyengine"),
-      captureLatestFrame: true,
-      workDir: ws.dir,
-    });
-  } finally {
-    process.chdir(repoDir);
-  }
-}
-
 describe("gtlbd", () => {
   let engine: SkyEngineE2e | undefined;
   let ws: SkyEngineWorkspace | undefined;
@@ -56,7 +43,6 @@ describe("gtlbd", () => {
     // 每个用例使用独立的 mythroad 数据副本,避免并发执行时互相覆盖插件/缓存/存档。
     ws = await SkyEngineWorkspace.create();
 
-    const repoDir = process.cwd();
     const mrp = ws.path("mythroad/gtlbd.mrp");
     await copyFile("test/fixtures/gtlbd.mrp", mrp);
     // 模拟设备已安装的公共 netpay 版本；使用固定 fixture，不依赖共享 build 状态。
@@ -66,7 +52,10 @@ describe("gtlbd", () => {
     );
     // 相对设备路径参与 EXT 的包别名生成；在隔离 cwd 中启动可复现
     // mythroad/gtlbd.mrp 语义，同时不读取或写入共享 build/mythroad。
-    engine = await startFromDevicePath(ws, repoDir);
+    engine = await SkyEngineE2e.start("test/fixtures/gtlbd.mrp", {
+      captureLatestFrame: true,
+      workDir: ws.dir,
+    });
 
     // 启动已在进入事件循环前完成首帧绘制；只截一次，避免控制请求改变 timer 竞态。
     const initialPrompt = await engine.screen("initial-prompt");

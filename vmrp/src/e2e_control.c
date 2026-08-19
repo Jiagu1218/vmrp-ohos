@@ -3,17 +3,30 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if !defined(_WIN32) && !defined(__EMSCRIPTEN__)
+#if !defined(__EMSCRIPTEN__)
+#if defined(_MSC_VER)
+#include <SDL.h>
+#else
 #include <SDL2/SDL.h>
-#include <errno.h>
+#endif
 #include <stdarg.h>
 #include <stdio.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#define strcasecmp _stricmp
+#define E2E_ENDPOINT_PATH_LIMIT 256
+typedef HANDLE E2eClient;
+#else
+#include <errno.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include <strings.h>
+#define E2E_ENDPOINT_PATH_LIMIT 108
+typedef int E2eClient;
+#endif
 
-#define E2E_SOCKET_PATH_LIMIT 108
 #define E2E_DEFAULT_HOLD_MS 500
 #define E2E_DEFAULT_KEY_SYNC_TIMEOUT_MS 30000
 
@@ -42,8 +55,15 @@ struct E2eControl {
     VmrpE2eHooks hooks;
     SDL_Thread *thread;
     SDL_atomic_t stop_requested;
+    /* 销毁侧需要区分“仍阻塞在 accept/ConnectNamedPipe”和“已自行退出”，
+     * 否则 Windows 正常 QUIT 后会对已消失的管道空转等待。 */
+    SDL_atomic_t thread_exited;
+#if !defined(_WIN32)
     int listen_fd;
-    char socket_path[E2E_SOCKET_PATH_LIMIT];
+#endif
+    /* Unix 使用 socket 文件，Windows 使用 \\.\pipe\ 下的命名管道；字段保存
+     * 同一个环境变量传入的本机 IPC 端点，不改变上层命令协议。 */
+    char endpoint_path[E2E_ENDPOINT_PATH_LIMIT];
     /* 控制线程一次只处理一个客户端；这组状态将当前按键事件与主线程确认配对。 */
     SDL_mutex *key_mutex;
     SDL_cond *key_cond;
@@ -183,16 +203,29 @@ static void e2e_push_key_with_mod(int type, SDL_Keycode key, Uint8 state, SDL_Ke
     SDL_PushEvent(&ev);
 }
 
-static int e2e_read_line(int fd, char *buf, size_t size) {
+static int e2e_read_line(E2eClient client, char *buf, size_t size) {
     size_t pos = 0;
     while (pos + 1 < size) {
         char c;
-        ssize_t n = recv(fd, &c, 1, 0);
+#if defined(_WIN32)
+        DWORD n = 0;
+        if (!ReadFile(client, &c, 1, &n, NULL)) {
+            DWORD error = GetLastError();
+            if (error != ERROR_BROKEN_PIPE) {
+                fprintf(stderr, "[E2E] ReadFile failed: %lu\n",
+                        (unsigned long)error);
+            }
+            return error == ERROR_BROKEN_PIPE ? (int)pos : -1;
+        }
+#else
+        ssize_t n = recv(client, &c, 1, 0);
         if (n == 0) break;
         if (n < 0) {
             if (errno == EINTR) continue;
             return -1;
         }
+#endif
+        if (n == 0) break;
         if (c == '\n') break;
         if (c != '\r') buf[pos++] = c;
     }
@@ -200,18 +233,34 @@ static int e2e_read_line(int fd, char *buf, size_t size) {
     return (int)pos;
 }
 
-static void e2e_write_line(int fd, const char *line) {
+static void e2e_write_line(E2eClient client, const char *line) {
     size_t len = strlen(line);
     while (len > 0) {
-        ssize_t n = send(fd, line, len, 0);
+#if defined(_WIN32)
+        DWORD n = 0;
+        if (!WriteFile(client, line, (DWORD)len, &n, NULL) || n == 0) {
+            fprintf(stderr, "[E2E] WriteFile failed: %lu\n",
+                    (unsigned long)GetLastError());
+            return;
+        }
+#else
+        ssize_t n = send(client, line, len, 0);
         if (n < 0) {
             if (errno == EINTR) continue;
             return;
         }
+#endif
         line += n;
         len -= (size_t)n;
     }
-    send(fd, "\n", 1, 0);
+#if defined(_WIN32)
+    {
+        DWORD n = 0;
+        WriteFile(client, "\n", 1, &n, NULL);
+    }
+#else
+    send(client, "\n", 1, 0);
+#endif
 }
 
 static int e2e_click_or_paste_hold_ms(void) {
@@ -248,7 +297,7 @@ static int e2e_configured_key_hold_ms(const char *command_value) {
  * SDL_PushEvent 是线程安全的，实际的 event(MR_MOUSE_*)/event(MR_KEY_*) 仍然
  * 发生在主线程，编辑模式下的抑制也由主循环统一处理。
  */
-static void e2e_inject_click(int x, int y, int fd) {
+static void e2e_inject_click(int x, int y, E2eClient fd) {
     e2e_push_mouse_button(SDL_MOUSEBUTTONDOWN, x, y, SDL_PRESSED);
     SDL_Delay((Uint32)e2e_click_or_paste_hold_ms());
     e2e_push_mouse_button(SDL_MOUSEBUTTONUP, x, y, SDL_RELEASED);
@@ -260,7 +309,7 @@ static void e2e_inject_click(int x, int y, int fd) {
 /* 滑动手势：部分应用（如切水果类）用 MR_MOUSE_MOVE 轨迹而非点击识别输入。
  * down 后按固定步数线性插值注入 MOUSEMOTION（主循环仅在按下状态转发
  * MR_MOUSE_MOVE），步间延迟沿用点击 hold，保证 guest 定时器能观察到轨迹。 */
-static void e2e_inject_swipe(int x1, int y1, int x2, int y2, int fd) {
+static void e2e_inject_swipe(int x1, int y1, int x2, int y2, E2eClient fd) {
     const int steps = 8;
     e2e_push_mouse_button(SDL_MOUSEBUTTONDOWN, x1, y1, SDL_PRESSED);
     SDL_Delay((Uint32)e2e_click_or_paste_hold_ms());
@@ -427,7 +476,8 @@ static int e2e_wait_timer_boundary(E2eControl *control,
  * hold 仍表示物理长按时长；两条路径都保留 release 后的 generation 边界。
  */
 static void e2e_inject_key(E2eControl *control, SDL_Keycode key,
-                           const char *hold_value, int sync_timeout_ms, int fd) {
+                           const char *hold_value, int sync_timeout_ms,
+                           E2eClient fd) {
     uint32_t timer_arm_generation = 0;
     uint32_t timer_pending_generation = 0;
     int hold_ms = e2e_configured_key_hold_ms(hold_value);
@@ -491,7 +541,7 @@ static int e2e_set_clipboard(const char *text) {
     return 1;
 }
 
-static void e2e_inject_paste_shortcut(int fd) {
+static void e2e_inject_paste_shortcut(E2eClient fd) {
     /* Ctrl+V is a platform-edit action, not a Mythroad key.  Carry the Ctrl
      * modifier in the SDL event and mirror it into SDL's mod state so the main
      * edit-mode branch observes the same condition as a real keyboard paste. */
@@ -505,7 +555,7 @@ static void e2e_inject_paste_shortcut(int fd) {
     e2e_write_line(fd, "OK paste");
 }
 
-static void e2e_inject_paste(const char *text, int fd) {
+static void e2e_inject_paste(const char *text, E2eClient fd) {
     if (!e2e_set_clipboard(text)) {
         e2e_write_line(fd, "ERR clipboard");
         return;
@@ -513,7 +563,8 @@ static void e2e_inject_paste(const char *text, int fd) {
     e2e_inject_paste_shortcut(fd);
 }
 
-static void e2e_handle_wait_draw(E2eControl *control, int draw_count, int timeout_ms, int fd) {
+static void e2e_handle_wait_draw(E2eControl *control, int draw_count,
+                                 int timeout_ms, E2eClient fd) {
     Uint32 start = SDL_GetTicks();
     char resp[128];
     while (e2e_draw_count(control) <= draw_count) {
@@ -533,7 +584,7 @@ static void e2e_handle_wait_draw(E2eControl *control, int draw_count, int timeou
  * （e2e_control_execute），用条件变量等待完成后再回写响应。这是唯一仍需
  * mutex/cond 往返的命令。 */
 static void e2e_handle_screen(E2eControl *control, const char *path,
-                              int draw_count, int fd) {
+                              int draw_count, E2eClient fd) {
     E2eScreenRequest req;
     memset(&req, 0, sizeof(req));
     req.mutex = SDL_CreateMutex();
@@ -569,7 +620,8 @@ static void e2e_handle_screen(E2eControl *control, const char *path,
 /* MOTION 与 SCREEN 一样必须回主线程执行(guest 事件入口非线程安全),
  * 复用同一自定义事件回投+条件变量等待通道。 */
 static void e2e_handle_motion(E2eControl *control,
-                              int32_t x, int32_t y, int32_t z, int fd) {
+                              int32_t x, int32_t y, int32_t z,
+                              E2eClient fd) {
     E2eScreenRequest req;
     memset(&req, 0, sizeof(req));
     req.mutex = SDL_CreateMutex();
@@ -604,7 +656,7 @@ static void e2e_handle_motion(E2eControl *control,
     SDL_DestroyMutex(req.mutex);
 }
 
-static void e2e_handle_client(E2eControl *control, int fd) {
+static void e2e_handle_client(E2eControl *control, E2eClient fd) {
     char line[2048];
     if (e2e_read_line(fd, line, sizeof(line)) <= 0) {
         e2e_write_line(fd, "ERR empty_command");
@@ -685,15 +737,23 @@ static void e2e_handle_client(E2eControl *control, int fd) {
         }
         e2e_handle_motion(control, (int32_t)x, (int32_t)y, (int32_t)z, fd);
     } else if (strcasecmp(op, "SCREEN") == 0) {
-        e2e_handle_screen(control, a[0] ? a : e2e_screen_dump_path(control),
+        const char *screen_path = line + strlen(op);
+        while (*screen_path == ' ' || *screen_path == '\t') screen_path++;
+        /* 路径取命令剩余全文，避免 Windows TEMP/用户目录中的空格被 %s 截断。 */
+        e2e_handle_screen(control,
+                          *screen_path ? screen_path : e2e_screen_dump_path(control),
                           0, fd);
     } else if (strcasecmp(op, "SCREEN_DRAW") == 0) {
-        int draw_count = atoi(a);
-        if (draw_count <= 0 || !b[0]) {
+        const char *args = line + strlen(op);
+        char *screen_path = NULL;
+        while (*args == ' ' || *args == '\t') args++;
+        int draw_count = (int)strtol(args, &screen_path, 10);
+        while (*screen_path == ' ' || *screen_path == '\t') screen_path++;
+        if (draw_count <= 0 || !*screen_path) {
             e2e_write_line(fd, "ERR usage");
             return;
         }
-        e2e_handle_screen(control, b, draw_count, fd);
+        e2e_handle_screen(control, screen_path, draw_count, fd);
     } else {
         e2e_write_line(fd, "ERR usage");
     }
@@ -701,6 +761,47 @@ static void e2e_handle_client(E2eControl *control, int fd) {
 
 static int e2e_control_thread(void *data) {
     E2eControl *control = (E2eControl *)data;
+#if defined(_WIN32)
+    /* 句柄覆盖控制线程的整个生命周期；若每条命令后 Close/Create，紧接着
+     * 发起的下一条 Node 命令会在名称短暂消失时得到 ENOENT。 */
+    HANDLE client = CreateNamedPipeA(
+        control->endpoint_path,
+        PIPE_ACCESS_DUPLEX,
+        PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT |
+            PIPE_REJECT_REMOTE_CLIENTS,
+        PIPE_UNLIMITED_INSTANCES,
+        4096,
+        4096,
+        0,
+        NULL);
+    if (client == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "[E2E] CreateNamedPipe failed: %lu\n",
+                (unsigned long)GetLastError());
+        SDL_AtomicSet(&control->thread_exited, 1);
+        return 0;
+    }
+    while (!SDL_AtomicGet(&control->stop_requested)) {
+        /* Node 在 Windows 上把 net path 作为命名管道；每条命令保持一次连接，
+         * 与 Unix socket 的单客户端串行协议一致，避免 VM 跨线程执行。 */
+        BOOL connected = ConnectNamedPipe(client, NULL);
+        if (!connected) {
+            DWORD error = GetLastError();
+            connected = error == ERROR_PIPE_CONNECTED;
+            if (!connected && !SDL_AtomicGet(&control->stop_requested)) {
+                fprintf(stderr, "[E2E] ConnectNamedPipe failed: %lu\n",
+                        (unsigned long)error);
+            }
+        }
+        if (connected && !SDL_AtomicGet(&control->stop_requested)) {
+            e2e_handle_client(control, client);
+            /* DisconnectNamedPipe 会丢弃尚未被客户端读取的数据；先 flush 保证
+             * Node 收到完整的一行响应，语义才与 Unix close 一致。 */
+            FlushFileBuffers(client);
+        }
+        if (connected) DisconnectNamedPipe(client);
+    }
+    CloseHandle(client);
+#else
     while (!SDL_AtomicGet(&control->stop_requested)) {
         int fd = accept(control->listen_fd, NULL, NULL);
         if (fd < 0) {
@@ -712,6 +813,8 @@ static int e2e_control_thread(void *data) {
         e2e_handle_client(control, fd);
         close(fd);
     }
+#endif
+    SDL_AtomicSet(&control->thread_exited, 1);
     return 0;
 }
 
@@ -731,23 +834,37 @@ E2eControl *e2e_control_create(uint32_t event_type, const VmrpE2eHooks *hooks) {
         return NULL;
     }
     control->event_type = event_type;
+#if !defined(_WIN32)
     control->listen_fd = -1;
+#endif
     if (hooks) control->hooks = *hooks;
     return control;
 }
 
 void e2e_control_start_if_requested(E2eControl *control) {
     if (!control) return;
+#if defined(_WIN32)
+    if (control->thread) return;
+#else
     if (control->thread || control->listen_fd >= 0) return;
+#endif
     const char *path = getenv("SKYENGINE_E2E_SOCKET");
     if (!path || !*path) return;
 
-    if (strlen(path) >= sizeof(control->socket_path)) {
-        fprintf(stderr, "[E2E] socket path too long: %s\n", path);
+    if (strlen(path) >= sizeof(control->endpoint_path)) {
+        fprintf(stderr, "[E2E] endpoint path too long: %s\n", path);
         return;
     }
-    snprintf(control->socket_path, sizeof(control->socket_path), "%s", path);
+    snprintf(control->endpoint_path, sizeof(control->endpoint_path), "%s", path);
 
+#if defined(_WIN32)
+    if (strncmp(control->endpoint_path, "\\\\.\\pipe\\", 9) != 0) {
+        fprintf(stderr, "[E2E] Windows endpoint must be a named pipe: %s\n",
+                control->endpoint_path);
+        control->endpoint_path[0] = '\0';
+        return;
+    }
+#else
     control->listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
     if (control->listen_fd < 0) {
         perror("[E2E] socket");
@@ -757,8 +874,8 @@ void e2e_control_start_if_requested(E2eControl *control) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", control->socket_path);
-    unlink(control->socket_path);
+    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", control->endpoint_path);
+    unlink(control->endpoint_path);
     if (bind(control->listen_fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
         perror("[E2E] bind");
         close(control->listen_fd);
@@ -768,21 +885,26 @@ void e2e_control_start_if_requested(E2eControl *control) {
     if (listen(control->listen_fd, 8) != 0) {
         perror("[E2E] listen");
         close(control->listen_fd);
-        unlink(control->socket_path);
+        unlink(control->endpoint_path);
         control->listen_fd = -1;
         return;
     }
+#endif
 
     SDL_AtomicSet(&control->stop_requested, 0);
+    SDL_AtomicSet(&control->thread_exited, 0);
     control->thread = SDL_CreateThread(e2e_control_thread, "e2e-control", control);
     if (!control->thread) {
         fprintf(stderr, "[E2E] SDL_CreateThread failed: %s\n", SDL_GetError());
+#if !defined(_WIN32)
         close(control->listen_fd);
-        unlink(control->socket_path);
+        unlink(control->endpoint_path);
         control->listen_fd = -1;
+#endif
+        control->endpoint_path[0] = '\0';
         return;
     }
-    printf("[E2E] listening on %s\n", control->socket_path);
+    printf("[E2E] listening on %s\n", control->endpoint_path);
     fflush(stdout);
 }
 
@@ -899,19 +1021,44 @@ void e2e_control_destroy(E2eControl *control) {
     SDL_LockMutex(control->key_mutex);
     SDL_CondBroadcast(control->key_cond);
     SDL_UnlockMutex(control->key_mutex);
+#if defined(_WIN32)
+    if (control->thread && control->endpoint_path[0]) {
+        /* ConnectNamedPipe 是同步等待；用一个本进程客户端唤醒它，使销毁能在
+         * SDL 主线程内完成，不从定时器线程或测试线程直接触碰 VM。 */
+        for (int attempt = 0;
+             attempt < 500 && !SDL_AtomicGet(&control->thread_exited);
+             attempt++) {
+            HANDLE wake = CreateFileA(control->endpoint_path,
+                                      GENERIC_READ | GENERIC_WRITE,
+                                      0, NULL, OPEN_EXISTING, 0, NULL);
+            if (wake != INVALID_HANDLE_VALUE) {
+                CloseHandle(wake);
+                break;
+            }
+            if (GetLastError() == ERROR_PIPE_BUSY) {
+                WaitNamedPipeA(control->endpoint_path, 10);
+            } else {
+                SDL_Delay(10);
+            }
+        }
+    }
+#else
     if (control->listen_fd >= 0) {
         shutdown(control->listen_fd, SHUT_RDWR);
         close(control->listen_fd);
         control->listen_fd = -1;
     }
+#endif
     if (control->thread) {
         SDL_WaitThread(control->thread, NULL);
         control->thread = NULL;
     }
-    if (control->socket_path[0]) {
-        unlink(control->socket_path);
-        control->socket_path[0] = '\0';
+#if !defined(_WIN32)
+    if (control->endpoint_path[0]) {
+        unlink(control->endpoint_path);
     }
+#endif
+    control->endpoint_path[0] = '\0';
     SDL_DestroyCond(control->key_cond);
     SDL_DestroyMutex(control->key_mutex);
     free(control);

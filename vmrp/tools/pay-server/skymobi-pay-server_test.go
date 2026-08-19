@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -102,5 +106,78 @@ func TestBuildDefaultBodyDoesNotEntitleUnknownStage(t *testing.T) {
 	})
 	if !bytes.Equal(response, nonEntitlingBody) {
 		t.Fatalf("response = %x, want non-entitling body %x", response, nonEntitlingBody)
+	}
+}
+
+func TestBuildPayOneBodyEchoesMessageID(t *testing.T) {
+	// Action 1 selects direct completion because the response has no SMS items.
+	want, err := hex.DecodeString("0000006400000004000000c8000000650000000400001710000000c80000000101")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := buildPayOneBody(5904); !bytes.Equal(got, want) {
+		t.Fatalf("response = %x, want %x", got, want)
+	}
+}
+
+func TestHandlerReturnsPayOneSuccess(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/payOne", strings.NewReader("appid=391046&msgid=5904"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+
+	handler(recorder, req)
+
+	want, _ := hex.DecodeString("0000006400000004000000c8000000650000000400001710000000c80000000101")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q, want application/octet-stream", got)
+	}
+	if !bytes.Equal(recorder.Body.Bytes(), want) {
+		t.Fatalf("body = %x, want %x", recorder.Body.Bytes(), want)
+	}
+}
+
+func TestHandlerRejectsMalformedPayOneWithoutTlvFallback(t *testing.T) {
+	for _, body := range []string{"appid=391046", "msgid=1&msgid=2", "msgid=4294967296"} {
+		req := httptest.NewRequest(http.MethodPost, "/payOne", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		recorder := httptest.NewRecorder()
+
+		handler(recorder, req)
+		if recorder.Code != http.StatusBadRequest {
+			t.Errorf("body %q: status = %d, want %d", body, recorder.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestHandlerPreservesPayOneAsTlvPropResponse(t *testing.T) {
+	requestBody := append(tlvEncode(0x0452, []byte("PROP")), tlvEncode(0x045b, []byte{0xde, 0xad, 0xbe, 0xef})...)
+	req := httptest.NewRequest(http.MethodPost, "/payOneAsTlv", bytes.NewReader(requestBody))
+	recorder := httptest.NewRecorder()
+
+	handler(recorder, req)
+
+	want := buildDefaultBody(makePropRequest([]byte{0xde, 0xad, 0xbe, 0xef}))
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
+	}
+	if got := recorder.Header().Get("Content-Type"); got != "application/x-tar" {
+		t.Fatalf("Content-Type = %q, want application/x-tar", got)
+	}
+	if !bytes.Equal(recorder.Body.Bytes(), want) {
+		t.Fatalf("body = %x, want %x", recorder.Body.Bytes(), want)
+	}
+}
+
+func TestHandlerRejectsUnknownPaymentPath(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/unknown", nil)
+	recorder := httptest.NewRecorder()
+
+	handler(recorder, req)
+
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNotFound)
 	}
 }

@@ -1,4 +1,4 @@
-// tool/pay-server/skymobi-pay-server.go
+// tools/pay-server/skymobi-pay-server.go
 //
 // netpay.mrp（skymobi 付费 SDK）在启动时会向 rop.skymobiapp.com:80 发起
 // HTTP POST /payOneAsTlv，body 是一段 TLV（Type-Length-Value）二进制，携带
@@ -15,7 +15,7 @@
 //      PROP 返回 netpay v370 解析器定义的道具支付完成动作。
 //
 // 用法：
-//   go run tool/pay-server/skymobi-pay-server.go
+//   go run tools/pay-server/skymobi-pay-server.go
 //   # 另一个终端启动 skyengine:
 //   #   build/skyengine --dns-map \
 //   #     'rop.skymobiapp.com->127.0.0.1:8088;spd.skymobiapp.com->159.75.119.124' ...
@@ -32,9 +32,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -277,7 +280,73 @@ func buildDefaultBody(records []tlvRecord) []byte {
 	return append([]byte(nil), nonEntitlingBody...)
 }
 
+// smsend.ext accepts /payOne only when TLV 100 contains status 200 and TLV
+// 101 echoes the form's msgid. Action 1 with no SMS items takes its direct
+// completion branch instead of asking the runtime to send a carrier message.
+func buildPayOneBody(msgID uint32) []byte {
+	body := tlvEncode(100, u32be(200))
+	body = append(body, tlvEncode(101, u32be(msgID))...)
+	body = append(body, tlvEncode(200, []byte{1})...)
+	return body
+}
+
 // ---------- HTTP handler ----------
+
+func requirePost(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method == http.MethodPost {
+		return true
+	}
+	w.Header().Set("Allow", http.MethodPost)
+	http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	return false
+}
+
+func handlePayOne(w http.ResponseWriter, r *http.Request, body []byte, id uint64) {
+	if !requirePost(w, r) {
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/x-www-form-urlencoded" {
+		http.Error(w, "unsupported media type", http.StatusUnsupportedMediaType)
+		return
+	}
+
+	form, err := url.ParseQuery(string(body))
+	msgIDs := form["msgid"]
+	if err != nil || len(msgIDs) != 1 || msgIDs[0] == "" {
+		http.Error(w, "invalid msgid", http.StatusBadRequest)
+		return
+	}
+	msgID, err := strconv.ParseUint(msgIDs[0], 10, 32)
+	if err != nil {
+		http.Error(w, "invalid msgid", http.StatusBadRequest)
+		return
+	}
+
+	respBody := buildPayOneBody(uint32(msgID))
+	fmt.Printf("[#%d] -> /payOne success msgid=%d, reply %dB body\n", id, msgID, len(respBody))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBody)
+}
+
+func handlePayOneAsTlv(w http.ResponseWriter, r *http.Request, body []byte, id uint64) {
+	if !requirePost(w, r) {
+		return
+	}
+
+	exactRecords, exactOk := parseTlvExact(body)
+	if !exactOk {
+		fmt.Printf("[#%d] exact TLV parse failed; using non-entitling response\n", id)
+	}
+	respBody := buildDefaultBody(exactRecords)
+	fmt.Printf("[#%d] -> /payOneAsTlv reply %dB body\n", id, len(respBody))
+	w.Header().Set("Content-Type", "application/x-tar")
+	w.Header().Set("Connection", "close")
+	w.WriteHeader(http.StatusOK)
+	w.Write(respBody)
+}
 
 func handler(w http.ResponseWriter, r *http.Request) {
 	id := atomic.AddUint64(&connSeq, 1)
@@ -343,16 +412,17 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exactRecords, exactOk := parseTlvExact(body)
-	if !exactOk {
-		fmt.Printf("[#%d] exact TLV parse failed; using non-entitling response\n", id)
+	// Dispatch exact protocol paths so malformed or unknown requests cannot
+	// fall through to a response format intended for another payment client.
+	switch r.URL.Path {
+	case "/payOne":
+		handlePayOne(w, r, body, id)
+	case "/payOneAsTlv":
+		handlePayOneAsTlv(w, r, body, id)
+	default:
+		fmt.Printf("[#%d] unknown payment path %q\n", id, r.URL.Path)
+		http.NotFound(w, r)
 	}
-	respBody := buildDefaultBody(exactRecords)
-	fmt.Printf("[#%d] -> reply %dB body\n", id, len(respBody))
-	w.Header().Set("Content-Type", "application/x-tar")
-	w.Header().Set("Connection", "close")
-	w.WriteHeader(200)
-	w.Write(respBody)
 }
 
 func main() {
@@ -363,13 +433,10 @@ func main() {
 
 	addr := "0.0.0.0:" + port
 
-	fmt.Printf("skymobi fake pay-server listening on %s\n", addr)
-	fmt.Println("使用 --dns-map 'rop.skymobiapp.com->127.0.0.1:<PORT>;spd.skymobiapp.com->159.75.119.124' 启用本地 pay 与真实插件下载。")
-
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		if isPermissionError(err) {
-			fmt.Fprintf(os.Stderr, "监听 %s 失败：端口 <1024 需要 root。请用  sudo PORT=%s go run tool/pay-server/skymobi-pay-server.go\n", port, port)
+			fmt.Fprintf(os.Stderr, "监听 %s 失败：端口 <1024 需要 root。请用  sudo PORT=%s go run tools/pay-server/skymobi-pay-server.go\n", port, port)
 		} else if isAddrInUse(err) {
 			fmt.Fprintf(os.Stderr, "端口 %s 已被占用。\n", port)
 		} else {
@@ -377,6 +444,10 @@ func main() {
 		}
 		os.Exit(1)
 	}
+	// Log the kernel-selected port after Listen so E2E callers can safely use
+	// PORT=0 without reserving a fixed port or racing another test process.
+	fmt.Printf("skymobi fake pay-server listening on %s\n", listener.Addr())
+	fmt.Println("使用 --dns-map 'rop.skymobiapp.com->127.0.0.1:<PORT>;spd.skymobiapp.com->159.75.119.124' 启用本地 pay 与真实插件下载。")
 
 	server := &http.Server{Handler: http.HandlerFunc(handler)}
 	if err := server.Serve(listener); err != nil {
