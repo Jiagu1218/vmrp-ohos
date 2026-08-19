@@ -366,6 +366,60 @@ if(EXISTS "${_VMRP_DSM}")
         file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
         message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_MEDIA_CTRL)")
     endif()
+
+    # --- 子补丁: OHOS_TSF_MIDI — TinySoundFont SF2 合成器 ---
+    # 当 OHOS_TSF_MIDI 宏定义时, native_audio_play_midi 优先尝试 tsf_midi_play(),
+    # 成功则走 SF2 合成路径; SF2 未加载时降级回上游简易合成器。
+    # native_audio_render_bytes 的 MIDI 分支根据 tsf_midi_is_active() 分流。
+    # 媒体控制(pause/resume/seek/position/duration)同步调用 TSF 版本。
+    if(NOT _dsm_text MATCHES "OHOS_TSF_MIDI_PLAY")
+        # 4a0) 注入 ohos_midi_tsf.h 头文件(提供 tsf_midi_* 函数声明)
+        string(REPLACE
+            "#include \"../third_party/minimp3/minimp3.h\""
+            "#include \"../third_party/minimp3/minimp3.h\"\n#include \"ohos_midi_tsf.h\"  /* OHOS_TSF_MIDI: SF2 合成桥接层声明 */"
+            _dsm_text "${_dsm_text}")
+        # 4a) native_audio_play_midi: TSF 优先,降级回上游; 首次播放自动加载 SF2
+        string(REPLACE
+            "    int ret = native_audio_parse_midi(&native_audio, (const uint8 *)data, dataLen);\n    if (ret == MR_SUCCESS) {\n        native_audio.loop = loop ? 1 : 0;"
+            "    int ret = MR_FAILED;\n#ifdef OHOS_TSF_MIDI\n    /* OHOS_TSF_MIDI_PLAY: 首次播放时自动从 work_dir/../soundfont/ 加载 SF2。\n     * tsf_midi_auto_load_soundfont 内部幂等(已加载则跳过)。 */\n    tsf_midi_auto_load_soundfont(skyengine_config.work_dir);\n    ret = tsf_midi_play(data, dataLen, loop);\n    if (ret == 0) { ret = MR_SUCCESS; } else { ret = MR_FAILED; }\n#endif\n    if (ret != MR_SUCCESS) {\n    ret = native_audio_parse_midi(&native_audio, (const uint8 *)data, dataLen);\n    }\n    if (ret == MR_SUCCESS) {\n        native_audio.loop = loop ? 1 : 0;"
+            _dsm_text "${_dsm_text}")
+        # 4b) native_audio_render_bytes MIDI 分支: TSF 优先
+        string(REPLACE
+            "    } else if (source == AUDIO_SOURCE_MIDI) {\n        midi_render(s, (int16_t *)stream, frames);\n        s->midi_rendered_samples += (uint32)frames;  /* OHOS_MEDIA_CTRL */\n    }"
+            "    } else if (source == AUDIO_SOURCE_MIDI) {\n#ifdef OHOS_TSF_MIDI\n        if (tsf_midi_is_active()) { tsf_midi_render((short *)stream, frames); }\n        else\n#endif\n        { midi_render(s, (int16_t *)stream, frames); }\n        s->midi_rendered_samples += (uint32)frames;  /* OHOS_MEDIA_CTRL */\n    }"
+            _dsm_text "${_dsm_text}")
+        # 4c) native_audio_stop: 也停止 TSF 播放
+        string(REPLACE
+            "void native_audio_stop(void) {\n    native_audio_lock();\n    native_audio_clear_all_locked(&native_audio);\n    native_audio_unlock();\n}"
+            "void native_audio_stop(void) {\n    native_audio_lock();\n#ifdef OHOS_TSF_MIDI\n    tsf_midi_stop();  /* OHOS_TSF_MIDI: 停止 SF2 合成播放 */\n#endif\n    native_audio_clear_all_locked(&native_audio);\n    native_audio_unlock();\n}"
+            _dsm_text "${_dsm_text}")
+        # 4d) media pause: 同步暂停 TSF
+        string(REPLACE
+            "void native_audio_pause(void) {\n    native_audio_lock();\n    if (native_audio.source != AUDIO_SOURCE_NONE) {\n        native_audio.paused = 1;\n    }\n    native_audio_unlock();\n}"
+            "void native_audio_pause(void) {\n    native_audio_lock();\n    if (native_audio.source != AUDIO_SOURCE_NONE) {\n        native_audio.paused = 1;\n#ifdef OHOS_TSF_MIDI\n        tsf_midi_pause();  /* OHOS_TSF_MIDI */\n#endif\n    }\n    native_audio_unlock();\n}"
+            _dsm_text "${_dsm_text}")
+        # 4e) media resume: 同步恢复 TSF
+        string(REPLACE
+            "void native_audio_resume(void) {\n    native_audio_lock();\n    native_audio.paused = 0;\n    native_audio_unlock();\n}"
+            "void native_audio_resume(void) {\n    native_audio_lock();\n    native_audio.paused = 0;\n#ifdef OHOS_TSF_MIDI\n    tsf_midi_resume();  /* OHOS_TSF_MIDI */\n#endif\n    native_audio_unlock();\n}"
+            _dsm_text "${_dsm_text}")
+        # 4f) media position: TSF 优先
+        string(REPLACE
+            "int native_audio_position(void) {\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        return (int)((int64_t)native_audio.pcm_pos * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        return (int)((int64_t)native_audio.midi_rendered_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    return 0;\n}"
+            "int native_audio_position(void) {\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        return (int)((int64_t)native_audio.pcm_pos * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n#ifdef OHOS_TSF_MIDI\n        if (tsf_midi_is_active()) return tsf_midi_position();  /* OHOS_TSF_MIDI */\n#endif\n        return (int)((int64_t)native_audio.midi_rendered_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    return 0;\n}"
+            _dsm_text "${_dsm_text}")
+        # 4g) media duration: TSF 优先
+        string(REPLACE
+            "int native_audio_duration(void) {\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        return (int)((int64_t)native_audio.pcm_total_len * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n        return (int)((int64_t)native_audio.midi_total_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    return 0;\n}"
+            "int native_audio_duration(void) {\n    if (native_audio.source == AUDIO_SOURCE_PCM && native_audio.pcm_total_len > 0) {\n        return (int)((int64_t)native_audio.pcm_total_len * 1000 / (AUDIO_SAMPLE_RATE * AUDIO_CHANNELS * sizeof(int16_t)));\n    } else if (native_audio.source == AUDIO_SOURCE_MIDI && native_audio.midi_total_samples > 0) {\n#ifdef OHOS_TSF_MIDI\n        if (tsf_midi_is_active()) return tsf_midi_duration();  /* OHOS_TSF_MIDI */\n#endif\n        return (int)((int64_t)native_audio.midi_total_samples * 1000 / AUDIO_SAMPLE_RATE);\n    }\n    return 0;\n}"
+            _dsm_text "${_dsm_text}")
+        set(_dsm_patched TRUE)
+    endif()
+
+    if(_dsm_patched)
+        file(WRITE "${_VMRP_DSM}" "${_dsm_text}")
+        message(STATUS "[OHOS] Patched native_dsm_funcs.c (MAP_32BIT + OHOS_MEDIA_CTRL + OHOS_TSF_MIDI)")
+    endif()
 endif()
 
 # --- Patch skyengine_api.c: 导出 skyengine_api_media_pause/resume/seek/position/duration ---
@@ -1110,6 +1164,32 @@ if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND TARGET skyengine-shared)
         message(STATUS "[OHOS] Injected ohos_image_decode.c + libimage_source/libpixelmap")
     else()
         message(WARNING "[OHOS] ohos_image_decode.c not found at ${_OHOS_IMG_SRC}")
+    endif()
+endif()
+
+# --- TinySoundFont: SF2 合成器 + TinyMidiLoader SMF 解析 ---
+# 替换上游简易 MIDI 合成器 (midi_render 方波/噪音), 使用 SoundFont2 采样音色。
+# tsf_impl.c 包含 #define TSF_IMPLEMENTATION/#define TML_IMPLEMENTATION,
+# 在一个编译单元产出 tsf + tml 全部实现。链接 libm (pow/sin/cos/log)。
+# ohos_midi_tsf.c 是桥接层, 提供 tsf_midi_play/render 等 API,
+# 由 native_dsm_funcs.c 通过 OHOS_TSF_MIDI 宏调用。
+# 上游 native_dsm_funcs.c 的 OHOS_TSF_MIDI 宏控制新旧路径切换。
+if(CMAKE_SYSTEM_NAME STREQUAL "OHOS" AND TARGET skyengine-shared)
+    set(_TSF_DIR "${VMRP_SRC_DIR}/third_party/tinysoundfont")
+    set(_TSF_BRIDGE "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src/ohos_midi_tsf.c")
+    if(EXISTS "${_TSF_DIR}/tsf_impl.c" AND EXISTS "${_TSF_DIR}/tsf.h" AND EXISTS "${_TSF_DIR}/tml.h"
+       AND EXISTS "${_TSF_BRIDGE}")
+        target_sources(skyengine-shared PRIVATE
+            "${_TSF_DIR}/tsf_impl.c"
+            "${_TSF_BRIDGE}")
+        target_include_directories(skyengine-shared PRIVATE
+            "${_TSF_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/../ohos_src")
+        target_compile_definitions(skyengine-shared PRIVATE OHOS_TSF_MIDI)
+        target_link_libraries(skyengine-shared m)
+        message(STATUS "[OHOS] Injected TinySoundFont + TinyMidiLoader + bridge (OHOS_TSF_MIDI)")
+    else()
+        message(WARNING "[OHOS] TinySoundFont not found at ${_TSF_DIR}, fallback to upstream midi_render")
     endif()
 endif()
 

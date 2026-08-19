@@ -18,7 +18,7 @@ const TAG = 'VmrpAssets';
 // rawfile 中 mythroad 资源根目录（相对 rawfile，无前后斜杠）。
 const RAW_MYTHROAD_ROOT = 'mythroad';
 // 资源版本号：rawfile 内容变更后递增此值，ensureRuntime 会检测并强制刷新沙箱资源。
-const ASSETS_VERSION = 2;
+const ASSETS_VERSION = 4;
 
 export class VmrpAssets {
   // 获取沙箱工作目录（files 根）。
@@ -116,8 +116,55 @@ export class VmrpAssets {
     return copied;
   }
 
+  // 通用版 dumpRawDir：把 rawfile 下的 rawRoot 整个目录拷贝到沙箱 dstDir。
+  // 与 dumpRawDir 不同：不固定 mythroad 前缀,路径直接映射。
+  // 如 rawRoot='soundfont', dstDir='/data/.../files/soundfont',
+  // 则 rawfile/soundfont/florestan-subset.sf2 → /data/.../files/soundfont/florestan-subset.sf2。
+  private static async dumpRawDirTo(ctx: common.Context,
+                                    rawRoot: string,
+                                    dstDir: string): Promise<number> {
+    try {
+      if (!fs.accessSync(dstDir)) {
+        fs.mkdirSync(dstDir, true);
+      }
+    } catch (e) { /* 目录可能已存在 */ }
+    let entries: string[] = [];
+    try {
+      entries = await ctx.resourceManager.getRawFileList(rawRoot);
+    } catch (e) {
+      return 0;
+    }
+    let copied = 0;
+    for (const name of entries) {
+      if (!name) continue;
+      const rawPath = `${rawRoot}/${name}`;
+      const dstPath = `${dstDir}/${name}`;
+      let buf: Uint8Array | null = null;
+      try {
+        buf = await ctx.resourceManager.getRawFileContent(rawPath);
+      } catch (e) {
+        buf = null;
+      }
+      if (buf !== null) {
+        try {
+          const file = fs.openSync(dstPath, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE);
+          fs.writeSync(file.fd, buf.buffer);
+          fs.closeSync(file);
+          copied++;
+        } catch (e) {
+          console.error(`${TAG}: copy ${rawPath} failed: ${JSON.stringify(e)}`);
+        }
+      } else {
+        // 子目录递归
+        copied += await VmrpAssets.dumpRawDirTo(ctx, rawPath, dstPath);
+      }
+    }
+    return copied;
+  }
+
   // 确保 mythroad 运行时资源存在于 files/mythroad/。
   // 首次安装或 ASSETS_VERSION 递增时从 rawfile 重新解压，覆盖已有文件。
+  // 同时拷贝 soundfont/ 目录到 files/soundfont/（SF2 音色库,不走 mythroad 避免误删）。
   static async ensureRuntime(ctx: common.Context): Promise<string> {
     VmrpAssets.getWorkDir(ctx);
     const mythroadDir = VmrpAssets.getMythroadDir(ctx);
@@ -147,6 +194,14 @@ export class VmrpAssets {
         console.info(`${TAG}: installed ${n} mythroad assets (v${ASSETS_VERSION})`);
       } catch (e) {
         console.error(`${TAG}: dumpRawDir failed: ${JSON.stringify(e)}`);
+      }
+      // 拷贝 soundfont/ 到 files/soundfont/（与 mythroad/ 同级，C 端从 work_dir/../soundfont/ 访问）
+      try {
+        const sfDir = `${ctx.filesDir}/soundfont`;
+        const n = await VmrpAssets.dumpRawDirTo(ctx, 'soundfont', sfDir);
+        console.info(`${TAG}: installed ${n} soundfont assets`);
+      } catch (e) {
+        console.error(`${TAG}: soundfont copy failed: ${JSON.stringify(e)}`);
       }
       try {
         const f = fs.openSync(marker, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
