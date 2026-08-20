@@ -75,6 +75,7 @@ const SPEED_OPTIONS: SelectOption[] = [
 const SPEED_VALUES: number[] = [1, 2, 3, 4];
 const KEY_DNS_MAP = 'dns_map';
 const KEY_ACTIVE_SF2 = 'active_sf2';
+const KEY_STORE_URL = 'store_server_url';
 const DEFAULT_SF2_NAME = 'TimGM6mb.sf2';
 const DEFAULT_DNS_MAP: DnsMapEntry[] = [
   { original: 'wap.skmeg.com', target: '159.75.119.124', port: 0, enabled: true },
@@ -115,6 +116,7 @@ export struct SettingsPage {
   @Local dnsMapEntries: DnsMapEntry[] = [];
   @Local sf2Files: Sf2Info[] = [];
   @Local activeSf2Name: string = DEFAULT_SF2_NAME;
+  @Local storeServerUrl: string = '';
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private hapticState: HapticState = HapticManager.getState();
   private navPathStack: NavPathStack | null = null;
@@ -185,6 +187,7 @@ export struct SettingsPage {
       this.followSystem = pref.getSync(KEY_FOLLOW_SYSTEM, true) as boolean;
       this.loadDnsMap(pref);
       this.activeSf2Name = pref.getSync(KEY_ACTIVE_SF2, DEFAULT_SF2_NAME) as string;
+      this.storeServerUrl = pref.getSync(KEY_STORE_URL, '') as string;
       if (this.followSystem) {
         const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
         if (ctx) {
@@ -515,6 +518,13 @@ export struct SettingsPage {
     const pref = this.getPref();
     if (!pref) return;
     pref.putSync(KEY_SENSITIVITY, val);
+    pref.flush();
+  }
+
+  saveStoreServerUrl(): void {
+    const pref = this.getPref();
+    if (!pref) return;
+    pref.putSync(KEY_STORE_URL, this.storeServerUrl);
     pref.flush();
   }
 
@@ -1115,11 +1125,48 @@ export struct SettingsPage {
               }
             }
           }
-          .width('100%')
+           .width('100%')
 
-          FlowItem() {
-            Column() {
-              SectionHeader({ title: $r('app.string.settings_section_about') })
+           FlowItem() {
+             Column() {
+               SectionHeader({ title: $r('app.string.store_setting_url') })
+               ImmersiveLightWrapper({ radius: CARD_RADIUS, lightHeight: 80, bgColor: $r('app.color.settings_card_bg'), blurRadius: 30 }) {
+                 Column() {
+                   Row() {
+                     Text($r('app.string.store_setting_url'))
+                       .fontSize(16)
+                       .fontColor($r('app.color.settings_label_color'))
+                       .fontWeight(FontWeight.Medium)
+                       .layoutWeight(1)
+                   }
+                   .width('100%')
+                   .alignItems(VerticalAlign.Center)
+                   .padding({ left: PAD_H, right: PAD_H, top: 12, bottom: 8 })
+                   TextInput({ text: this.storeServerUrl, placeholder: $r('app.string.store_setting_url_hint') })
+                     .type(InputType.Normal)
+                     .fontSize(14)
+                     .fontColor($r('app.color.settings_label_color'))
+                     .placeholderFont({ size: 14 })
+                     .placeholderColor($r('app.color.settings_desc_color'))
+                     .backgroundColor(Color.Transparent)
+                     .width('100%')
+                     .padding({ left: PAD_H, right: PAD_H, bottom: 12 })
+                     .onChange((value: string) => {
+                       this.storeServerUrl = value;
+                     })
+                     .onSubmit(() => {
+                       this.saveStoreServerUrl();
+                     })
+                   SDesc({ text: $r('app.string.store_setting_url_hint') })
+                 }
+               }
+             }
+           }
+           .width('100%')
+
+           FlowItem() {
+             Column() {
+               SectionHeader({ title: $r('app.string.settings_section_about') })
             GlassPanel({ blurRadius: 30, panelBorderRadius: CARD_RADIUS, panelBorderColor: $r('app.color.settings_card_border'), panelBgColor: $r('app.color.settings_card_bg'), panelBorderWidth: 0.5 }) {
               Column() {
                 Column() {

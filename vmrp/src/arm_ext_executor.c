@@ -265,21 +265,8 @@ static int arm_ext_redirect_replaced_code_instance(ArmExtModule *m,
     ArmExtNestedModule *old_mod = arm_ext_find_nested_module(m, address);
     if (!old_mod) return 0;
     ArmExtNestedModule *new_mod =
-        arm_ext_find_nested_module_by_p(m, old_mod->p_addr);
-    if (!new_mod || new_mod == old_mod ||
-        new_mod->file_addr == old_mod->file_addr ||
-        new_mod->file_len != old_mod->file_len || old_mod->file_len <= 8u) {
-        return 0;
-    }
-
-    const uint8_t *old_body = (const uint8_t *)arm_ptr_span(
-        m, old_mod->file_addr + 8u, old_mod->file_len - 8u);
-    const uint8_t *new_body = (const uint8_t *)arm_ptr_span(
-        m, new_mod->file_addr + 8u, new_mod->file_len - 8u);
-    if (!old_body || !new_body ||
-        memcmp(old_body, new_body, old_mod->file_len - 8u) != 0) {
-        return 0;
-    }
+        arm_ext_find_live_replacement_instance(m, old_mod);
+    if (!new_mod) return 0;
 
     /*
      * A private loader may replace one PIC child while the primary keeps the
@@ -289,8 +276,8 @@ static int arm_ext_redirect_replaced_code_instance(ArmExtModule *m,
      * code resolve table bridges through allocator data.  When the registry
      * proves a newer instance with the same P and byte-identical immutable body,
      * preserve the function's relative offset and execute that instance.  The
-     * body comparison prevents a recycled P shared by different child modules
-     * from being treated as a replacement.
+     * confirmed loader tuple, helper offset and body identity prevent a recycled
+     * P shared by different child modules from being treated as a replacement.
      */
     uint32_t offset = address - old_mod->file_addr;
     uint32_t target = new_mod->file_addr + offset;
@@ -2696,8 +2683,11 @@ void arm_ext_reset_child_modules(ArmExtModule *m, uint32_t closed_p_addr) {
         int is_closed_child = closed_p_addr && mod->p_addr == closed_p_addr;
         if (is_primary ||
             (!is_closed_child &&
-             arm_ext_has_internal_loader_chunk(m, mod->file_addr,
-                                               mod->file_len))) {
+             (arm_ext_has_internal_loader_chunk(m, mod->file_addr,
+                                                mod->file_len) ||
+              /* Preserve a restored stale callback range only when its live,
+               * byte-identical generation can receive the redirect. */
+              arm_ext_find_live_replacement_instance(m, mod)))) {
             m->nested_modules[out++] = *mod;
         }
     }

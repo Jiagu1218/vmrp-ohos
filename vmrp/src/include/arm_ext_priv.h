@@ -210,6 +210,10 @@ void arm_ext_diag_fd_set(ArmExtModule *m, int32_t handle, const char *name);
 void arm_ext_install_pc_watches(ArmExtModule *m, uint32_t base, uint32_t len);
 void arm_ext_drop_overlapping_stale_nested_modules(ArmExtModule *m, uint32_t file_addr, uint32_t file_len);
 int arm_ext_has_internal_loader_chunk(ArmExtModule *m, uint32_t file_addr, uint32_t file_len);
+/* Resolve a stale code range only when a confirmed loader tuple and immutable
+ * image identity prove the currently live replacement instance. */
+ArmExtNestedModule *arm_ext_find_live_replacement_instance(
+    ArmExtModule *m, const ArmExtNestedModule *mod);
 const char *arm_ext_pack_to_host_path(ArmExtModule *m, const char *pack);
 const char *arm_ext_register_short_pack_alias(ArmExtModule *m,
                                               const char *host_path);

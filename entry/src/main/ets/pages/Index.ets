@@ -1,4 +1,4 @@
-import { AppStorageV2, LengthMetrics, SymbolGlyphModifier, window, display, PromptAction, ShowDialogSuccessResponse } from '@kit.ArkUI';
+import { AppStorageV2, LengthMetrics, SymbolGlyphModifier, window, display, PromptAction, ShowDialogSuccessResponse, ComponentContent } from '@kit.ArkUI';
 import {
   HdsNavigation, HdsNavigationTitleMode,
   HdsTabs, HdsTabsController,
@@ -7,6 +7,9 @@ import {
 import { fileIo as fs } from '@kit.CoreFileKit';
 import { VmrpAssets } from '../vmrp/VmrpAssets';
 import { MrpInfoData, MrpInfo } from '../vmrp/MrpInfo';
+import { StoreService } from '../vmrp/StoreService';
+import { StoreApp, StoreAppDetail, StoreListResponse } from '../model/StoreModel';
+import { StoreCard, StoreSearch, StoreDetailDialogParams, StoreDetailDialogBuilder, StoreUploadDialogParams, StoreUploadDialogBuilder } from '../components/StoreControls';
 import { gAbilityContext } from '../entryability/EntryAbility';
 import { AvoidData } from '../common/AvoidData';
 import { ImmersiveLightWrapper } from '../common/ImmersiveLightWrapper';
@@ -33,12 +36,24 @@ struct Index {
   @Local titleBarOffset: number = 96;
   @Local privacyAgreed: boolean = isPrivacyAgreedSync();
   @Local showPrivacyDialog: boolean = !isPrivacyAgreedSync();
+  @Local storeApps: StoreApp[] = [];
+  @Local storePage: number = 1;
+  @Local storeTotal: number = 0;
+  @Local storeLoading: boolean = false;
+  @Local storeHasError: boolean = false;
+  @Local storeErrorMsg: ResourceStr = '';
+  @Local storeSearchQuery: string = '';
+  @Local storeVendorFilter: string = '';
+  @Local storeResFilter: string = '';
+  @Local storeVendors: string[] = [];
+  @Local storeHasMore: boolean = true;
   private navPathStack: NavPathStack = new NavPathStack();
   private avoidData: AvoidData = AppStorageV2.connect(AvoidData, 'avoidData', () => new AvoidData())!;
   private listScroller: ListScroller = new ListScroller();
   private favScroller: ListScroller = new ListScroller();
   private appScroller: ListScroller = new ListScroller();
   private hdsTabsController: HdsTabsController = new HdsTabsController();
+  private storeScroller: Scroller = new Scroller();
   private rawList: MrpInfoData[] = [];
   private favStore: FavoriteStore = new FavoriteStore();
 
@@ -216,6 +231,54 @@ struct Index {
     }
   }
 
+  private async loadStoreData(reset?: boolean): Promise<void> {
+    const serverUrl = StoreService.getServerUrl();
+    if (serverUrl.length === 0) {
+      this.storeErrorMsg = $r('app.string.store_no_server');
+      this.storeHasError = true;
+      return;
+    }
+    if (reset) {
+      this.storePage = 1;
+      this.storeApps = [];
+      this.storeHasMore = true;
+    }
+    if (!this.storeHasMore && !reset) {
+      return;
+    }
+    this.storeLoading = true;
+    this.storeHasError = false;
+    try {
+      const data: StoreListResponse = await StoreService.listApps(
+        this.storePage, 20, this.storeResFilter, this.storeVendorFilter, undefined, this.storeSearchQuery
+      );
+      if (reset) {
+        this.storeApps = data.items;
+      } else {
+        this.storeApps = [...this.storeApps, ...data.items];
+      }
+      this.storeTotal = data.total;
+      this.storeHasMore = this.storeApps.length < data.total;
+    } catch (_e) {
+      this.storeErrorMsg = $r('app.string.store_error_connect');
+      this.storeHasError = true;
+    }
+    this.storeLoading = false;
+  }
+
+  private async loadStoreVendors(): Promise<void> {
+    const vendors: string[] = await StoreService.listVendors();
+    this.storeVendors = vendors;
+  }
+
+  private loadMoreStoreData(): void {
+    if (this.storeLoading || !this.storeHasMore) {
+      return;
+    }
+    this.storePage++;
+    this.loadStoreData(false);
+  }
+
   private onSearchInput(query: string): void {
     this.searchQuery = query;
     this.applySort();
@@ -309,6 +372,167 @@ struct Index {
 
   private isGame(item: MrpInfoData): boolean {
     return item.filename.length > 0 && (item.filename.charAt(0) === 'g' || item.filename.charAt(0) === 'G');
+  }
+
+  private openStoreDetailDialog(appid: string): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: StoreDetailDialogParams = {
+      appid: appid,
+      onClose: () => {
+        prompt.closeCustomDialog(contentNode);
+      }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(StoreDetailDialogBuilder), params);
+    prompt.openCustomDialog(contentNode, { alignment: DialogAlignment.Center, autoCancel: true });
+  }
+
+  private openStoreUploadDialog(): void {
+    const uiCtx = this.getUIContext();
+    const prompt = uiCtx.getPromptAction();
+    const params: StoreUploadDialogParams = {
+      onUploaded: () => {
+        prompt.closeCustomDialog(contentNode);
+        this.loadStoreData(true);
+      },
+      onClose: () => {
+        prompt.closeCustomDialog(contentNode);
+      }
+    };
+    const contentNode = new ComponentContent(uiCtx, wrapBuilder(StoreUploadDialogBuilder), params);
+    prompt.openCustomDialog(contentNode, { alignment: DialogAlignment.Center, autoCancel: true });
+  }
+
+  @Builder
+  storeContent() {
+    Column() {
+      // Server URL not configured
+      if (StoreService.getServerUrl().length === 0) {
+        Column() {
+          Text($r('app.string.store_no_server'))
+            .fontSize(16)
+            .fontColor($r('app.color.settings_desc_color'))
+          Button($r('app.string.store_go_settings'))
+            .fontSize(14)
+            .margin({ top: 12 })
+            .onClick(() => {
+              this.openSettings();
+            })
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      } else {
+        // Search bar
+        StoreSearch({
+          vendors: this.storeVendors,
+          onSearch: (query: string, vendor: string, res: string) => {
+            this.storeSearchQuery = query;
+            this.storeVendorFilter = vendor;
+            this.storeResFilter = res;
+            this.loadStoreData(true);
+          },
+          onUpload: () => { this.openStoreUploadDialog(); }
+        })
+        // Grid
+        if (this.storeApps.length === 0 && this.storeLoading) {
+          // Loading skeleton
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .color($r('app.color.accent_color'))
+            Text($r('app.string.store_search_hint'))
+              .fontSize(14)
+              .fontColor($r('app.color.settings_desc_color'))
+              .margin({ top: 12 })
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else if (this.storeApps.length === 0 && !this.storeLoading) {
+          // Empty state
+          Column() {
+            Text($r('app.string.store_empty'))
+              .fontSize(16)
+              .fontColor($r('app.color.settings_desc_color'))
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(HorizontalAlign.Center)
+        } else {
+          Refresh({ refreshing: $$this.isRefreshing }) {
+            Scroll(this.storeScroller) {
+              Column() {
+                GridRow({ columns: { sm: 2, md: 3, lg: 4 }, gutter: { x: 8 } }) {
+                  ForEach(this.storeApps, (app: StoreApp, index: number) => {
+                    GridCol() {
+                      StoreCard({
+                        app: app,
+                        serverUrl: StoreService.getServerUrl(),
+                        onCardClick: () => { this.openStoreDetailDialog(app.appid); }
+                      })
+                    }
+                  }, (app: StoreApp, index: number) => `${index}_${app.appid}`)
+                }
+                .width('100%')
+                .padding({ left: 12, right: 12, top: 4 })
+                // Load more footer
+                if (this.storeLoading) {
+                  Row() {
+                    LoadingProgress()
+                      .width(20)
+                      .height(20)
+                      .color($r('app.color.accent_color'))
+                    Text($r('app.string.store_loading'))
+                      .fontSize(13)
+                      .fontColor($r('app.color.settings_desc_color'))
+                      .margin({ left: 8 })
+                  }
+                  .width('100%')
+                  .justifyContent(FlexAlign.Center)
+                  .padding({ top: 12, bottom: 12 })
+                } else if (!this.storeHasMore && this.storeApps.length > 0) {
+                  Text($r('app.string.store_no_more'))
+                    .fontSize(13)
+                    .fontColor($r('app.color.settings_desc_color'))
+                    .width('100%')
+                    .textAlign(TextAlign.Center)
+                    .padding({ top: 12, bottom: 12 })
+                }
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
+            .scrollable(ScrollDirection.Vertical)
+            .scrollBar(BarState.Auto)
+            .edgeEffect(EdgeEffect.Spring)
+            .onReachEnd(() => {
+              this.loadMoreStoreData();
+            })
+          }
+          .onRefreshing(() => {
+            this.loadStoreData(true);
+          })
+          .layoutWeight(1)
+        }
+        // Error state
+        if (this.storeHasError) {
+          Text(this.storeErrorMsg)
+            .fontSize(13)
+            .fontColor($r('app.color.settings_desc_color'))
+            .width('100%')
+            .textAlign(TextAlign.Center)
+            .padding(8)
+        }
+      }
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ top: this.titleBarOffset, bottom: this.avoidData.bottomVp + 84 })
   }
 
   @Builder
@@ -952,6 +1176,18 @@ struct Index {
             .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
             .fontColor([$r('app.color.accent_color')])
         }, $r('app.string.index_tab_favorites')))
+
+        TabContent() {
+          this.storeContent()
+        }
+        .tabBar(new BottomTabBarStyle({
+          normal: new SymbolGlyphModifier($r('sys.symbol.store'))
+            .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+            .fontColor([$r('sys.color.ohos_id_color_bottom_tab_icon_off')]),
+          selected: new SymbolGlyphModifier($r('sys.symbol.store'))
+            .renderingStrategy(SymbolRenderingStrategy.MULTIPLE_COLOR)
+            .fontColor([$r('app.color.accent_color')])
+        }, $r('app.string.store_tab')))
       }
       .barOverlap(true)
       .vertical(false)
@@ -966,6 +1202,9 @@ struct Index {
           this.listScroller.scrollToIndex(0, false, ScrollAlign.START);
         } else if (index === 1) {
           this.appScroller.scrollToIndex(0, false, ScrollAlign.START);
+        } else if (index === 3) {
+          this.loadStoreVendors();
+          this.loadStoreData(true);
         } else {
           this.favScroller.scrollToIndex(0, false, ScrollAlign.START);
         }
@@ -981,7 +1220,7 @@ struct Index {
     }
     .titleBar({
       content: {
-        title: { mainTitle: this.currentTab === 2 ? $r('app.string.index_tab_favorites') : (this.currentTab === 1 ? $r('app.string.index_title_apps') : $r('app.string.index_title_library')) },
+        title: { mainTitle: this.currentTab === 3 ? $r('app.string.store_title') : (this.currentTab === 2 ? $r('app.string.index_tab_favorites') : (this.currentTab === 1 ? $r('app.string.index_title_apps') : $r('app.string.index_title_library'))) },
         menu: {
           value: [
             {

@@ -1887,6 +1887,53 @@ int arm_ext_has_internal_loader_chunk(ArmExtModule *m,
     return 0;
 }
 
+ArmExtNestedModule *arm_ext_find_live_replacement_instance(
+    ArmExtModule *m, const ArmExtNestedModule *mod) {
+    if (!m || !mod || !mod->p_addr || mod->file_len <= 8u ||
+        mod->helper_addr < mod->file_addr ||
+        mod->helper_addr - mod->file_addr >= mod->file_len) {
+        return NULL;
+    }
+
+    const uint8_t *old_body = (const uint8_t *)arm_ptr_span(
+        m, mod->file_addr + 8u, mod->file_len - 8u);
+    if (!old_body) return NULL;
+    uint32_t helper_off = mod->helper_addr - mod->file_addr;
+
+    for (int i = m->nested_module_count - 1; i >= 0; --i) {
+        ArmExtNestedModule *candidate = &m->nested_modules[i];
+        if (candidate == mod || candidate->p_addr != mod->p_addr ||
+            candidate->file_addr == mod->file_addr ||
+            candidate->file_len != mod->file_len ||
+            candidate->helper_addr < candidate->file_addr ||
+            candidate->helper_addr - candidate->file_addr != helper_off) {
+            continue;
+        }
+        const uint8_t *new_body = (const uint8_t *)arm_ptr_span(
+            m, candidate->file_addr + 8u, candidate->file_len - 8u);
+        /* The runtime header is mutable loader metadata; an exact body match
+         * proves that both records describe generations of the same image. */
+        if (!new_body ||
+            memcmp(old_body, new_body, mod->file_len - 8u) != 0) {
+            continue;
+        }
+
+        uint32_t ext_chunk = arm_ext_read_u32_or_zero_(
+            m, candidate->p_addr + AEX_P_EXT_CHUNK_OFF);
+        ArmExtInternalLoaderTuple tuple;
+        /* P+0x0c publishes the current extChunk directly. require_confirmed
+         * then validates helper, P, RW and tuple agreement without a heap scan. */
+        if (arm_ext_read_internal_loader_tuple(
+                m, ext_chunk, candidate->file_addr, candidate->file_len,
+                1, &tuple) &&
+            tuple.p_addr == candidate->p_addr &&
+            tuple.helper_addr == candidate->helper_addr) {
+            return candidate;
+        }
+    }
+    return NULL;
+}
+
 int arm_ext_sync_internal_nested_module(ArmExtModule *m,
                                                uint32_t file_addr,
                                                uint32_t file_len) {
@@ -2161,6 +2208,13 @@ void arm_ext_drop_overlapping_stale_nested_modules(ArmExtModule *m,
             m->nested_modules[out++] = mod;
             continue;
         }
+        /* A byte-proven live generation can execute callbacks retained at this
+         * restored address through the existing replaced-instance redirect. */
+        if (!is_primary && overlaps &&
+            arm_ext_find_live_replacement_instance(m, &mod)) {
+            m->nested_modules[out++] = mod;
+            continue;
+        }
         if (!is_primary && overlaps) {
             /*
              * Private loaders may stage a replacement child into the same
@@ -2267,7 +2321,10 @@ void arm_ext_restore_primary_mapping_after_dump0(ArmExtModule *m,
              * + 映像头补丁仍验活的记录描述的就是当前可执行内容, 必须保留
              * (丢弃即失去 R9 归属, guest 重进该模块时以 wrapper R9 执行,
              * 见 arm_ext_drop_overlapping_stale_nested_modules 同款注释)。 */
-            !arm_ext_has_internal_loader_chunk(m, mod.file_addr, mod.file_len)) {
+            !arm_ext_has_internal_loader_chunk(m, mod.file_addr, mod.file_len) &&
+            /* Retain only a byte-identical stale generation that the existing
+             * callback redirect can map onto a currently live loader tuple. */
+            !arm_ext_find_live_replacement_instance(m, &mod)) {
             continue;
         }
         m->nested_modules[out++] = mod;
